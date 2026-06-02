@@ -1,0 +1,128 @@
+package com.SolucionesInformaticasBA.minimarket.service;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.SolucionesInformaticasBA.minimarket.dto.request.CompraRequestDTO;
+import com.SolucionesInformaticasBA.minimarket.dto.request.DetalleCompraRequestDTO;
+import com.SolucionesInformaticasBA.minimarket.dto.response.CompraResponseDTO;
+import com.SolucionesInformaticasBA.minimarket.dto.response.VentaResponseDTO;
+import com.SolucionesInformaticasBA.minimarket.mapper.CompraMapper;
+import com.SolucionesInformaticasBA.minimarket.mapper.DetalleCompraMapper;
+import com.SolucionesInformaticasBA.minimarket.model.entity.Compra;
+import com.SolucionesInformaticasBA.minimarket.model.entity.DetalleCompra;
+import com.SolucionesInformaticasBA.minimarket.model.entity.MovimientoStock;
+import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
+import com.SolucionesInformaticasBA.minimarket.model.entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.model.entity.Venta;
+import com.SolucionesInformaticasBA.minimarket.model.enums.TipoMovimiento;
+import com.SolucionesInformaticasBA.minimarket.repository.CompraRepository;
+import com.SolucionesInformaticasBA.minimarket.repository.MovimientoStockRepository;
+import com.SolucionesInformaticasBA.minimarket.repository.ProductoRepository;
+import com.SolucionesInformaticasBA.minimarket.repository.UsuarioRepository;
+
+import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
+
+@Service
+@RequiredArgsConstructor
+public class CompraService {
+
+    private final ProductoRepository productoRepository;
+    private final CompraRepository compraRepository;
+    private final MovimientoStockRepository movimientoStockRepository;
+    private final UsuarioRepository usuarioRepository;
+
+    private final DetalleCompraMapper detalleCompraMapper;
+    private final CompraMapper compraMapper;
+
+    @Transactional
+    public CompraResponseDTO registrarCompra(CompraRequestDTO request, Long usuarioId) {
+
+        // 🔍 Usuario
+        Usuario usuario = usuarioRepository.findById(usuarioId)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+
+        // 🧾 Crear compra
+        Compra compra = new Compra();
+        compra.setUsuario(usuario);
+        compra.setFecha(LocalDateTime.now());
+
+        List<DetalleCompra> detalles = new ArrayList<>();
+        BigDecimal total = BigDecimal.ZERO;
+
+        // 🔁 Recorrer detalles
+        for (DetalleCompraRequestDTO d : request.getDetalles()) {
+
+            Producto producto = productoRepository.findById(d.getProductoId())
+                    .orElseThrow(() -> new RuntimeException("Producto no encontrado"));
+
+            // ⚠️ Validaciones básicas
+            if (d.getCantidad() == null || d.getCantidad() <= 0) {
+                throw new RuntimeException("Cantidad inválida");
+            }
+            /*
+            //no tengo problema con que el precio sea 0, puede ser una donación o un error de carga, pero no puede ser negativo
+            if (d.getPrecioUnitario() == null || d.getPrecioUnitario().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new RuntimeException("Precio inválido");
+            }*/
+
+            // ➕ AUMENTAR STOCK
+            producto.setStock(producto.getStock() + d.getCantidad());
+            productoRepository.save(producto);
+
+            // 🧩 Crear detalle
+            DetalleCompra detalle = detalleCompraMapper.toEntity(d, producto, compra);
+            detalles.add(detalle);
+
+            // 💰 Calcular subtotal
+            BigDecimal subtotal = d.getPrecioUnitario()
+                    .multiply(BigDecimal.valueOf(d.getCantidad()));
+
+            total = total.add(subtotal);
+
+            // 📦 Movimiento de stock
+            MovimientoStock movimiento = new MovimientoStock();
+            movimiento.setProducto(producto);
+            movimiento.setCantidad(d.getCantidad());
+            movimiento.setTipo(TipoMovimiento.COMPRA);
+            movimiento.setMotivo("Ingreso de mercadería");
+            movimiento.setUsuario(usuario);
+
+            movimientoStockRepository.save(movimiento);
+        }
+
+        // 🧾 Setear compra
+        compra.setDetalles(detalles);
+        compra.setTotal(total);
+
+        // 💾 Guardar compra
+        Compra compraGuardada = compraRepository.save(compra);
+
+        return compraMapper.toDTO(compraGuardada);
+    }
+
+
+    // Método para obtener todas las compras
+    public List<CompraResponseDTO> getAll() {
+
+        return compraRepository.findAll()
+                .stream()
+                .map(compraMapper::toDTO)
+                .toList();
+    }
+
+
+    // Método para obtener una venta por ID
+    public CompraResponseDTO getById(Long id) {
+
+        Compra compra = compraRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Compra no encontrada"));
+
+        return compraMapper.toDTO(compra);
+    }
+}
