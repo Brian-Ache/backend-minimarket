@@ -13,7 +13,7 @@ public class UsuarioMapper {
     public Usuario toEntity(UsuarioRequestDTO dto) {
         Usuario u = new Usuario();
         u.setUsername(dto.getUsername());
-        u.setPassword(dto.getPassword()); // ⚠️ después encriptar
+        u.setPasswordHash(dto.getPassword()); // ⚠️ después encriptar
         u.setRol(Rol.valueOf(dto.getRol()));
         return u;
     }
