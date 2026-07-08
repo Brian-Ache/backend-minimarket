@@ -1,6 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.model.entity;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 import jakarta.persistence.*;
 import lombok.Data;
@@ -15,13 +16,11 @@ public class DetalleVenta {
     @Column(name = "id_detalle")
     private Long id;
 
-    @ManyToOne
-    @JoinColumn(name = "id_venta", nullable = false)
-    private Venta venta;
+    @Column(name = "id_venta", nullable = false)
+    private UUID idVenta;
 
-    @ManyToOne
-    @JoinColumn(name = "id_producto", nullable = false)
-    private Producto producto;
+    @Column(name = "id_producto", nullable = false)
+    private UUID idProducto;
 
     @Column(name = "nombre_manual")
     private String nombreManual;

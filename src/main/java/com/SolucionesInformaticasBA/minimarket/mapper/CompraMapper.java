@@ -20,7 +20,7 @@ public class CompraMapper {
 
         CompraResponseDTO dto = new CompraResponseDTO();
 
-        dto.setId(compra.getIdCompra());
+        dto.setId(compra.getId());
         dto.setFecha(compra.getFecha());
         dto.setTotal(compra.getTotal());
 

@@ -1,12 +1,15 @@
 package com.SolucionesInformaticasBA.minimarket.service;
 
+import java.util.UUID;
+
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.dto.request.AjusteStockRequestDTO;
 import com.SolucionesInformaticasBA.minimarket.model.entity.MovimientoStock;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
-import com.SolucionesInformaticasBA.minimarket.model.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.model.enums.TipoMovimiento;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.repository.ProductoRepository;
 import com.SolucionesInformaticasBA.minimarket.repository.UsuarioRepository;
@@ -20,14 +23,13 @@ public class AjusteStockService {
 
     private final ProductoRepository productoRepository;
     private final MovimientoStockRepository movimientoStockRepository;
-    private final UsuarioRepository usuarioRepository;
+    private final UsuarioApi usuarioApi;
 
     @Transactional
-    public void ajustarStock(AjusteStockRequestDTO request, Long usuarioId) {
+    public void ajustarStock(AjusteStockRequestDTO request, UUID usuarioId) {
 
         // 👤 Usuario
-        Usuario usuario = usuarioRepository.findById(usuarioId)
-                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+        Usuario u = usuarioApi.getUsuarioById(usuarioId); // Respeto contrato del modulo y principio de responsabilidad unica
 
         // 📦 Producto
         Producto producto = productoRepository.findById(request.getProductoId())
@@ -53,8 +55,9 @@ public class AjusteStockService {
         productoRepository.save(producto);
 
         // 📦 Registrar movimiento
+        // usar Builder y metodos aux/mappers
         MovimientoStock movimiento = new MovimientoStock();
-        movimiento.setProducto(producto);
+        movimiento.setIdProducto(producto.getId());
         movimiento.setCantidad(diferencia); // puede ser + o -
         movimiento.setTipo(TipoMovimiento.AJUSTE);
         movimiento.setMotivo(
@@ -62,7 +65,7 @@ public class AjusteStockService {
                         ? request.getMotivo()
                         : "Ajuste manual de stock"
         );
-        movimiento.setUsuario(usuario);
+        movimiento.setIdUsuario(u.getId());
 
         movimientoStockRepository.save(movimiento);
     }

@@ -10,6 +10,7 @@ import com.SolucionesInformaticasBA.minimarket.model.enums.Rol;
 @Component
 public class UsuarioMapper {
 
+    /* 
     public Usuario toEntity(UsuarioRequestDTO dto) {
         Usuario u = new Usuario();
         u.setUsername(dto.getUsername());
@@ -17,6 +18,8 @@ public class UsuarioMapper {
         u.setRol(Rol.valueOf(dto.getRol()));
         return u;
     }
+
+    */
 
     public UsuarioResponseDTO toDTO(Usuario u) {
         UsuarioResponseDTO dto = new UsuarioResponseDTO();

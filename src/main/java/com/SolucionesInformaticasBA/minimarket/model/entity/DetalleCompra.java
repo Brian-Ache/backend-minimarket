@@ -1,8 +1,8 @@
 package com.SolucionesInformaticasBA.minimarket.model.entity;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
-import jakarta.annotation.sql.DataSourceDefinition;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -13,15 +13,13 @@ public class DetalleCompra {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long idDetalle;
+    private Long id; // revisar si necesita ser incremental
 
-    @ManyToOne
-    @JoinColumn(name = "id_compra")
-    private Compra compra;
+    @Column(name = "id_compra")
+    private UUID idCompra;
 
-    @ManyToOne
-    @JoinColumn(name = "id_producto")
-    private Producto producto;
+    @Column(name = "id_producto")
+    private UUID idProducto;
 
     private Integer cantidad;
 

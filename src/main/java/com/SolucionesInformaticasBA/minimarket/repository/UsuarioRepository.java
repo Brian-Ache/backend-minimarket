@@ -1,7 +1,9 @@
 package com.SolucionesInformaticasBA.minimarket.repository;
 
-import com.SolucionesInformaticasBA.minimarket.model.entity.Usuario;
+
 import org.springframework.data.jpa.repository.JpaRepository;
+
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Entity.Usuario;
 
 import java.util.Optional;
 import java.util.UUID;

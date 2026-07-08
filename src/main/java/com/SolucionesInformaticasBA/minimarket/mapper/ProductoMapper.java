@@ -5,7 +5,8 @@ import org.springframework.stereotype.Component;
 import com.SolucionesInformaticasBA.minimarket.dto.request.ProductoRequestDTO;
 import com.SolucionesInformaticasBA.minimarket.dto.response.ProductoResponseDTO;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
-import com.SolucionesInformaticasBA.minimarket.model.entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Entity.Usuario;
+
 
 @Component
 public class ProductoMapper {
@@ -17,7 +18,7 @@ public class ProductoMapper {
         p.setPrecio(dto.getPrecio());
         p.setManejaLotes(dto.getManejaLotes());
         p.setStock(dto.getStock());
-        p.setCreadoPor(usuario);
+        p.setIdUsuarioCreador(usuario.getId());
         return p;
     }
 

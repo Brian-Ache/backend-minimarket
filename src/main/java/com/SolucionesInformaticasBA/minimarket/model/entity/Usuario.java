@@ -11,6 +11,7 @@ import com.SolucionesInformaticasBA.minimarket.model.enums.Rol;
 @Table(name = "usuario")
 @Data
 public class Usuario {
+    // Deprecado -> se movio a modulo
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

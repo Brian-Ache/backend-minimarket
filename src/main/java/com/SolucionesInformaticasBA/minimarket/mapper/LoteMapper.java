@@ -8,7 +8,8 @@ import com.SolucionesInformaticasBA.minimarket.dto.request.LoteRequestDTO;
 import com.SolucionesInformaticasBA.minimarket.dto.response.LoteResponseDTO;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Lote;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
-import com.SolucionesInformaticasBA.minimarket.model.entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Entity.Usuario;
+
 
 @Component
 public class LoteMapper {
@@ -17,11 +18,11 @@ public class LoteMapper {
 
         Lote lote = new Lote();
 
-        lote.setProducto(producto);
+        lote.setIdProducto(producto.getId());
         lote.setNumeroLote(dto.getNumeroLote());
         lote.setFechaVencimiento(dto.getFechaVencimiento());
         lote.setCantidad(dto.getCantidad());
-        lote.setCreadoPor(usuario);
+        lote.setIdUsuarioCreador(usuario.getId());
 
         return lote;
     }
@@ -31,7 +32,7 @@ public class LoteMapper {
         LoteResponseDTO dto = new LoteResponseDTO();
 
         dto.setId(lote.getId());
-        dto.setProductoId(lote.getProducto().getId());
+        dto.setProductoId(lote.getIdProducto());
         dto.setNombreProducto(lote.getProducto().getNombre());
         dto.setNumeroLote(lote.getNumeroLote());
         dto.setFechaVencimiento(lote.getFechaVencimiento());

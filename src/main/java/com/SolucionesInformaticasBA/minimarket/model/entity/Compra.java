@@ -3,6 +3,7 @@ package com.SolucionesInformaticasBA.minimarket.model.entity;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import jakarta.persistence.*;
 import lombok.Data;
@@ -14,13 +15,12 @@ public class Compra {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long idCompra;
+    private Long id; // revisar si necesita ser incremental
 
-    @ManyToOne
-    @JoinColumn(name = "usuario_id")
-    private Usuario usuario;
+    @Column(name = "id_usuario")
+    private UUID idUsuario;
 
-    private LocalDateTime fecha;
+    private LocalDateTime fecha; // fecha o timestamp de creacion? pensar para auditar
 
     private BigDecimal total;
 

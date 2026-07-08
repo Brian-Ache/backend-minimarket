@@ -1,7 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.model.entity;
 import lombok.Data;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 import com.SolucionesInformaticasBA.minimarket.model.enums.TipoMovimiento;
 
@@ -14,13 +14,12 @@ import jakarta.persistence.*;
 public class MovimientoStock {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id_movimiento")
-    private Long id;
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(name = "id") // id_entidad solo para FK
+    private UUID id; // mas seguro para no exponer id incremementales si no es necesario
 
-    @ManyToOne
-    @JoinColumn(name = "id_producto", nullable = false)
-    private Producto producto;
+    @Column(name = "id_producto", nullable = false)
+    private UUID idProducto; // revisar si se necesita que sea incremental o cambiar a UUID
 
     private Integer cantidad;
 
@@ -29,11 +28,10 @@ public class MovimientoStock {
 
     private String motivo;
 
-    @ManyToOne
-    @JoinColumn(name = "usuario_id")
-    private Usuario usuario;
+    @Column(name = "id_usuario") // se usa join column cuando hay herencia, sino es sobrecomplejuzarlo
+    private UUID idUsuario;
 
-    private LocalDateTime fecha;
+    private LocalDateTime fecha; // estandarisas los 3 timestamps para auditorias
 
     @PrePersist
     public void prePersist() {

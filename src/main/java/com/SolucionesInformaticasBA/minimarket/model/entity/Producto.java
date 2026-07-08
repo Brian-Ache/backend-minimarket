@@ -5,6 +5,7 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "producto")
@@ -12,9 +13,8 @@ import java.time.LocalDateTime;
 public class Producto {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id_producto")
-    private Long id;
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
 
     private String nombre;
 
@@ -28,10 +28,10 @@ public class Producto {
 
     private Integer stock;
 
-    @ManyToOne
-    @JoinColumn(name = "creado_por")
-    private Usuario creadoPor;
+    @Column(name = "id_usuario_creador")
+    private UUID idUsuarioCreador;
 
+    // estandarizar timestamp en ingles (algunas librerias de auditoria lo manejan mejor)
     @Column(name = "fecha_creacion")
     private LocalDateTime fechaCreacion;
 

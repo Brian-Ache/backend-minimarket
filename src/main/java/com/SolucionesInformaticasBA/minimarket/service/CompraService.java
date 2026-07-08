@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 
@@ -17,9 +18,10 @@ import com.SolucionesInformaticasBA.minimarket.model.entity.Compra;
 import com.SolucionesInformaticasBA.minimarket.model.entity.DetalleCompra;
 import com.SolucionesInformaticasBA.minimarket.model.entity.MovimientoStock;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
-import com.SolucionesInformaticasBA.minimarket.model.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Venta;
 import com.SolucionesInformaticasBA.minimarket.model.enums.TipoMovimiento;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.repository.CompraRepository;
 import com.SolucionesInformaticasBA.minimarket.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.repository.ProductoRepository;
@@ -35,21 +37,21 @@ public class CompraService {
     private final ProductoRepository productoRepository;
     private final CompraRepository compraRepository;
     private final MovimientoStockRepository movimientoStockRepository;
-    private final UsuarioRepository usuarioRepository;
+    private final UsuarioApi usuarioApi;
 
     private final DetalleCompraMapper detalleCompraMapper;
     private final CompraMapper compraMapper;
 
     @Transactional
-    public CompraResponseDTO registrarCompra(CompraRequestDTO request, Long usuarioId) {
+    public CompraResponseDTO registrarCompra(CompraRequestDTO request, UUID usuarioId) {
 
         // 🔍 Usuario
-        Usuario usuario = usuarioRepository.findById(usuarioId)
-                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+        Usuario u = usuarioApi.getUsuarioById(usuarioId); // Respeto contrato del modulo y principio de responsabilidad unica
+
 
         // 🧾 Crear compra
         Compra compra = new Compra();
-        compra.setUsuario(usuario);
+        compra.setIdUsuario(u.getId());
         compra.setFecha(LocalDateTime.now());
 
         List<DetalleCompra> detalles = new ArrayList<>();
@@ -87,11 +89,11 @@ public class CompraService {
 
             // 📦 Movimiento de stock
             MovimientoStock movimiento = new MovimientoStock();
-            movimiento.setProducto(producto);
+            movimiento.setIdProducto(producto.getId());
             movimiento.setCantidad(d.getCantidad());
             movimiento.setTipo(TipoMovimiento.COMPRA);
             movimiento.setMotivo("Ingreso de mercadería");
-            movimiento.setUsuario(usuario);
+            movimiento.setIdUsuario(u.getId());
 
             movimientoStockRepository.save(movimiento);
         }

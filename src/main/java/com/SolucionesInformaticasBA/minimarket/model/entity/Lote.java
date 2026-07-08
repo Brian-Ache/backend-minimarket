@@ -3,6 +3,8 @@ import lombok.Data;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
+
 import jakarta.persistence.*;
 
 
@@ -14,11 +16,10 @@ public class Lote {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id_lote")
-    private Long id;
+    private Long id; // revisar si necesita ser incremental
 
-    @ManyToOne
-    @JoinColumn(name = "id_producto", nullable = false)
-    private Producto producto;
+    @Column(name = "id_producto", nullable = false)
+    private UUID idProducto;
 
     @Column(name = "numero_lote")
     private String numeroLote;
@@ -29,10 +30,10 @@ public class Lote {
     @Column(nullable = false)
     private Integer cantidad; 
 
-    @ManyToOne
-    @JoinColumn(name = "creado_por")
-    private Usuario creadoPor;
+    @Column(name = "id_usuario_creador")
+    private UUID idUsuarioCreador;
 
+    // estandarizar los 3 timestamps
     @Column(name = "fecha_creacion")
     private LocalDateTime fechaCreacion;
 

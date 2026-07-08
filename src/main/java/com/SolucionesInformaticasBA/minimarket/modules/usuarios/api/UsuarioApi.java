@@ -1,0 +1,25 @@
+package com.SolucionesInformaticasBA.minimarket.modules.usuarios.api;
+
+import java.util.List;
+import java.util.UUID;
+
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.ActualizarUsuarioRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarPasswordRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
+
+public interface UsuarioApi {
+    Usuario getUsuarioById(UUID id);
+
+    UsuarioResponse getById(UUID id);
+
+    UsuarioResponse getByEmail(String email);
+
+    List<UsuarioResponse> getAll();
+
+    UsuarioResponse update(UUID id, ActualizarUsuarioRequest request);
+
+    void delete(UUID id);
+
+    void changePassword(UUID id, CambiarPasswordRequest request);
+}
