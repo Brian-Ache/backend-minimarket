@@ -1,22 +1,28 @@
 package com.SolucionesInformaticasBA.minimarket.model.entity;
-import lombok.Data;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
 import jakarta.persistence.*;
 
 
 @Entity
-@Table(name = "lote")
-@Data
+@Table(name = "lotes")
+@Getter
+@Setter
+@Builder
 public class Lote {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id_lote")
-    private Long id; // revisar si necesita ser incremental
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id; // revisar si necesita ser incremental
 
     @Column(name = "id_producto", nullable = false)
     private UUID idProducto;
@@ -28,23 +34,25 @@ public class Lote {
     private LocalDate fechaVencimiento;
 
     @Column(nullable = false)
-    private Integer cantidad; 
+    private int cantidad; 
 
     @Column(name = "id_usuario_creador")
     private UUID idUsuarioCreador;
 
-    // estandarizar los 3 timestamps
-    @Column(name = "fecha_creacion")
-    private LocalDateTime fechaCreacion;
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false, nullable = false)
+    private LocalDateTime createdAt;
 
-    @Column(name = "fecha_eliminacion")
-    private LocalDateTime fechaEliminacion;
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
 
-    @PrePersist
-    public void prePersist() {
-        this.fechaCreacion = LocalDateTime.now();
-    }
+    @Builder.Default
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt = null;
 
+
+    // migrar al service
     @Transient
     public String getEstado() {
 

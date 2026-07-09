@@ -7,7 +7,7 @@ import javax.crypto.SecretKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Enums.Rol;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.UnauthorizedException;
 
 import io.jsonwebtoken.Claims;

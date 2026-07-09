@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 
@@ -17,12 +18,12 @@ import com.SolucionesInformaticasBA.minimarket.mapper.VentaMapper;
 import com.SolucionesInformaticasBA.minimarket.model.entity.DetalleVenta;
 import com.SolucionesInformaticasBA.minimarket.model.entity.MovimientoStock;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
-import com.SolucionesInformaticasBA.minimarket.model.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Venta;
 import com.SolucionesInformaticasBA.minimarket.model.enums.TipoMovimiento;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.repository.ProductoRepository;
-import com.SolucionesInformaticasBA.minimarket.repository.UsuarioRepository;
 import com.SolucionesInformaticasBA.minimarket.repository.VentaRepository;
 
 import jakarta.transaction.Transactional;
@@ -35,18 +36,15 @@ public class VentaService {
     private final ProductoRepository productoRepository;
     private final VentaRepository ventaRepository;
     private final MovimientoStockRepository movimientoStockRepository;
-    private final UsuarioRepository usuarioRepository;
+    private final UsuarioApi usuarioApi;
     private final VentaMapper ventaMapper;
 
     @Transactional
-    public VentaResponseDTO realizarVenta(VentaRequestDTO request, Long usuarioId) {
+    public VentaResponseDTO realizarVenta(VentaRequestDTO request, UUID usuarioId) {
 
-        Usuario usuario = usuarioRepository.findById(usuarioId)
-                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+        Usuario usuario = usuarioApi.getUsuarioById(usuarioId);
 
-        Venta venta = new Venta();
-        venta.setUsuario(usuario);
-        venta.setFecha(LocalDateTime.now());
+        Venta venta = Venta.builder().idUsuario(usuarioId).build();
 
         List<DetalleVenta> detalles = new ArrayList<>();
         BigDecimal total = BigDecimal.ZERO;
@@ -114,7 +112,7 @@ public class VentaService {
 
                 precio = m.getPrecioUnitario();
 
-                detalle.setProducto(null);
+                detalle.setIdProducto(null);
                 detalle.setNombreManual(m.getNombreManual());
             }
 

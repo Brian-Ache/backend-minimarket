@@ -8,11 +8,10 @@ import com.SolucionesInformaticasBA.minimarket.dto.request.AjusteStockRequestDTO
 import com.SolucionesInformaticasBA.minimarket.model.entity.MovimientoStock;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
 import com.SolucionesInformaticasBA.minimarket.model.enums.TipoMovimiento;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.repository.ProductoRepository;
-import com.SolucionesInformaticasBA.minimarket.repository.UsuarioRepository;
 
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -29,10 +28,10 @@ public class AjusteStockService {
     public void ajustarStock(AjusteStockRequestDTO request, UUID usuarioId) {
 
         // 👤 Usuario
-        Usuario u = usuarioApi.getUsuarioById(usuarioId); // Respeto contrato del modulo y principio de responsabilidad unica
+        Usuario usuario = usuarioApi.getUsuarioById(usuarioId); // Respeto contrato del modulo y principio de responsabilidad unica
 
         // 📦 Producto
-        Producto producto = productoRepository.findById(request.getProductoId())
+        Producto producto = productoRepository.findById(request.getIdProducto())
                 .orElseThrow(() -> new RuntimeException("Producto no encontrado"));
 
         // ⚠️ Validaciones
@@ -56,7 +55,12 @@ public class AjusteStockService {
 
         // 📦 Registrar movimiento
         // usar Builder y metodos aux/mappers
-        MovimientoStock movimiento = new MovimientoStock();
+        String motivo = (request.getMotivo() != null) ? request.getMotivo() : "Ajuste manual de stock";
+
+        MovimientoStock movimiento = MovimientoStock.builder().idProducto(producto.getId())
+        .cantidad(diferencia).tipo(TipoMovimiento.AJUSTE).motivo(motivo).idUsuario(usuario.getId());
+
+        MovimientoStock movimiento3 = new MovimientoStock();
         movimiento.setIdProducto(producto.getId());
         movimiento.setCantidad(diferencia); // puede ser + o -
         movimiento.setTipo(TipoMovimiento.AJUSTE);

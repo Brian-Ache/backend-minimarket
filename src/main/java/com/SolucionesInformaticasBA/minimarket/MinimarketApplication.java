@@ -6,9 +6,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 
 import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
-import com.SolucionesInformaticasBA.minimarket.model.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.repository.ProductoRepository;
-import com.SolucionesInformaticasBA.minimarket.repository.UsuarioRepository;
 
 @SpringBootApplication
 public class MinimarketApplication {

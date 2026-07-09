@@ -3,10 +3,10 @@ package com.SolucionesInformaticasBA.minimarket.modules.usuarios.api;
 import java.util.List;
 import java.util.UUID;
 
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.ActualizarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarPasswordRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 
 public interface UsuarioApi {
     Usuario getUsuarioById(UUID id);

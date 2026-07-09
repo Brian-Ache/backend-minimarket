@@ -8,7 +8,7 @@ import com.SolucionesInformaticasBA.minimarket.dto.request.LoteRequestDTO;
 import com.SolucionesInformaticasBA.minimarket.dto.response.LoteResponseDTO;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Lote;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 
 
 @Component

@@ -1,29 +1,41 @@
 package com.SolucionesInformaticasBA.minimarket.model.entity;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.Setter;
 
 @Entity
-@Table(name = "compra")
-@Data
+@Table(name = "compras")
+@Getter
+@Setter
+@Builder
 public class Compra {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id; // revisar si necesita ser incremental
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
 
     @Column(name = "id_usuario")
     private UUID idUsuario;
 
-    private LocalDateTime fecha; // fecha o timestamp de creacion? pensar para auditar
+    private float total;
 
-    private BigDecimal total;
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false, nullable = false)
+    private LocalDateTime createdAt;
 
-    @OneToMany(mappedBy = "compra", cascade = CascadeType.ALL)
-    private List<DetalleCompra> detalles;
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    @Builder.Default
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt = null;
 }

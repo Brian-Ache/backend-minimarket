@@ -25,7 +25,6 @@ import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.repository.CompraRepository;
 import com.SolucionesInformaticasBA.minimarket.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.repository.ProductoRepository;
-import com.SolucionesInformaticasBA.minimarket.repository.UsuarioRepository;
 
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -46,34 +45,10 @@ public class CompraService {
     public CompraResponseDTO registrarCompra(CompraRequestDTO request, UUID usuarioId) {
 
         // 🔍 Usuario
-        Usuario u = usuarioApi.getUsuarioById(usuarioId); // Respeto contrato del modulo y principio de responsabilidad unica
+        Usuario usuario = usuarioApi.getUsuarioById(usuarioId); // Respeto contrato del modulo y principio de responsabilidad unica
 
 
-        // 🧾 Crear compra
-        Compra compra = new Compra();
-        compra.setIdUsuario(u.getId());
-        compra.setFecha(LocalDateTime.now());
 
-        List<DetalleCompra> detalles = new ArrayList<>();
-        BigDecimal total = BigDecimal.ZERO;
-
-        // 🔁 Recorrer detalles
-        for (DetalleCompraRequestDTO d : request.getDetalles()) {
-
-            Producto producto = productoRepository.findById(d.getProductoId())
-                    .orElseThrow(() -> new RuntimeException("Producto no encontrado"));
-
-            // ⚠️ Validaciones básicas
-            if (d.getCantidad() == null || d.getCantidad() <= 0) {
-                throw new RuntimeException("Cantidad inválida");
-            }
-            /*
-            //no tengo problema con que el precio sea 0, puede ser una donación o un error de carga, pero no puede ser negativo
-            if (d.getPrecioUnitario() == null || d.getPrecioUnitario().compareTo(BigDecimal.ZERO) <= 0) {
-                throw new RuntimeException("Precio inválido");
-            }*/
-
-            // ➕ AUMENTAR STOCK
             producto.setStock(producto.getStock() + d.getCantidad());
             productoRepository.save(producto);
 
@@ -82,7 +57,7 @@ public class CompraService {
             detalles.add(detalle);
 
             // 💰 Calcular subtotal
-            BigDecimal subtotal = d.getPrecioUnitario()
+            float subtotal = d.getPrecioUnitario()
                     .multiply(BigDecimal.valueOf(d.getCantidad()));
 
             total = total.add(subtotal);
@@ -93,7 +68,7 @@ public class CompraService {
             movimiento.setCantidad(d.getCantidad());
             movimiento.setTipo(TipoMovimiento.COMPRA);
             movimiento.setMotivo("Ingreso de mercadería");
-            movimiento.setIdUsuario(u.getId());
+            movimiento.setIdUsuario(usuario.getId());
 
             movimientoStockRepository.save(movimiento);
         }

@@ -23,5 +23,5 @@ import lombok.Data;
 @Data
 public abstract class DetalleVentaRequestDTO {
 
-    private Integer cantidad;
+    private int cantidad;
 }

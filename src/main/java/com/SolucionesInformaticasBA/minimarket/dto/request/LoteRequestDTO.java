@@ -1,14 +1,15 @@
 package com.SolucionesInformaticasBA.minimarket.dto.request;
 
 import java.time.LocalDate;
+import java.util.UUID;
 
 import lombok.Data;
 
 @Data
 public class LoteRequestDTO {
 
-    private Long productoId;
+    private UUID idProducto;
     private String numeroLote;
     private LocalDate fechaVencimiento;
-    private Integer cantidad;
+    private int cantidad;
 }

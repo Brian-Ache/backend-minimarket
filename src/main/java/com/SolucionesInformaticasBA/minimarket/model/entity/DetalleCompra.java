@@ -1,19 +1,26 @@
 package com.SolucionesInformaticasBA.minimarket.model.entity;
 
-import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.Setter;
 
 @Entity
-@Table(name = "detalle_compra")
-@Data
+@Table(name = "detalles_compras")
+@Getter
+@Setter
+@Builder
 public class DetalleCompra {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id; // revisar si necesita ser incremental
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
 
     @Column(name = "id_compra")
     private UUID idCompra;
@@ -21,7 +28,19 @@ public class DetalleCompra {
     @Column(name = "id_producto")
     private UUID idProducto;
 
-    private Integer cantidad;
+    private int cantidad;
 
-    private BigDecimal precioUnitario;
+    private float precioUnitario;
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false, nullable = false)
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    @Builder.Default
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt = null;
 }

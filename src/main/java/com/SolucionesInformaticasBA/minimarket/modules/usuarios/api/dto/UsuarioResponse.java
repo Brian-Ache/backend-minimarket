@@ -3,7 +3,7 @@ package com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Enums.Rol;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

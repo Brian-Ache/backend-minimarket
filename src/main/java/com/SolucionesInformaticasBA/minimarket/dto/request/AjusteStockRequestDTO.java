@@ -1,14 +1,16 @@
 package com.SolucionesInformaticasBA.minimarket.dto.request;
 
+import java.util.UUID;
+
 import lombok.Data;
 
 @Data
 public class AjusteStockRequestDTO {
 
-    private Long productoId;
+    private UUID idProducto;
 
     // stock REAL contado
-    private Integer stockReal;
+    private int stockReal;
 
     private String motivo;
 }

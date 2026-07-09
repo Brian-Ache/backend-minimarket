@@ -1,15 +1,15 @@
 package com.SolucionesInformaticasBA.minimarket.dto.response;
 
-import java.math.BigDecimal;
+import java.util.UUID;
 
 import lombok.Data;
 
 @Data
 public class DetalleCompraResponseDTO {
 
-    private Long productoId;
+    private UUID idProducto;
     private String nombreProducto;
 
-    private Integer cantidad;
-    private BigDecimal precioUnitario;
+    private int cantidad;
+    private float precioUnitario;
 }

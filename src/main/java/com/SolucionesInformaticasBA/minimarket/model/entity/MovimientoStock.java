@@ -1,7 +1,13 @@
 package com.SolucionesInformaticasBA.minimarket.model.entity;
-import lombok.Data;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.Setter;
+
 import java.time.LocalDateTime;
 import java.util.UUID;
+
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import com.SolucionesInformaticasBA.minimarket.model.enums.TipoMovimiento;
 
@@ -9,8 +15,10 @@ import jakarta.persistence.*;
 
 
 @Entity
-@Table(name = "movimiento_stock")
-@Data
+@Table(name = "movimientos_stock")
+@Getter
+@Setter
+@Builder
 public class MovimientoStock {
 
     @Id
@@ -21,7 +29,7 @@ public class MovimientoStock {
     @Column(name = "id_producto", nullable = false)
     private UUID idProducto; // revisar si se necesita que sea incremental o cambiar a UUID
 
-    private Integer cantidad;
+    private int cantidad;
 
     @Enumerated(EnumType.STRING)
     private TipoMovimiento tipo;
@@ -31,10 +39,15 @@ public class MovimientoStock {
     @Column(name = "id_usuario") // se usa join column cuando hay herencia, sino es sobrecomplejuzarlo
     private UUID idUsuario;
 
-    private LocalDateTime fecha; // estandarisas los 3 timestamps para auditorias
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false, nullable = false)
+    private LocalDateTime createdAt;
 
-    @PrePersist
-    public void prePersist() {
-        this.fecha = LocalDateTime.now();
-    }
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    @Builder.Default
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt = null;
 }

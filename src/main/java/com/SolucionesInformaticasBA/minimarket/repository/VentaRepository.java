@@ -2,18 +2,16 @@ package com.SolucionesInformaticasBA.minimarket.repository;
 
 import com.SolucionesInformaticasBA.minimarket.model.entity.Venta;
 
-import io.swagger.v3.oas.annotations.Parameter;
-
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 
-public interface VentaRepository extends JpaRepository<Venta, Long> {
+public interface VentaRepository extends JpaRepository<Venta, UUID> {
 
     List<Venta> findByFechaBetween(LocalDateTime desde, LocalDateTime hasta);
     List<Venta> findByUsuarioId(Long usuarioId);
@@ -26,7 +24,7 @@ public interface VentaRepository extends JpaRepository<Venta, Long> {
     LEFT JOIN FETCH d.producto
     WHERE v.id = :id
     """)
-    Optional<Venta> findByIdConDetalles(Long id);
+    Optional<Venta> findByIdConDetalles(UUID id);
 
     @Query("""
     SELECT DISTINCT v FROM Venta v

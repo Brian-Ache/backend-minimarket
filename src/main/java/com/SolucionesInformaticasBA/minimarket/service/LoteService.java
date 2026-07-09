@@ -1,7 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.service;
 
 import com.SolucionesInformaticasBA.minimarket.repository.ProductoRepository;
-import com.SolucionesInformaticasBA.minimarket.repository.UsuarioRepository;
 
 import jakarta.transaction.Transactional;
 
@@ -16,8 +15,8 @@ import com.SolucionesInformaticasBA.minimarket.dto.response.LoteResponseDTO;
 import com.SolucionesInformaticasBA.minimarket.mapper.LoteMapper;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Lote;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.Entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.repository.LoteRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -35,17 +34,17 @@ public class LoteService {
     @Transactional
     public LoteResponseDTO crearLote(LoteRequestDTO request, UUID usuarioId) {
 
-        Usuario u = usuarioApi.getUsuarioById(usuarioId); // Respeto contrato del modulo y principio de responsabilidad unica
+        Usuario usuario = usuarioApi.getUsuarioById(usuarioId); // Respeto contrato del modulo y principio de responsabilidad unica
 
-
-        Producto producto = productoRepository.findById(request.getProductoId())
+    
+        Producto producto = productoRepository.findById(request.getIdProducto())
                 .orElseThrow(() -> new RuntimeException("Producto no encontrado"));
 
         if (request.getFechaVencimiento() == null) {
             throw new RuntimeException("Fecha de vencimiento obligatoria");
         }
 
-        Lote lote = loteMapper.toEntity(request, producto, u);
+        Lote lote = loteMapper.toEntity(request, producto, usuario);
 
         Lote guardado = loteRepository.save(lote);
 

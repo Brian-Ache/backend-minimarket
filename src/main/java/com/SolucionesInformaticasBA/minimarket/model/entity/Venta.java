@@ -1,18 +1,22 @@
 package com.SolucionesInformaticasBA.minimarket.model.entity;
 
-import jakarta.persistence.Entity;
-import lombok.Data;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.Setter;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
+
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import jakarta.persistence.*;
 
 @Entity
-@Table(name = "venta")
-@Data
+@Table(name = "ventas")
+@Getter
+@Setter
+@Builder
 public class Venta {
 
     @Id
@@ -23,20 +27,17 @@ public class Venta {
     @Column(name = "id_usuario", nullable = false)
     private UUID idUsuario;
 
-    // estandarizar los 3 timestamp para auditar
-    private LocalDateTime fecha;
+    private float total;
 
-    private BigDecimal total;
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false, nullable = false)
+    private LocalDateTime createdAt;
 
-    // tabla pivote en sentido contrario detalle apunta a la venta (menos complejo mas rapido para buscar con indices)
-    @OneToMany(mappedBy = "venta", cascade = CascadeType.ALL)
-    private List<DetalleVenta> detalles;
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
 
-    @PrePersist
-    public void prePersist() {
-        this.fecha = LocalDateTime.now();
-    }
-
-
-
+    @Builder.Default
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt = null;
 }
