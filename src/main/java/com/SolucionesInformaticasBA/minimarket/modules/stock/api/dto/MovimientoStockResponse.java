@@ -1,13 +1,14 @@
-package com.SolucionesInformaticasBA.minimarket.dto.response;
+package com.SolucionesInformaticasBA.minimarket.modules.stock.api.dto;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import lombok.Builder;
 import lombok.Data;
 
 @Data
-public class MovimientoStockResponseDTO {
-
+@Builder
+public class MovimientoStockResponse {
     private UUID id;
     private UUID idProducto;
     private int cantidad;

@@ -41,6 +41,11 @@ public class ProductoService implements ProductosApi{
         return toResponse(guardado);
     }
 
+     public Producto getProductoById(UUID id){
+        return productoRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Producto no encontrado"));
+    }
+
     public ProductoResponse getById(UUID id){
         return toResponse(productoRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Producto no encontrado")));
@@ -87,6 +92,11 @@ public class ProductoService implements ProductosApi{
 
         Producto actualizado = productoRepository.save(producto);
         return toResponse(actualizado);
+    }
+
+    @Transactional
+    public void saveEntity(Producto p){
+        productoRepository.save(p);
     }
 
     @Transactional

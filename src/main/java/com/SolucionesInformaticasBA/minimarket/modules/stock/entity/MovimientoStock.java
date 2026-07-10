@@ -1,7 +1,4 @@
-package com.SolucionesInformaticasBA.minimarket.model.entity;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.Setter;
+package com.SolucionesInformaticasBA.minimarket.modules.stock.entity;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -9,10 +6,10 @@ import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
-import com.SolucionesInformaticasBA.minimarket.model.enums.TipoMovimiento;
+import com.SolucionesInformaticasBA.minimarket.modules.stock.enums.TipoMovimiento;
 
 import jakarta.persistence.*;
-
+import lombok.*;
 
 @Entity
 @Table(name = "movimientos_stock")
@@ -20,7 +17,7 @@ import jakarta.persistence.*;
 @Setter
 @Builder
 public class MovimientoStock {
-
+    
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id") // id_entidad solo para FK
@@ -36,7 +33,7 @@ public class MovimientoStock {
 
     private String motivo;
 
-    @Column(name = "id_usuario") // se usa join column cuando hay herencia, sino es sobrecomplejuzarlo
+    @Column(name = "id_usuario")
     private UUID idUsuario;
 
     @CreationTimestamp

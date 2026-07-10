@@ -1,4 +1,4 @@
-package com.SolucionesInformaticasBA.minimarket.model.enums;
+package com.SolucionesInformaticasBA.minimarket.modules.stock.enums;
 
 public enum TipoMovimiento {
     COMPRA,
