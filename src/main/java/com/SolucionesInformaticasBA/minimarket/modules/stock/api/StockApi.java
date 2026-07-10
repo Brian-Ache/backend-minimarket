@@ -1,6 +1,9 @@
 package com.SolucionesInformaticasBA.minimarket.modules.stock.api;
 
-public interface StockApi {
+import java.util.UUID;
 
-    
+import com.SolucionesInformaticasBA.minimarket.modules.stock.api.dto.AjusteStockRequest;
+
+public interface StockApi {
+    void ajustarStock(UUID idUsuario, AjusteStockRequest request);
 }

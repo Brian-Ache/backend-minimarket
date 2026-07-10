@@ -21,7 +21,7 @@ import lombok.AllArgsConstructor;
 
 @Service
 @AllArgsConstructor
-public class MovimientoStockService implements StockApi{
+public class StockService implements StockApi{
     private final MovimientoStockRepository movimientoStockRepository;
     private final ProductosApi productosApi;
     private final UsuarioApi usuarioApi;
