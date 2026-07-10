@@ -1,4 +1,4 @@
-package com.SolucionesInformaticasBA.minimarket.model.enums;
+package com.SolucionesInformaticasBA.minimarket.modules.lotes.enums;
 
 public enum EstadoLote {
     SIN_FECHA,
