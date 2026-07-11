@@ -1,4 +1,4 @@
-package com.SolucionesInformaticasBA.minimarket.model.entity;
+package com.SolucionesInformaticasBA.minimarket.modules.compras.entity;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -7,30 +7,22 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import jakarta.persistence.*;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.*;
 
 @Entity
-@Table(name = "detalles_compras")
+@Table(name = "compras")
 @Getter
 @Setter
 @Builder
-public class DetalleCompra {
-
+public class Compra {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "id_compra")
-    private UUID idCompra;
+    @Column(name = "id_usuario")
+    private UUID idUsuario;
 
-    @Column(name = "id_producto")
-    private UUID idProducto;
-
-    private int cantidad;
-
-    private float precioUnitario;
+    private float total;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)

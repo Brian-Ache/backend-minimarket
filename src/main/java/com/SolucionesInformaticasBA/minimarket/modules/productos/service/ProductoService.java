@@ -7,12 +7,10 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
-import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.*;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.entity.Producto;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.repository.ProductoRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
@@ -27,24 +25,24 @@ public class ProductoService implements ProductosApi{
 
     @Transactional
     public ProductoResponse crear(UUID idUsuario, ProductoRequest request){
-        Usuario usuario = usuarioApi.getUsuarioById(idUsuario);
+        if(!usuarioApi.existById(idUsuario)) {
+            throw new RuntimeException("Usuario no encontrado");
+        }
 
-        // valido barcode unico (helper despues)
+        // valido barcode unico (helper despues ??)
         if(productoRepository.findByBarcodeAndDeletedAtIsNull(request.getBarcode()) != null){
             throw new BadRequestException("Ya existe un producto con ese barcode");
         }
 
-        Producto producto = toEntity(usuario.getId(), request);
-
+        Producto producto = toEntity(request);
         Producto guardado = productoRepository.save(producto);
 
         return toResponse(guardado);
     }
 
-     public Producto getProductoById(UUID id){
-        return productoRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Producto no encontrado"));
-    }
+     public boolean existsById(UUID id){
+        return productoRepository.existsByIdAndDeletedAtIsNull(id);
+     }
 
     public ProductoResponse getById(UUID id){
         return toResponse(productoRepository.findById(id)
@@ -86,17 +84,9 @@ public class ProductoService implements ProductosApi{
         if(producto.isManejaLotes() != request.isManejaLotes()){
             producto.setManejaLotes(request.isManejaLotes());
         }
-        if(producto.getStock() != request.getStock()){
-            producto.setStock(request.getStock());
-        }
 
         Producto actualizado = productoRepository.save(producto);
         return toResponse(actualizado);
-    }
-
-    @Transactional
-    public void saveEntity(Producto p){
-        productoRepository.save(p);
     }
 
     @Transactional
@@ -109,13 +99,12 @@ public class ProductoService implements ProductosApi{
     }
 
     // Helpers
-    private Producto toEntity(UUID idUsuaio, ProductoRequest request){
+    private Producto toEntity(ProductoRequest request){
         return Producto.builder().nombre(request.getNombre())
             .barcode(request.getBarcode())
             .precio(request.getPrecio())
             .manejaLotes(request.isManejaLotes())
-            .stock(request.getStock())
-            .idUsuarioCreador(idUsuaio).build();
+            .build();
     }
 
     private ProductoResponse toResponse(Producto p){
@@ -124,6 +113,6 @@ public class ProductoService implements ProductosApi{
             .barcode(p.getBarcode())
             .precio(p.getPrecio())
             .manejaLotes(p.isManejaLotes())
-            .stock(p.getStock()).build();
+            .build();
     }
 }

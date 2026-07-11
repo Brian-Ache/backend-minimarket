@@ -17,5 +17,5 @@ public interface ProductoRepository extends JpaRepository<Producto,UUID>{
 
     List<Producto> findAllByDeletedAtIsNull();
 
-    List<Producto> findByIdUsuarioCreadorAndDeletedAtIsNull(UUID idUsuarioCreador);
+    boolean existsByIdAndDeletedAtIsNull(UUID id);
 }

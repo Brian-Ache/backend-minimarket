@@ -1,4 +1,4 @@
-package com.SolucionesInformaticasBA.minimarket.controller;
+package com.SolucionesInformaticasBA.minimarket.modules.ventas.controller;
 
 import com.SolucionesInformaticasBA.minimarket.dto.request.VentaRequestDTO;
 import com.SolucionesInformaticasBA.minimarket.dto.response.VentaResponseDTO;

@@ -7,9 +7,7 @@ import lombok.Data;
 
 @Data
 @Builder
-public class AjusteStockRequest {
+public class StockResponse {
     private UUID idProducto;
-    private int stockReal;
-    private String tipo;
-    private String motivo;
+    private int cantidad;
 }

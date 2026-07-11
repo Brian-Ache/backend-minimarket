@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.stock.service;
 
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -10,11 +11,16 @@ import com.SolucionesInformaticasBA.minimarket.modules.stock.api.StockApi;
 import com.SolucionesInformaticasBA.minimarket.modules.stock.api.dto.AjusteStockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.stock.api.dto.MovimientoStockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.stock.api.dto.MovimientoStockResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.stock.api.dto.StockRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.stock.api.dto.StockResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.stock.entity.MovimientoStock;
+import com.SolucionesInformaticasBA.minimarket.modules.stock.entity.Stock;
 import com.SolucionesInformaticasBA.minimarket.modules.stock.enums.TipoMovimiento;
 import com.SolucionesInformaticasBA.minimarket.modules.stock.repository.MovimientoStockRepository;
+import com.SolucionesInformaticasBA.minimarket.modules.stock.repository.StockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
 import jakarta.transaction.Transactional;
 import lombok.AllArgsConstructor;
@@ -23,18 +29,62 @@ import lombok.AllArgsConstructor;
 @AllArgsConstructor
 public class StockService implements StockApi{
     private final MovimientoStockRepository movimientoStockRepository;
+    private final StockRepository stockRepository;
     private final ProductosApi productosApi;
     private final UsuarioApi usuarioApi;
 
+    //Crud de Stock
     @Transactional
-    public void ajustarStock(UUID idUsuario, AjusteStockRequest request){
-        Usuario usuario = usuarioApi.getUsuarioById(idUsuario);
+    public StockResponse crear(StockRequest request){
+        Stock stock = toEntity(request);
+        Stock guadado = stockRepository.save(stock);
 
-        Producto producto = productosApi.getProductoById(request.getIdProducto());
+        return toResponse(guadado);
+    }
 
+    public StockResponse getByIdProducto(UUID idProducto){
+        Stock s = stockRepository.findByIdProductoAndDeletedAtIsNull(idProducto);
+        return toResponse(s);
+    }
+
+    public StockResponse aumentar(StockRequest request){
+        Stock stock = stockRepository.findByIdProductoAndDeletedAtIsNull(request.getIdProducto());
+        int nuevoStock = stock.getCantidad() + request.getCantidad();
+
+        stock.setCantidad(nuevoStock);
+        Stock guardado = stockRepository.save(stock);
+
+        return toResponse(guardado);
+    }
+
+    public StockResponse disminuir(StockRequest request){
+        Stock stock = stockRepository.findByIdProductoAndDeletedAtIsNull(request.getIdProducto());
+        int nuevoStock = stock.getCantidad() - request.getCantidad();
+        
+        stock.setCantidad(nuevoStock);
+        Stock guardado = stockRepository.save(stock);
+
+        return toResponse(guardado);
+    }
+
+    public void delete(UUID idProducto){
+        Stock s = stockRepository.findByIdProductoAndDeletedAtIsNull(idProducto);
+        s.setDeletedAt(LocalDateTime.now());
+        stockRepository.save(s);
+    }
+
+    @Transactional
+    public void ajustar(UUID idUsuario, AjusteStockRequest request){
+        if(!usuarioApi.existById(idUsuario)){
+            throw new ResourceNotFoundException("Usuario no encontrado");
+        }
+
+        if(!productosApi.existsById(request.getIdProducto())){
+            throw new ResourceNotFoundException("Producto no encontrado");
+        }
         if(request.getStockReal() < 0) throw new RuntimeException("Stock invalido");
 
-        int stockActual = producto.getStock();
+        int stockActual = productosApi.getById(request.getIdProducto()).getStock();
         int stockReal = request.getStockReal();
 
         // Diferencia
@@ -42,11 +92,9 @@ public class StockService implements StockApi{
 
         if(diferencia == 0) return; // no hay cambios
 
-        producto.setStock(stockReal);
-        productosApi.saveEntity(producto);
-
         // Registro motivo (usar helper)
-        String motivo = (request.getMotivo() != null) ? request.getMotivo() : "Ajuste manual de stock";
+        if(request.getMotivo() == null) ??  request.setMotivo("Ajuste manual de stock");
+
         MovimientoStock m = MovimientoStock.builder().idProducto(producto.getId())
         .cantidad(diferencia).tipo(TipoMovimiento.AJUSTE).motivo(motivo).idUsuario(usuario.getId()).build();
 
@@ -55,24 +103,14 @@ public class StockService implements StockApi{
 
     // Helpers
 
-    private MovimientoStock toEntity(MovimientoStockRequest request){
-        String motivo = (request.getMotivo() != null) ? request.getMotivo() : "Ajuste manual de stock";
-        return MovimientoStock
-            .builder().idProducto(request.getIdProducto())
-            .cantidad(request.getCantidad())
-            .tipo(TipoMovimiento.valueOf(request.getTipo()))
-            .motivo(motivo)
-            .build();
+    private Stock toEntity(StockRequest request){
+        return Stock.builder()
+            .idProducto(request.getIdProducto())
+            .cantidad(request.getCantidad()).build();
     }
 
-    private MovimientoStockResponse toResponse(MovimientoStock m){
-        return MovimientoStockResponse.builder()
-            .id(m.getId())
-            .idProducto(m.getIdProducto())
-            .cantidad(m.getCantidad())
-            .tipo(m.getTipo().name())
-            .motivo(m.getMotivo())
-            .fecha(m.getCreatedAt())
-            .build();
+    private StockResponse toResponse(Stock stock){
+        return StockResponse.builder().idProducto(stock.getIdProducto())
+            .cantidad(stock.getCantidad()).build();
     }
 }

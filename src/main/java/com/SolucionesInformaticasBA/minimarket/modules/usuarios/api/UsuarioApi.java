@@ -22,4 +22,6 @@ public interface UsuarioApi {
     void delete(UUID id);
 
     void changePassword(UUID id, CambiarPasswordRequest request);
+
+    boolean existById(UUID id);
 }

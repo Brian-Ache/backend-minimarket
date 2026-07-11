@@ -87,6 +87,10 @@ public class UsuarioService implements UsuarioApi {
         userRepository.save(u);
     }
 
+    public boolean existById(UUID id){
+        return userRepository.existsByIdAndDeletedAtIsNull(id);
+    }
+
     private Usuario findActiveUser(UUID id) {
         Usuario u = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));

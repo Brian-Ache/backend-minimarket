@@ -1,4 +1,4 @@
-package com.SolucionesInformaticasBA.minimarket.modules.stock.entity;
+package com.SolucionesInformaticasBA.minimarket.modules.compras.entity;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -6,35 +6,39 @@ import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
-import com.SolucionesInformaticasBA.minimarket.modules.stock.enums.TipoMovimiento;
-
 import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-@Table(name = "movimientos_stock")
+@Table(name = "detalles_compras")
 @Getter
 @Setter
 @Builder
-public class MovimientoStock {
-    
+public class DetalleCompra {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(name = "id")
     private UUID id;
 
-    @Column(name = "id_producto", nullable = false)
+    @Column(name = "id_compra")
+    private UUID idCompra;
+
+    @Column(name = "id_producto")
     private UUID idProducto;
-    
+
+    @Column(name = "nombre_producto")
+    private String nombreProducto;
+
+    @Column(name = "barcode")
+    private String barcode;
+
+    @Column(name = "precio_unitario")
+    private float precioUnitario;
+
+    @Column(name = "cantidad")
     private int cantidad;
 
-    @Enumerated(EnumType.STRING)
-    private TipoMovimiento tipo;
-
-    private String motivo;
-
-    @Column(name = "id_usuario")
-    private UUID idUsuario;
+    @Column(name = "total")
+    private float total;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)

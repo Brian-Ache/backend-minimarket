@@ -1,4 +1,4 @@
-package com.SolucionesInformaticasBA.minimarket.model.entity;
+package com.SolucionesInformaticasBA.minimarket.modules.stock.entity;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -7,25 +7,23 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import jakarta.persistence.*;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.*;
 
 @Entity
-@Table(name = "compras")
+@Table(name = "stock")
 @Getter
 @Setter
 @Builder
-public class Compra {
-
+public class Stock {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "id_usuario")
-    private UUID idUsuario;
+    @Column(name = "id_producto")
+    private UUID idProducto;
 
-    private float total;
+    @Column(name = "cantidad")
+    private int cantidad;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)

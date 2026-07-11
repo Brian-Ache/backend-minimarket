@@ -1,12 +1,7 @@
-package com.SolucionesInformaticasBA.minimarket.service;
+package com.SolucionesInformaticasBA.minimarket.modules.ventas.service;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
-
-import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.dto.request.DetalleVentaProductoManualRequestDTO;
 import com.SolucionesInformaticasBA.minimarket.dto.request.DetalleVentaProductoSistemaRequestDTO;
@@ -14,31 +9,16 @@ import com.SolucionesInformaticasBA.minimarket.dto.request.DetalleVentaRequestDT
 import com.SolucionesInformaticasBA.minimarket.dto.request.VentaRequestDTO;
 import com.SolucionesInformaticasBA.minimarket.dto.response.DetalleVentaResponseDTO;
 import com.SolucionesInformaticasBA.minimarket.dto.response.VentaResponseDTO;
-import com.SolucionesInformaticasBA.minimarket.mapper.VentaMapper;
 import com.SolucionesInformaticasBA.minimarket.model.entity.DetalleVenta;
-import com.SolucionesInformaticasBA.minimarket.model.entity.MovimientoStock;
-import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Venta;
-import com.SolucionesInformaticasBA.minimarket.model.enums.TipoMovimiento;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.entity.Producto;
+import com.SolucionesInformaticasBA.minimarket.modules.stock.entity.MovimientoStock;
+import com.SolucionesInformaticasBA.minimarket.modules.stock.enums.TipoMovimiento;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
-import com.SolucionesInformaticasBA.minimarket.repository.MovimientoStockRepository;
-import com.SolucionesInformaticasBA.minimarket.repository.ProductoRepository;
-import com.SolucionesInformaticasBA.minimarket.repository.VentaRepository;
 
 import jakarta.transaction.Transactional;
-import lombok.RequiredArgsConstructor;
 
-@Service
-@RequiredArgsConstructor
 public class VentaService {
-
-    private final ProductoRepository productoRepository;
-    private final VentaRepository ventaRepository;
-    private final MovimientoStockRepository movimientoStockRepository;
-    private final UsuarioApi usuarioApi;
-    private final VentaMapper ventaMapper;
-
     @Transactional
     public VentaResponseDTO realizarVenta(VentaRequestDTO request, UUID usuarioId) {
 

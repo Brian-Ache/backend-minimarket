@@ -35,11 +35,6 @@ public class Producto {
     @Column(name = "maneja_lotes")
     private boolean manejaLotes;
 
-    private int stock;
-
-    @Column(name = "id_usuario_creador")
-    private UUID idUsuarioCreador;
-
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)
     private LocalDateTime createdAt;

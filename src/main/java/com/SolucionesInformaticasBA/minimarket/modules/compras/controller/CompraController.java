@@ -1,4 +1,4 @@
-package com.SolucionesInformaticasBA.minimarket.controller;
+package com.SolucionesInformaticasBA.minimarket.modules.compras.controller;
 
 import java.util.List;
 

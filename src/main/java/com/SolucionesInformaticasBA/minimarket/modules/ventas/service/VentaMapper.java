@@ -1,4 +1,4 @@
-package com.SolucionesInformaticasBA.minimarket.mapper;
+package com.SolucionesInformaticasBA.minimarket.modules.ventas.service;
 
 import org.springframework.stereotype.Component;
 
