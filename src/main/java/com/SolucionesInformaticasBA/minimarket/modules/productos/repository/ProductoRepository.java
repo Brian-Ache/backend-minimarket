@@ -17,5 +17,11 @@ public interface ProductoRepository extends JpaRepository<Producto,UUID>{
 
     List<Producto> findAllByDeletedAtIsNull();
 
+    List<Producto> findByIdCategoriaAndDeletedAtIsNull(UUID idCategoria);
+
+    List<Producto> findByIdProveedorAndDeletedAtIsNull(UUID idProveedor);
+
+    List<Producto> findByIdCategoriaAndIdProveedorAndDeletedAtIsNull(UUID idCategoria, UUID idProveedor);
+
     boolean existsByIdAndDeletedAtIsNull(UUID id);
 }

@@ -7,6 +7,7 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 
+import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.CompraApi;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.*;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.entity.*;
@@ -20,7 +21,10 @@ import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.Lot
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.ProveedoresApi;
+import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto.ProveedorResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
+import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
 import jakarta.transaction.Transactional;
@@ -36,11 +40,17 @@ public class CompraService implements CompraApi {
     private final InventarioApi inventarioApi;
     private final LoteRepository loteRepository;
     private final MovimientoStockRepository movimientoStockRepository;
+    private final ProveedoresApi proveedoresApi;
+    private final CajaApi cajaApi;
 
     @Transactional
     public CompraResponse crear(UUID idUsuario, CompraRequest request) {
         if (!usuarioApi.existById(idUsuario)) {
             throw new ResourceNotFoundException("Usuario no encontrado");
+        }
+
+        if (request.getIdProveedor() != null && !proveedoresApi.existsById(request.getIdProveedor())) {
+            throw new BadRequestException("El proveedor especificado no existe");
         }
 
         Compra compra = toCompraEntity(request, idUsuario);
@@ -91,6 +101,10 @@ public class CompraService implements CompraApi {
             d.setIdCompra(compra.getId());
         }
         detalleCompraRepository.saveAll(detalles);
+
+        if (request.getIdSesion() != null) {
+            cajaApi.registrarSalidaAutomatica(request.getIdSesion(), idUsuario, total, "COMPRA", compra.getId());
+        }
 
         return toCompraResponse(compra, toDetalleCompraResponseList(detalles));
     }
@@ -153,15 +167,33 @@ public class CompraService implements CompraApi {
         return Compra.builder()
             .idUsuario(idUsuario)
             .total(0)
+            .idProveedor(request.getIdProveedor())
+            .tipoComprobante(request.getTipoComprobante())
+            .nroComprobante(request.getNroComprobante())
+            .observaciones(request.getObservaciones())
+            .idSesion(request.getIdSesion())
             .build();
     }
 
     private CompraResponse toCompraResponse(Compra compra, List<DetalleCompraResponse> detalle) {
+        ProveedorResponse proveedor = null;
+        if (compra.getIdProveedor() != null) {
+            try {
+                proveedor = proveedoresApi.getById(compra.getIdProveedor());
+            } catch (ResourceNotFoundException e) {
+                proveedor = null;
+            }
+        }
+
         return CompraResponse.builder()
             .id(compra.getId())
             .fecha(compra.getCreatedAt())
             .total(compra.getTotal())
             .detalle(detalle)
+            .proveedor(proveedor)
+            .tipoComprobante(compra.getTipoComprobante())
+            .nroComprobante(compra.getNroComprobante())
+            .observaciones(compra.getObservaciones())
             .build();
     }
 

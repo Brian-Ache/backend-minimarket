@@ -26,6 +26,21 @@ public class Compra {
 
     private float total;
 
+    @Column(name = "id_proveedor", nullable = true)
+    private UUID idProveedor;
+
+    @Column(name = "tipo_comprobante", nullable = true, length = 20)
+    private String tipoComprobante;
+
+    @Column(name = "nro_comprobante", nullable = true, length = 50)
+    private String nroComprobante;
+
+    @Column(nullable = true, length = 255)
+    private String observaciones;
+
+    @Column(name = "id_sesion", nullable = true)
+    private UUID idSesion;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)
     private LocalDateTime createdAt;

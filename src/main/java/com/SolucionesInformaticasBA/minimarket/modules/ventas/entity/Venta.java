@@ -33,6 +33,22 @@ public class Venta {
 
     private float total;
 
+    @Builder.Default
+    @Column(nullable = true)
+    private Boolean cobrada = false;
+
+    @Column(name = "fecha_cobro", nullable = true)
+    private LocalDateTime fechaCobro;
+
+    @Column(name = "metodo_pago", nullable = true, length = 20)
+    private String metodoPago;
+
+    @Column(name = "monto_recibido", nullable = true)
+    private Float montoRecibido;
+
+    @Column(name = "id_sesion", nullable = true)
+    private UUID idSesion;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)
     private LocalDateTime createdAt;

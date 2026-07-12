@@ -1,5 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto;
 
+import java.util.UUID;
+
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
@@ -22,4 +24,13 @@ public class ProductoRequest {
 
     private boolean manejaLotes;
 
+    @PositiveOrZero
+    private Float costo;
+
+    @PositiveOrZero
+    private Float margen;
+
+    private UUID idCategoria;
+
+    private UUID idProveedor;
 }

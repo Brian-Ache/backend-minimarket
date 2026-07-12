@@ -14,7 +14,11 @@ public interface VentaRepository extends JpaRepository<Venta, UUID> {
 
     Optional<Venta> findByIdAndDeletedAtIsNull(UUID id);
 
+    Optional<Venta> findByIdAndCobradaFalseAndDeletedAtIsNull(UUID id);
+
     List<Venta> findByIdUsuarioAndDeletedAtIsNull(UUID idUsuario);
 
     List<Venta> findByCreatedAtBetweenAndDeletedAtIsNull(LocalDateTime desde, LocalDateTime hasta);
+
+    List<Venta> findByCreatedAtBetweenAndCobradaTrueAndDeletedAtIsNull(LocalDateTime desde, LocalDateTime hasta);
 }

@@ -35,6 +35,18 @@ public class Producto {
     @Column(name = "maneja_lotes")
     private boolean manejaLotes;
 
+    @Column(nullable = true)
+    private Float costo;
+
+    @Column(nullable = true)
+    private Float margen;
+
+    @Column(name = "id_categoria", nullable = true)
+    private UUID idCategoria;
+
+    @Column(name = "id_proveedor", nullable = true)
+    private UUID idProveedor;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)
     private LocalDateTime createdAt;

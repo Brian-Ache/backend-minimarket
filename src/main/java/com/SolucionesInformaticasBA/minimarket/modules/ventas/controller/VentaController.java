@@ -1,7 +1,9 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.controller;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.format.annotation.DateTimeFormat;
@@ -17,6 +19,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.VentasApi;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.ResumenDiarioResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaResponse;
 
@@ -57,6 +62,20 @@ public class VentaController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime desde,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta) {
         return ResponseEntity.ok(ventasApi.getByFecha(desde, hasta));
+    }
+
+    @PostMapping("/v1/{id}/cobrar")
+    public ResponseEntity<CobrarVentaResponse> cobrar(
+            @PathVariable UUID id,
+            @RequestHeader UUID idUsuario,
+            @Valid @RequestBody CobrarVentaRequest request) {
+        return ResponseEntity.ok(ventasApi.cobrar(id, idUsuario, request));
+    }
+
+    @GetMapping("/v1/resumen/diario")
+    public ResponseEntity<ResumenDiarioResponse> getResumenDiario(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) Optional<LocalDate> fecha) {
+        return ResponseEntity.ok(ventasApi.getResumenDiario(fecha.orElse(LocalDate.now())));
     }
 
     @DeleteMapping("/v1/{id}")

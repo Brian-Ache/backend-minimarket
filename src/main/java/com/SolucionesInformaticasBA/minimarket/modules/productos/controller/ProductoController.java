@@ -1,6 +1,19 @@
 package com.SolucionesInformaticasBA.minimarket.modules.productos.controller;
 
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
@@ -9,19 +22,6 @@ import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.Product
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
-
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-
-import java.util.List;
-import java.util.UUID;
-
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 
 
 @RestController
@@ -38,13 +38,29 @@ public class ProductoController {
     }
 
     @GetMapping("/v1")
-    public ResponseEntity<List<ProductoResponse>> getAll() {
+    public ResponseEntity<List<ProductoResponse>> getAll(
+            @RequestParam Optional<UUID> categoria,
+            @RequestParam Optional<UUID> proveedor) {
+        if (categoria.isPresent() && proveedor.isPresent()) {
+            return ResponseEntity.ok(productosApi.getByCategoriaAndProveedor(categoria.get(), proveedor.get()));
+        }
+        if (categoria.isPresent()) {
+            return ResponseEntity.ok(productosApi.getByCategoria(categoria.get()));
+        }
+        if (proveedor.isPresent()) {
+            return ResponseEntity.ok(productosApi.getByProveedor(proveedor.get()));
+        }
         return ResponseEntity.ok(productosApi.getAll());
     }
 
     @GetMapping("/v1/{id}")
     public ResponseEntity<ProductoResponse> getById(@PathVariable UUID id){
         return ResponseEntity.ok(productosApi.getById(id));
+    }
+
+    @GetMapping("/v1/search")
+    public ResponseEntity<List<ProductoResponse>> search(@RequestParam String q) {
+        return ResponseEntity.ok(productosApi.search(q));
     }
 
     @GetMapping("/v1/barcode/{barcode}")

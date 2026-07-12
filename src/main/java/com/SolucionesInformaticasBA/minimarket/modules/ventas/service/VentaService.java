@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.service;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -7,6 +8,7 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 
+import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.Lote;
@@ -18,8 +20,11 @@ import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosAp
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.VentasApi;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.DetalleVentaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.DetalleVentaResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.ResumenDiarioResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.DetalleVenta;
@@ -43,6 +48,7 @@ public class VentaService implements VentasApi {
     private final InventarioApi inventarioApi;
     private final LoteRepository loteRepository;
     private final MovimientoStockRepository movimientoStockRepository;
+    private final CajaApi cajaApi;
 
     @Override
     @Transactional
@@ -57,6 +63,7 @@ public class VentaService implements VentasApi {
 
         Venta venta = Venta.builder()
             .idUsuario(idUsuario)
+            .idSesion(request.getIdSesion())
             .build();
 
         List<DetalleVenta> detalles = new ArrayList<>();
@@ -211,6 +218,73 @@ public class VentaService implements VentasApi {
         detalleVentaRepository.saveAll(detalles);
     }
 
+    @Override
+    @Transactional
+    public CobrarVentaResponse cobrar(UUID idVenta, UUID idUsuario, CobrarVentaRequest request) {
+        Venta venta = ventaRepository.findByIdAndCobradaFalseAndDeletedAtIsNull(idVenta)
+            .orElseThrow(() -> new BadRequestException("Venta no encontrada o ya está cobrada"));
+
+        if (request.getMontoRecibido() < venta.getTotal()) {
+            throw new BadRequestException("El monto recibido es menor al total de la venta");
+        }
+
+        float cambio = request.getMontoRecibido() - venta.getTotal();
+
+        venta.setCobrada(true);
+        venta.setFechaCobro(LocalDateTime.now());
+        venta.setMetodoPago(request.getMetodoPago());
+        venta.setMontoRecibido(request.getMontoRecibido());
+
+        venta = ventaRepository.save(venta);
+
+        if (venta.getIdSesion() != null) {
+            cajaApi.registrarEntradaAutomatica(
+                venta.getIdSesion(), idUsuario, venta.getTotal(), "VENTA", venta.getId());
+        }
+
+        List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(venta.getId());
+        VentaResponse ventaResponse = toVentaResponse(venta, toDetalleVentaResponseList(detalles));
+
+        return CobrarVentaResponse.builder()
+            .venta(ventaResponse)
+            .cambio(cambio)
+            .build();
+    }
+
+    @Override
+    public ResumenDiarioResponse getResumenDiario(LocalDate fecha) {
+        LocalDateTime desde = fecha.atStartOfDay();
+        LocalDateTime hasta = fecha.plusDays(1).atStartOfDay();
+
+        List<Venta> ventas = ventaRepository.findByCreatedAtBetweenAndCobradaTrueAndDeletedAtIsNull(desde, hasta);
+
+        int cantidadVentas = ventas.size();
+        float totalVentas = 0;
+        float totalEfectivo = 0;
+        float totalTarjeta = 0;
+        float totalTransferencia = 0;
+
+        for (Venta v : ventas) {
+            totalVentas += v.getTotal();
+            if ("EFECTIVO".equals(v.getMetodoPago())) {
+                totalEfectivo += v.getTotal();
+            } else if ("TARJETA".equals(v.getMetodoPago())) {
+                totalTarjeta += v.getTotal();
+            } else if ("TRANSFERENCIA".equals(v.getMetodoPago())) {
+                totalTransferencia += v.getTotal();
+            }
+        }
+
+        return ResumenDiarioResponse.builder()
+            .fecha(fecha)
+            .cantidadVentas(cantidadVentas)
+            .totalVentas(totalVentas)
+            .totalEfectivo(totalEfectivo)
+            .totalTarjeta(totalTarjeta)
+            .totalTransferencia(totalTransferencia)
+            .build();
+    }
+
     // Helpers
 
     private VentaResponse toVentaResponse(Venta venta, List<DetalleVentaResponse> detalles) {
@@ -219,6 +293,10 @@ public class VentaService implements VentasApi {
         response.setFecha(venta.getCreatedAt());
         response.setTotal(venta.getTotal());
         response.setDetalles(detalles);
+        response.setCobrada(venta.getCobrada());
+        response.setFechaCobro(venta.getFechaCobro());
+        response.setMetodoPago(venta.getMetodoPago());
+        response.setMontoRecibido(venta.getMontoRecibido());
         return response;
     }
 

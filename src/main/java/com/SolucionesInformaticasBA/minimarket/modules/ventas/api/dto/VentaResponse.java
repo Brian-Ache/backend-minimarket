@@ -12,4 +12,8 @@ public class VentaResponse {
     private LocalDateTime fecha;
     private float total;
     private List<DetalleVentaResponse> detalles;
+    private Boolean cobrada;
+    private LocalDateTime fechaCobro;
+    private String metodoPago;
+    private Float montoRecibido;
 }

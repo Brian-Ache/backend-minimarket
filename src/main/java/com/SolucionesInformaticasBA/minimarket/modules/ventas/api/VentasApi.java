@@ -1,9 +1,13 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.api;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.ResumenDiarioResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaResponse;
 
@@ -14,4 +18,6 @@ public interface VentasApi {
     List<VentaResponse> getByUsuario(UUID idUsuario);
     List<VentaResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta);
     void delete(UUID id);
+    CobrarVentaResponse cobrar(UUID idVenta, UUID idUsuario, CobrarVentaRequest request);
+    ResumenDiarioResponse getResumenDiario(LocalDate fecha);
 }

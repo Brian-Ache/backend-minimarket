@@ -6,10 +6,14 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 
+import com.SolucionesInformaticasBA.minimarket.modules.categorias.api.CategoriasApi;
+import com.SolucionesInformaticasBA.minimarket.modules.categorias.api.dto.CategoriaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.*;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.entity.Producto;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.repository.ProductoRepository;
+import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.ProveedoresApi;
+import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto.ProveedorResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
@@ -22,6 +26,8 @@ import lombok.AllArgsConstructor;
 public class ProductoService implements ProductosApi{
     private final ProductoRepository productoRepository;
     private final UsuarioApi usuarioApi;
+    private final CategoriasApi categoriasApi;
+    private final ProveedoresApi proveedoresApi;
 
     @Transactional
     public ProductoResponse crear(UUID idUsuario, ProductoRequest request){
@@ -29,10 +35,11 @@ public class ProductoService implements ProductosApi{
             throw new RuntimeException("Usuario no encontrado");
         }
 
-        // valido barcode unico (helper despues ??)
         if(productoRepository.findByBarcodeAndDeletedAtIsNull(request.getBarcode()) != null){
             throw new BadRequestException("Ya existe un producto con ese barcode");
         }
+
+        validarCategoriaYProveedor(request.getIdCategoria(), request.getIdProveedor());
 
         Producto producto = toEntity(request);
         Producto guardado = productoRepository.save(producto);
@@ -75,6 +82,8 @@ public class ProductoService implements ProductosApi{
             throw new BadRequestException("Ya existe un producto con ese barcode");
         }
 
+        validarCategoriaYProveedor(request.getIdCategoria(), request.getIdProveedor());
+
         if(!producto.getNombre().equals(request.getNombre())){
             producto.setNombre(request.getNombre());
         }
@@ -87,6 +96,18 @@ public class ProductoService implements ProductosApi{
         if(producto.isManejaLotes() != request.isManejaLotes()){
             producto.setManejaLotes(request.isManejaLotes());
         }
+        if(request.getCosto() != null && !request.getCosto().equals(producto.getCosto())){
+            producto.setCosto(request.getCosto());
+        }
+        if(request.getMargen() != null && !request.getMargen().equals(producto.getMargen())){
+            producto.setMargen(request.getMargen());
+        }
+        if(request.getIdCategoria() != null && !request.getIdCategoria().equals(producto.getIdCategoria())){
+            producto.setIdCategoria(request.getIdCategoria());
+        }
+        if(request.getIdProveedor() != null && !request.getIdProveedor().equals(producto.getIdProveedor())){
+            producto.setIdProveedor(request.getIdProveedor());
+        }
 
         Producto actualizado = productoRepository.save(producto);
         return toResponse(actualizado);
@@ -96,26 +117,90 @@ public class ProductoService implements ProductosApi{
     public void delete(UUID id){
         Producto p = productoRepository.findByIdAndDeletedAtIsNull(id);
         if(p == null) throw new ResourceNotFoundException("Producto no encontrado");
-        
+
         p.setDeletedAt(LocalDateTime.now());
         productoRepository.save(p);
     }
 
+    @Override
+    public List<ProductoResponse> search(String q) {
+        return productoRepository.findByNombreContainingIgnoreCase(q)
+            .stream().filter(p -> p.getDeletedAt() == null)
+            .map(this::toResponse)
+            .toList();
+    }
+
+    @Override
+    public List<ProductoResponse> getByCategoria(UUID idCategoria) {
+        return productoRepository.findByIdCategoriaAndDeletedAtIsNull(idCategoria)
+            .stream().map(this::toResponse).toList();
+    }
+
+    @Override
+    public List<ProductoResponse> getByProveedor(UUID idProveedor) {
+        return productoRepository.findByIdProveedorAndDeletedAtIsNull(idProveedor)
+            .stream().map(this::toResponse).toList();
+    }
+
+    @Override
+    public List<ProductoResponse> getByCategoriaAndProveedor(UUID idCategoria, UUID idProveedor) {
+        return productoRepository.findByIdCategoriaAndIdProveedorAndDeletedAtIsNull(idCategoria, idProveedor)
+            .stream().map(this::toResponse).toList();
+    }
+
     // Helpers
+
+    private void validarCategoriaYProveedor(UUID idCategoria, UUID idProveedor) {
+        if (idCategoria != null && !categoriasApi.existsById(idCategoria)) {
+            throw new BadRequestException("La categoría especificada no existe");
+        }
+        if (idProveedor != null && !proveedoresApi.existsById(idProveedor)) {
+            throw new BadRequestException("El proveedor especificado no existe");
+        }
+    }
+
     private Producto toEntity(ProductoRequest request){
-        return Producto.builder().nombre(request.getNombre())
+        return Producto.builder()
+            .nombre(request.getNombre())
             .barcode(request.getBarcode())
             .precio(request.getPrecio())
             .manejaLotes(request.isManejaLotes())
+            .costo(request.getCosto())
+            .margen(request.getMargen())
+            .idCategoria(request.getIdCategoria())
+            .idProveedor(request.getIdProveedor())
             .build();
     }
 
-    private ProductoResponse toResponse(Producto p){
-        return ProductoResponse.builder().id(p.getId())
+    private ProductoResponse toResponse(Producto p) {
+        CategoriaResponse categoria = null;
+        if (p.getIdCategoria() != null) {
+            try {
+                categoria = categoriasApi.getById(p.getIdCategoria());
+            } catch (ResourceNotFoundException e) {
+                categoria = null;
+            }
+        }
+
+        ProveedorResponse proveedor = null;
+        if (p.getIdProveedor() != null) {
+            try {
+                proveedor = proveedoresApi.getById(p.getIdProveedor());
+            } catch (ResourceNotFoundException e) {
+                proveedor = null;
+            }
+        }
+
+        return ProductoResponse.builder()
+            .id(p.getId())
             .nombre(p.getNombre())
             .barcode(p.getBarcode())
             .precio(p.getPrecio())
             .manejaLotes(p.isManejaLotes())
+            .costo(p.getCosto())
+            .margen(p.getMargen())
+            .categoria(categoria)
+            .proveedor(proveedor)
             .build();
     }
 }
