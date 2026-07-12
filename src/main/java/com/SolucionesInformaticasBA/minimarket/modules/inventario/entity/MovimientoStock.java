@@ -16,6 +16,8 @@ import lombok.*;
 @Getter
 @Setter
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class MovimientoStock {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

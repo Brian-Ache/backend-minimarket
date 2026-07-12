@@ -27,4 +27,6 @@ public interface LoteRepository extends JpaRepository<Lote,UUID>{
     List<Lote> findByFechaVencimientoAfterAndDeletedAtIsNull(LocalDate fecha);
 
     List<Lote> findAllByDeletedAtIsNull();
+
+    List<Lote> findByIdProductoAndDeletedAtIsNullOrderByFechaVencimientoAsc(UUID idProducto);
 }

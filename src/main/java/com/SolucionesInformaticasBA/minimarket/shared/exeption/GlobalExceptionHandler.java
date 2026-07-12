@@ -3,7 +3,6 @@ package com.SolucionesInformaticasBA.minimarket.shared.exeption;
 import java.time.LocalDateTime;
 import java.util.Map;
 
-import org.apache.coyote.BadRequestException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;

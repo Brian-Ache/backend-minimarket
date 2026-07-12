@@ -44,8 +44,7 @@ public class UsuarioService implements UsuarioApi {
 
     @Override
     public List<UsuarioResponse> getAll() {
-        return userRepository.findAll().stream()
-                .filter(user -> user.getDeletedAt() == null)
+        return userRepository.findAllByDeletedAtIsNull().stream()
                 .map(this::toUserResponse)
                 .toList();
     }

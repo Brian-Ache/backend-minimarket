@@ -13,6 +13,11 @@ import com.SolucionesInformaticasBA.minimarket.modules.compras.entity.*;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.repository.*;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.Lote;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.MovimientoStock;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.LoteRepository;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
@@ -29,6 +34,8 @@ public class CompraService implements CompraApi {
     private final UsuarioApi usuarioApi;
     private final ProductosApi productosApi;
     private final InventarioApi inventarioApi;
+    private final LoteRepository loteRepository;
+    private final MovimientoStockRepository movimientoStockRepository;
 
     @Transactional
     public CompraResponse crear(UUID idUsuario, CompraRequest request) {
@@ -48,13 +55,33 @@ public class CompraService implements CompraApi {
             detalles.add(detalle);
             total += detalle.getTotal();
 
-            inventarioApi.aumentar(MovimientoStockRequest.builder()
-                .idProducto(producto.getId())
-                .cantidad(d.getCantidad())
-                .tipo("COMPRA")
-                .motivo("Ingreso por compra")
-                .idUsuario(idUsuario)
-                .build());
+            if (producto.isManejaLotes()) {
+                Lote lote = Lote.builder()
+                    .idProducto(producto.getId())
+                    .numeroLote(d.getNumeroLote())
+                    .fechaVencimiento(d.getFechaVencimiento())
+                    .cantidad(d.getCantidad())
+                    .build();
+                lote = loteRepository.save(lote);
+
+                MovimientoStock m = MovimientoStock.builder()
+                    .idProducto(producto.getId())
+                    .idLote(lote.getId())
+                    .cantidad(d.getCantidad())
+                    .tipo(TipoMovimiento.COMPRA)
+                    .motivo("Ingreso por compra")
+                    .idUsuario(idUsuario)
+                    .build();
+                movimientoStockRepository.save(m);
+            } else {
+                inventarioApi.aumentar(MovimientoStockRequest.builder()
+                    .idProducto(producto.getId())
+                    .cantidad(d.getCantidad())
+                    .tipo("COMPRA")
+                    .motivo("Ingreso por compra")
+                    .idUsuario(idUsuario)
+                    .build());
+            }
         }
 
         compra.setTotal(total);
@@ -69,12 +96,8 @@ public class CompraService implements CompraApi {
     }
 
     public CompraResponse getById(UUID id) {
-        Compra compra = compraRepository.findById(id)
+        Compra compra = compraRepository.findByIdAndDeletedAtIsNull(id)
             .orElseThrow(() -> new ResourceNotFoundException("Compra no encontrada"));
-
-        if (compra.getDeletedAt() != null) {
-            throw new ResourceNotFoundException("Compra no encontrada");
-        }
 
         List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(id);
 
@@ -111,7 +134,7 @@ public class CompraService implements CompraApi {
 
     @Transactional
     public void delete(UUID id) {
-        Compra compra = compraRepository.findById(id)
+        Compra compra = compraRepository.findByIdAndDeletedAtIsNull(id)
             .orElseThrow(() -> new ResourceNotFoundException("Compra no encontrada"));
 
         compra.setDeletedAt(java.time.LocalDateTime.now());
@@ -160,7 +183,7 @@ public class CompraService implements CompraApi {
             .idCompra(detalle.getIdCompra())
             .idProducto(detalle.getIdProducto())
             .nombreProducto(detalle.getNombreProducto())
-            .batcode(detalle.getBarcode())
+            .barcode(detalle.getBarcode())
             .cantidad(detalle.getCantidad())
             .precioUnitario(detalle.getPrecioUnitario())
             .total(detalle.getTotal())

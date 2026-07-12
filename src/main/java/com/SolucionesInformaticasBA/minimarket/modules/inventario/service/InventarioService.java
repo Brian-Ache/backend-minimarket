@@ -18,6 +18,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.*;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
+import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
 import jakarta.transaction.Transactional;
@@ -34,6 +35,9 @@ public class InventarioService implements InventarioApi{
 
     @Transactional
     public StockResponse crear(StockRequest request){
+        if (!productosApi.existsById(request.getIdProducto())) {
+            throw new ResourceNotFoundException("Producto no encontrado");
+        }
         Stock stock = toStockEntity(request);
         Stock guadado = stockRepository.save(stock);
 
@@ -48,6 +52,9 @@ public class InventarioService implements InventarioApi{
     @Transactional
     public StockResponse aumentar(MovimientoStockRequest request){
         Stock stock = stockRepository.findByIdProductoAndDeletedAtIsNull(request.getIdProducto());
+        if (stock == null) {
+            throw new ResourceNotFoundException("Stock no encontrado para el producto");
+        }
         int nuevoStock = stock.getCantidad() + request.getCantidad();
 
         stock.setCantidad(nuevoStock);
@@ -68,7 +75,14 @@ public class InventarioService implements InventarioApi{
     @Transactional
     public StockResponse disminuir(MovimientoStockRequest request){
         Stock stock = stockRepository.findByIdProductoAndDeletedAtIsNull(request.getIdProducto());
+        if (stock == null) {
+            throw new ResourceNotFoundException("Stock no encontrado para el producto");
+        }
+
         int nuevoStock = stock.getCantidad() - request.getCantidad();
+        if (nuevoStock < 0) {
+            throw new BadRequestException("Stock insuficiente. Disponible: " + stock.getCantidad() + ", solicitado: " + request.getCantidad());
+        }
 
         stock.setCantidad(nuevoStock);
         stockRepository.save(stock);
@@ -141,6 +155,11 @@ public class InventarioService implements InventarioApi{
     @Transactional
     public LoteResponse crear(LoteRequest request){
         if(request.getFechaVencimiento() == null) throw new RuntimeException("Fecha de vencimiento obligatoria");
+
+        ProductoResponse producto = productosApi.getById(request.getIdProducto());
+        if (!producto.isManejaLotes()) {
+            throw new BadRequestException("El producto no maneja lotes");
+        }
 
         Lote lote = toLoteEntity(request);
         Lote guardado = loteRepository.save(lote);

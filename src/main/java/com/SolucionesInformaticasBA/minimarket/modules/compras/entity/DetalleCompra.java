@@ -14,6 +14,8 @@ import lombok.*;
 @Getter
 @Setter
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class DetalleCompra {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

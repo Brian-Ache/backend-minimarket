@@ -9,6 +9,11 @@ import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.Lote;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.MovimientoStock;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.LoteRepository;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
@@ -36,6 +41,8 @@ public class VentaService implements VentasApi {
     private final UsuarioApi usuarioApi;
     private final ProductosApi productosApi;
     private final InventarioApi inventarioApi;
+    private final LoteRepository loteRepository;
+    private final MovimientoStockRepository movimientoStockRepository;
 
     @Override
     @Transactional
@@ -75,13 +82,40 @@ public class VentaService implements VentasApi {
                 detalle.setIdProducto(producto.getId());
                 detalle.setNombreProducto(producto.getNombre());
 
-                inventarioApi.disminuir(MovimientoStockRequest.builder()
-                    .idProducto(producto.getId())
-                    .cantidad(d.getCantidad())
-                    .tipo("VENTA")
-                    .motivo("Venta realizada")
-                    .idUsuario(idUsuario)
-                    .build());
+                if (producto.isManejaLotes()) {
+                    int cantidadRestante = d.getCantidad();
+                    List<Lote> lotes = loteRepository.findByIdProductoAndDeletedAtIsNullOrderByFechaVencimientoAsc(producto.getId());
+                    for (Lote lote : lotes) {
+                        if (cantidadRestante <= 0) break;
+                        if (lote.getCantidad() <= 0) continue;
+
+                        int descontar = Math.min(lote.getCantidad(), cantidadRestante);
+                        lote.setCantidad(lote.getCantidad() - descontar);
+                        loteRepository.save(lote);
+                        cantidadRestante -= descontar;
+
+                        MovimientoStock m = MovimientoStock.builder()
+                            .idProducto(producto.getId())
+                            .idLote(lote.getId())
+                            .cantidad(-descontar)
+                            .tipo(TipoMovimiento.VENTA)
+                            .motivo("Venta realizada (FIFO)")
+                            .idUsuario(idUsuario)
+                            .build();
+                        movimientoStockRepository.save(m);
+                    }
+                    if (cantidadRestante > 0) {
+                        throw new BadRequestException("Stock insuficiente en lotes para el producto " + producto.getNombre());
+                    }
+                } else {
+                    inventarioApi.disminuir(MovimientoStockRequest.builder()
+                        .idProducto(producto.getId())
+                        .cantidad(d.getCantidad())
+                        .tipo("VENTA")
+                        .motivo("Venta realizada")
+                        .idUsuario(idUsuario)
+                        .build());
+                }
 
             } else if ("MANUAL".equals(d.getTipo())) {
                 if (d.getNombreManual() == null || d.getNombreManual().isBlank()) {
@@ -164,7 +198,7 @@ public class VentaService implements VentasApi {
     @Override
     @Transactional
     public void delete(UUID id) {
-        Venta venta = ventaRepository.findById(id)
+        Venta venta = ventaRepository.findByIdAndDeletedAtIsNull(id)
             .orElseThrow(() -> new ResourceNotFoundException("Venta no encontrada"));
 
         venta.setDeletedAt(LocalDateTime.now());

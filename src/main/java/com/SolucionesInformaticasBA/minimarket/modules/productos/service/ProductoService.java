@@ -45,8 +45,11 @@ public class ProductoService implements ProductosApi{
      }
 
     public ProductoResponse getById(UUID id){
-        return toResponse(productoRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Producto no encontrado")));
+        Producto producto = productoRepository.findByIdAndDeletedAtIsNull(id);
+        if (producto == null) {
+            throw new ResourceNotFoundException("Producto no encontrado");
+        }
+        return toResponse(producto);
     }
 
     public List<ProductoResponse> getAll(){

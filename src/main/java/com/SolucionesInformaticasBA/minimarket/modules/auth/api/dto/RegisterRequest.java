@@ -28,8 +28,4 @@ public class RegisterRequest {
     @NotBlank
     @Size(min = 8, max = 72)
     private String password;
-
-    @NotBlank
-    @Size(max = 20)
-    private String phone;
 }

@@ -10,8 +10,10 @@ import org.hibernate.annotations.UpdateTimestamp;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.EstadoLote;
 
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
@@ -19,6 +21,8 @@ import lombok.Setter;
 @Getter
 @Setter
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class Lote {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

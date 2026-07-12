@@ -10,7 +10,7 @@ public class DetalleCompraResponse {
     private UUID idCompra;
     private UUID idProducto;
     private String nombreProducto;
-    private String batcode;
+    private String barcode;
 
     private int cantidad;
     private float precioUnitario;
