@@ -1,42 +1,67 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.controller;
 
-import com.SolucionesInformaticasBA.minimarket.dto.request.VentaRequestDTO;
-import com.SolucionesInformaticasBA.minimarket.dto.response.VentaResponseDTO;
-import com.SolucionesInformaticasBA.minimarket.service.VentaService;
-
-import lombok.RequiredArgsConstructor;
-
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.VentasApi;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaResponse;
+
+import jakarta.validation.Valid;
+import lombok.AllArgsConstructor;
 
 @RestController
 @RequestMapping("/api/ventas")
-@RequiredArgsConstructor
+@AllArgsConstructor
 public class VentaController {
 
-    private final VentaService ventaService;
+    private final VentasApi ventasApi;
 
-    
-    @PostMapping//POST http://localhost:8080/api/ventas
-    public ResponseEntity<VentaResponseDTO> realizarVenta(
-            @RequestBody VentaRequestDTO request,
-            @RequestHeader("usuarioId") Long usuarioId
-    ) {
-
-        VentaResponseDTO response = ventaService.realizarVenta(request, usuarioId);
-
-        return ResponseEntity.ok(response);
+    @PostMapping("/v1")
+    public ResponseEntity<VentaResponse> realizarVenta(
+            @RequestHeader("idUsuario") UUID idUsuario,
+            @Valid @RequestBody VentaRequest request) {
+        return ResponseEntity.ok(ventasApi.realizarVenta(idUsuario, request));
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<VentaResponseDTO> getVenta(@PathVariable Long id) {
-        return ResponseEntity.ok(ventaService.getById(id));
+    @GetMapping("/v1/{id}")
+    public ResponseEntity<VentaResponse> getById(@PathVariable UUID id) {
+        return ResponseEntity.ok(ventasApi.getById(id));
     }
-    
-    @GetMapping
-    public ResponseEntity<List<VentaResponseDTO>> getAll() {
-        return ResponseEntity.ok(ventaService.getAll());
+
+    @GetMapping("/v1")
+    public ResponseEntity<List<VentaResponse>> getAll() {
+        return ResponseEntity.ok(ventasApi.getAll());
+    }
+
+    @GetMapping("/v1/usuario/{idUsuario}")
+    public ResponseEntity<List<VentaResponse>> getByUsuario(@PathVariable UUID idUsuario) {
+        return ResponseEntity.ok(ventasApi.getByUsuario(idUsuario));
+    }
+
+    @GetMapping("/v1/fecha")
+    public ResponseEntity<List<VentaResponse>> getByFecha(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime desde,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta) {
+        return ResponseEntity.ok(ventasApi.getByFecha(desde, hasta));
+    }
+
+    @DeleteMapping("/v1/{id}")
+    public ResponseEntity<Void> delete(@PathVariable UUID id) {
+        ventasApi.delete(id);
+        return ResponseEntity.noContent().build();
     }
 }

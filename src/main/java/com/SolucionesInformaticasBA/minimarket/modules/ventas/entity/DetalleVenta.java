@@ -7,8 +7,10 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
@@ -16,6 +18,8 @@ import lombok.Setter;
 @Getter
 @Setter
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class DetalleVenta {
 
     @Id
@@ -28,8 +32,9 @@ public class DetalleVenta {
     @Column(name = "id_producto", nullable = false)
     private UUID idProducto;
 
-    @Column(name = "nombre_manual")
-    private String nombreManual;
+    // nombre del producto vendido, tanto si existe en el sistema como si es manual
+    @Column(name = "nombre_producto")
+    private String nombreProducto;
 
     @Column(nullable = false)
     private int cantidad;

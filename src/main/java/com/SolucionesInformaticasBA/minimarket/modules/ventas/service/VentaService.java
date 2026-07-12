@@ -1,186 +1,214 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.service;
 
-import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 
-import com.SolucionesInformaticasBA.minimarket.dto.request.DetalleVentaProductoManualRequestDTO;
-import com.SolucionesInformaticasBA.minimarket.dto.request.DetalleVentaProductoSistemaRequestDTO;
-import com.SolucionesInformaticasBA.minimarket.dto.request.DetalleVentaRequestDTO;
-import com.SolucionesInformaticasBA.minimarket.dto.request.VentaRequestDTO;
-import com.SolucionesInformaticasBA.minimarket.dto.response.DetalleVentaResponseDTO;
-import com.SolucionesInformaticasBA.minimarket.dto.response.VentaResponseDTO;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
-import com.SolucionesInformaticasBA.minimarket.modules.productos.entity.Producto;
-import com.SolucionesInformaticasBA.minimarket.modules.stock.entity.MovimientoStock;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
+import org.springframework.stereotype.Service;
+
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.VentasApi;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.DetalleVentaRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.DetalleVentaResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.DetalleVenta;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.Venta;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.repository.DetalleVentaRepository;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.repository.VentaRepository;
+import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
+import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
 import jakarta.transaction.Transactional;
+import lombok.AllArgsConstructor;
 
-public class VentaService {
+@Service
+@AllArgsConstructor
+public class VentaService implements VentasApi {
+
+    private final VentaRepository ventaRepository;
+    private final DetalleVentaRepository detalleVentaRepository;
+    private final UsuarioApi usuarioApi;
+    private final ProductosApi productosApi;
+    private final InventarioApi inventarioApi;
+
+    @Override
     @Transactional
-    public VentaResponseDTO realizarVenta(VentaRequestDTO request, UUID usuarioId) {
+    public VentaResponse realizarVenta(UUID idUsuario, VentaRequest request) {
+        if (!usuarioApi.existById(idUsuario)) {
+            throw new ResourceNotFoundException("Usuario no encontrado");
+        }
 
-        Usuario usuario = usuarioApi.getUsuarioById(usuarioId);
+        if (request.getDetalles() == null || request.getDetalles().isEmpty()) {
+            throw new BadRequestException("La venta debe tener al menos un detalle");
+        }
 
-        Venta venta = Venta.builder().idUsuario(usuarioId).build();
+        Venta venta = Venta.builder()
+            .idUsuario(idUsuario)
+            .build();
 
         List<DetalleVenta> detalles = new ArrayList<>();
-        BigDecimal total = BigDecimal.ZERO;
+        float total = 0;
 
-        for (DetalleVentaRequestDTO d : request.getDetalles()) {
-
-            // 🔥 validación básica
-            if (d.getCantidad() == null || d.getCantidad() <= 0) {
-                throw new RuntimeException("Cantidad inválida");
+        for (DetalleVentaRequest d : request.getDetalles()) {
+            if (d.getCantidad() <= 0) {
+                throw new BadRequestException("Cantidad inválida");
             }
 
             DetalleVenta detalle = new DetalleVenta();
-            detalle.setVenta(venta);
+            float precio;
 
-            BigDecimal precio;
+            if ("PRODUCTO".equals(d.getTipo())) {
+                if (d.getIdProducto() == null) {
+                    throw new BadRequestException("idProducto requerido para tipo PRODUCTO");
+                }
 
-            // =========================
-            // 🟢 PRODUCTO DEL SISTEMA
-            // =========================
-            if (d instanceof DetalleVentaProductoSistemaRequestDTO p) {
+                ProductoResponse producto = productosApi.getById(d.getIdProducto());
 
-                Producto producto = productoRepository.findById(p.getProductoId())
-                        .orElseThrow(() -> new RuntimeException("Producto no encontrado"));
-
-                int stockActual = producto.getStock();
-                int cantidadVendida = d.getCantidad();
-
-                int cantidadADescontar = Math.min(stockActual, cantidadVendida);
-
-                // ➖ stock (nunca negativo)
-                producto.setStock(stockActual - cantidadADescontar);
-                productoRepository.save(producto);
-
-                // 💰 precio desde BD
                 precio = producto.getPrecio();
 
-                detalle.setProducto(producto);
-                detalle.setNombreManual(null);
+                detalle.setIdProducto(producto.getId());
+                detalle.setNombreProducto(producto.getNombre());
 
-                // 📦 movimiento stock
-                if (cantidadADescontar > 0) {
-                    MovimientoStock movimiento = new MovimientoStock();
-                    movimiento.setProducto(producto);
-                    movimiento.setCantidad(-cantidadADescontar);
-                    movimiento.setTipo(TipoMovimiento.VENTA);
-                    movimiento.setMotivo("Venta realizada");
-                    movimiento.setUsuario(usuario);
+                inventarioApi.disminuir(MovimientoStockRequest.builder()
+                    .idProducto(producto.getId())
+                    .cantidad(d.getCantidad())
+                    .tipo("VENTA")
+                    .motivo("Venta realizada")
+                    .idUsuario(idUsuario)
+                    .build());
 
-                    movimientoStockRepository.save(movimiento);
-                }
-            }
-
-            // =========================
-            // 🟡 PRODUCTO MANUAL
-            // =========================
-            else if (d instanceof DetalleVentaProductoManualRequestDTO m) {
-
-                if (m.getNombreManual() == null || m.getNombreManual().isBlank()) {
-                    throw new RuntimeException("Nombre manual requerido");
+            } else if ("MANUAL".equals(d.getTipo())) {
+                if (d.getNombreManual() == null || d.getNombreManual().isBlank()) {
+                    throw new BadRequestException("nombreManual requerido para tipo MANUAL");
                 }
 
-                if (m.getPrecioUnitario() == null) {
-                    throw new RuntimeException("Precio requerido para producto manual");
+                if (d.getPrecioUnitario() <= 0) {
+                    throw new BadRequestException("precioUnitario debe ser mayor a 0 para tipo MANUAL");
                 }
 
-                precio = m.getPrecioUnitario();
+                precio = d.getPrecioUnitario();
 
                 detalle.setIdProducto(null);
-                detalle.setNombreManual(m.getNombreManual());
+                detalle.setNombreProducto(d.getNombreManual());
+
+            } else {
+                throw new BadRequestException("Tipo de detalle inválido: " + d.getTipo());
             }
 
-            else {
-                throw new RuntimeException("Tipo de detalle inválido");
-            }
-
-            // =========================
-            // 🧩 CAMPOS COMUNES
-            // =========================
             detalle.setCantidad(d.getCantidad());
             detalle.setPrecioUnitario(precio);
 
             detalles.add(detalle);
 
-            // 💰 subtotal y total
-            BigDecimal subtotal = precio.multiply(BigDecimal.valueOf(d.getCantidad()));
-            total = total.add(subtotal);
+            total += precio * d.getCantidad();
         }
 
-        // =========================
-        // 💾 GUARDADO
-        // =========================
-        venta.setDetalles(detalles);
         venta.setTotal(total);
+        venta = ventaRepository.save(venta);
 
-        Venta ventaGuardada = ventaRepository.save(venta);
-
-        // =========================
-        // 🔁 RESPONSE
-        // =========================
-        return mapToResponse(ventaGuardada);
-    }
-
-    // =========================
-    // 🔁 MAPPER SIMPLE INTERNO
-    // =========================
-    private VentaResponseDTO mapToResponse(Venta venta) {
-
-        VentaResponseDTO dto = new VentaResponseDTO();
-        dto.setId(venta.getId());
-        dto.setFecha(venta.getFecha());
-        dto.setTotal(venta.getTotal());
-
-        List<DetalleVentaResponseDTO> detallesDTO = new ArrayList<>();
-
-        for (DetalleVenta d : venta.getDetalles()) {
-
-            DetalleVentaResponseDTO det = new DetalleVentaResponseDTO();
-
-            if (d.getProducto() != null) {
-                det.setProductoId(d.getProducto().getId());
-                det.setNombre(d.getProducto().getNombre());
-                det.setTipo("PRODUCTO");
-            } else {
-                det.setNombre(d.getNombreManual());
-                det.setTipo("MANUAL");
-            }
-
-            det.setCantidad(d.getCantidad());
-            det.setPrecioUnitario(d.getPrecioUnitario());
-
-            det.setSubtotal(
-                d.getPrecioUnitario().multiply(BigDecimal.valueOf(d.getCantidad()))
-            );
-
-            detallesDTO.add(det);
+        for (DetalleVenta d : detalles) {
+            d.setIdVenta(venta.getId());
         }
+        detalleVentaRepository.saveAll(detalles);
 
-        dto.setDetalles(detallesDTO);
-
-        return dto;
-    }
-    
-    // Método para obtener una venta por ID
-    public VentaResponseDTO getById(Long id) {
-
-    Venta venta = ventaRepository.findByIdConDetalles(id)
-            .orElseThrow(() -> new RuntimeException("Venta no encontrada"));
-
-    return mapToResponse(venta);
+        return toVentaResponse(venta, toDetalleVentaResponseList(detalles));
     }
 
-    // Método para obtener todas las ventas
-    public List<VentaResponseDTO> getAll() {
-    return ventaRepository.findAllConDetalles()
-            .stream()
-            .map(this::mapToResponse)
+    @Override
+    public VentaResponse getById(UUID id) {
+        Venta venta = ventaRepository.findByIdAndDeletedAtIsNull(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Venta no encontrada"));
+
+        List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(id);
+
+        return toVentaResponse(venta, toDetalleVentaResponseList(detalles));
+    }
+
+    @Override
+    public List<VentaResponse> getAll() {
+        return ventaRepository.findAll().stream()
+            .filter(v -> v.getDeletedAt() == null)
+            .map(v -> {
+                List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(v.getId());
+                return toVentaResponse(v, toDetalleVentaResponseList(detalles));
+            })
+            .toList();
+    }
+
+    @Override
+    public List<VentaResponse> getByUsuario(UUID idUsuario) {
+        return ventaRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario).stream()
+            .map(v -> {
+                List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(v.getId());
+                return toVentaResponse(v, toDetalleVentaResponseList(detalles));
+            })
+            .toList();
+    }
+
+    @Override
+    public List<VentaResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta) {
+        return ventaRepository.findByCreatedAtBetweenAndDeletedAtIsNull(desde, hasta).stream()
+            .map(v -> {
+                List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(v.getId());
+                return toVentaResponse(v, toDetalleVentaResponseList(detalles));
+            })
+            .toList();
+    }
+
+    @Override
+    @Transactional
+    public void delete(UUID id) {
+        Venta venta = ventaRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Venta no encontrada"));
+
+        venta.setDeletedAt(LocalDateTime.now());
+        ventaRepository.save(venta);
+
+        List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(id);
+        for (DetalleVenta d : detalles) {
+            d.setDeletedAt(LocalDateTime.now());
+        }
+        detalleVentaRepository.saveAll(detalles);
+    }
+
+    // Helpers
+
+    private VentaResponse toVentaResponse(Venta venta, List<DetalleVentaResponse> detalles) {
+        VentaResponse response = new VentaResponse();
+        response.setId(venta.getId());
+        response.setFecha(venta.getCreatedAt());
+        response.setTotal(venta.getTotal());
+        response.setDetalles(detalles);
+        return response;
+    }
+
+    private DetalleVentaResponse toDetalleVentaResponse(DetalleVenta detalle) {
+        DetalleVentaResponse response = new DetalleVentaResponse();
+
+        response.setNombre(detalle.getNombreProducto());
+
+        if (detalle.getIdProducto() != null) {
+            response.setIdProducto(detalle.getIdProducto());
+            response.setTipo("PRODUCTO");
+        } else {
+            response.setTipo("MANUAL");
+        }
+        response.setCantidad(detalle.getCantidad());
+        response.setPrecioUnitario(detalle.getPrecioUnitario());
+        response.setSubtotal(detalle.getPrecioUnitario() * detalle.getCantidad());
+
+        return response;
+    }
+
+    private List<DetalleVentaResponse> toDetalleVentaResponseList(List<DetalleVenta> detalles) {
+        return detalles.stream()
+            .map(this::toDetalleVentaResponse)
             .toList();
     }
 }

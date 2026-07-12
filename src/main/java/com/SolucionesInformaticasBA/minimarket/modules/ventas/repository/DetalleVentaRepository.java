@@ -9,7 +9,7 @@ import java.util.UUID;
 
 public interface DetalleVentaRepository extends JpaRepository<DetalleVenta, UUID> {
 
-    List<DetalleVenta> findByVentaId(UUID ventaId);
+    List<DetalleVenta> findByIdVentaAndDeletedAtIsNull(UUID idVenta);
 
-    List<DetalleVenta> findByProductoId(UUID productoId);
+    List<DetalleVenta> findByIdProductoAndDeletedAtIsNull(UUID idProducto);
 }
