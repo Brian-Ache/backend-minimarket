@@ -1,145 +1,176 @@
 package com.SolucionesInformaticasBA.minimarket.modules.compras.service;
 
-import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.CompraApi;
-import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.CompraRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.DetalleCompraRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.compras.entity.Compra;
-import com.SolucionesInformaticasBA.minimarket.modules.compras.entity.DetalleCompra;
-import com.SolucionesInformaticasBA.minimarket.modules.compras.repository.CompraRepository;
-import com.SolucionesInformaticasBA.minimarket.modules.compras.repository.DetalleCompraRepository;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
+import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.*;
+import com.SolucionesInformaticasBA.minimarket.modules.compras.entity.*;
+import com.SolucionesInformaticasBA.minimarket.modules.compras.repository.*;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
-import com.SolucionesInformaticasBA.minimarket.modules.productos.entity.Producto;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
+import jakarta.transaction.Transactional;
 import lombok.AllArgsConstructor;
 
 @Service
 @AllArgsConstructor
-public class CompraService implements CompraApi{
+public class CompraService implements CompraApi {
     private final CompraRepository compraRepository;
     private final DetalleCompraRepository detalleCompraRepository;
     private final UsuarioApi usuarioApi;
     private final ProductosApi productosApi;
+    private final InventarioApi inventarioApi;
 
-        @Transactional
-    public CompraResponseDTO registrarCompra(CompraRequestDTO request, UUID usuarioId) {
-
-        // 🔍 Usuario
-        Usuario usuario = usuarioApi.getUsuarioById(usuarioId); // Respeto contrato del modulo y principio de responsabilidad unica
-
-
-
-            producto.setStock(producto.getStock() + d.getCantidad());
-            productoRepository.save(producto);
-
-            // 🧩 Crear detalle
-            DetalleCompra detalle = detalleCompraMapper.toEntity(d, producto, compra);
-            detalles.add(detalle);
-
-            // 💰 Calcular subtotal
-            float subtotal = d.getPrecioUnitario()
-                    .multiply(BigDecimal.valueOf(d.getCantidad()));
-
-            total = total.add(subtotal);
-
-            // 📦 Movimiento de stock
-            MovimientoStock movimiento = new MovimientoStock();
-            movimiento.setIdProducto(producto.getId());
-            movimiento.setCantidad(d.getCantidad());
-            movimiento.setTipo(TipoMovimiento.COMPRA);
-            movimiento.setMotivo("Ingreso de mercadería");
-            movimiento.setIdUsuario(usuario.getId());
-
-            movimientoStockRepository.save(movimiento);
+    @Transactional
+    public CompraResponse crear(UUID idUsuario, CompraRequest request) {
+        if (!usuarioApi.existById(idUsuario)) {
+            throw new ResourceNotFoundException("Usuario no encontrado");
         }
 
-        // 🧾 Setear compra
-        compra.setDetalles(detalles);
+        Compra compra = toCompraEntity(request, idUsuario);
+
+        List<DetalleCompra> detalles = new ArrayList<>();
+        float total = 0;
+
+        for (DetalleCompraRequest d : request.getDetalle()) {
+            ProductoResponse producto = productosApi.getById(d.getIdProducto());
+
+            DetalleCompra detalle = toDetalleCompraEntity(d, producto, compra);
+            detalles.add(detalle);
+            total += detalle.getTotal();
+
+            inventarioApi.aumentar(MovimientoStockRequest.builder()
+                .idProducto(producto.getId())
+                .cantidad(d.getCantidad())
+                .tipo("COMPRA")
+                .motivo("Ingreso por compra")
+                .idUsuario(idUsuario)
+                .build());
+        }
+
         compra.setTotal(total);
+        compra = compraRepository.save(compra);
 
-        // 💾 Guardar compra
-        Compra compraGuardada = compraRepository.save(compra);
+        for (DetalleCompra d : detalles) {
+            d.setIdCompra(compra.getId());
+        }
+        detalleCompraRepository.saveAll(detalles);
 
-        return compraMapper.toDTO(compraGuardada);
+        return toCompraResponse(compra, toDetalleCompraResponseList(detalles));
     }
 
-
-    // Método para obtener todas las compras
-    public List<CompraResponseDTO> getAll() {
-
-        return compraRepository.findAll()
-                .stream()
-                .map(compraMapper::toDTO)
-                .toList();
-    }
-
-
-    // Método para obtener una venta por ID
-    public CompraResponseDTO getById(Long id) {
-
+    public CompraResponse getById(UUID id) {
         Compra compra = compraRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Compra no encontrada"));
+            .orElseThrow(() -> new ResourceNotFoundException("Compra no encontrada"));
 
-        return compraMapper.toDTO(compra);
+        if (compra.getDeletedAt() != null) {
+            throw new ResourceNotFoundException("Compra no encontrada");
+        }
+
+        List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(id);
+
+        return toCompraResponse(compra, toDetalleCompraResponseList(detalles));
+    }
+
+    public List<CompraResponse> getAll() {
+        return compraRepository.findAll().stream()
+            .filter(c -> c.getDeletedAt() == null)
+            .map(c -> {
+                List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
+                return toCompraResponse(c, toDetalleCompraResponseList(detalles));
+            })
+            .toList();
+    }
+
+    public List<CompraResponse> getByUsuario(UUID idUsuario) {
+        return compraRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario).stream()
+            .map(c -> {
+                List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
+                return toCompraResponse(c, toDetalleCompraResponseList(detalles));
+            })
+            .toList();
+    }
+
+    public List<CompraResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta) {
+        return compraRepository.findByCreatedAtBetweenAndDeletedAtIsNull(desde, hasta).stream()
+            .map(c -> {
+                List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
+                return toCompraResponse(c, toDetalleCompraResponseList(detalles));
+            })
+            .toList();
+    }
+
+    @Transactional
+    public void delete(UUID id) {
+        Compra compra = compraRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Compra no encontrada"));
+
+        compra.setDeletedAt(java.time.LocalDateTime.now());
+        compraRepository.save(compra);
+
+        List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(id);
+        for (DetalleCompra d : detalles) {
+            d.setDeletedAt(java.time.LocalDateTime.now());
+        }
+        detalleCompraRepository.saveAll(detalles);
     }
 
     // Helpers
 
-    public CompraResponseDTO toDTO(Compra compra) {
-
-        CompraResponseDTO dto = new CompraResponseDTO();
-
-        dto.setId(compra.getId());
-        dto.setFecha(compra.getCreatedAt());
-        dto.setTotal(compra.getTotal());
-
-        DetalleCompra d = 
-
-        List<DetalleCompraResponseDTO> detalle = 
-
-        // buscar por id de compra y armar la lista, compra no deberia llevar detalles (dependencia doble)
-        List<DetalleCompraResponseDTO> detalles = compra.getDetalles()
-                .stream()
-                .map(detalleCompraMapper::toDTO)
-                .toList();
-
-        dto.setDetalles(detalles);
-
-        return dto;
+    private Compra toCompraEntity(CompraRequest request, UUID idUsuario) {
+        return Compra.builder()
+            .idUsuario(idUsuario)
+            .total(0)
+            .build();
     }
 
-    public DetalleCompra toEntity(
-            DetalleCompraRequestDTO dto,
-            Producto producto,
-            Compra compra
-    ) {
-        DetalleCompra d = new DetalleCompra();
-
-        d.setIdProducto(producto.getId());
-        d.setIdCompra(compra.getId());
-        d.setCantidad(dto.getCantidad());
-        d.setPrecioUnitario(dto.getPrecioUnitario());
-
-        return d;
+    private CompraResponse toCompraResponse(Compra compra, List<DetalleCompraResponse> detalle) {
+        return CompraResponse.builder()
+            .id(compra.getId())
+            .fecha(compra.getCreatedAt())
+            .total(compra.getTotal())
+            .detalle(detalle)
+            .build();
     }
 
-    public DetalleCompraResponseDTO toDTO(DetalleCompra d) {
-        Optional<Producto> p = productoRepository.findById(d.getIdProducto());
-        DetalleCompraResponseDTO dto = new DetalleCompraResponseDTO();
+    private DetalleCompra toDetalleCompraEntity(DetalleCompraRequest request, ProductoResponse producto, Compra compra) {
+        float subtotal = request.getPrecioUnitario() * request.getCantidad();
+        return DetalleCompra.builder()
+            .idCompra(compra.getId())
+            .idProducto(producto.getId())
+            .nombreProducto(producto.getNombre())
+            .barcode(producto.getBarcode())
+            .precioUnitario(request.getPrecioUnitario())
+            .cantidad(request.getCantidad())
+            .total(subtotal)
+            .build();
+    }
 
-        dto.setIdProducto(d.getIdProducto());
-        dto.setNombreProducto(p.getNombre());
-        dto.setCantidad(d.getCantidad());
-        dto.setPrecioUnitario(d.getPrecioUnitario());
+    private DetalleCompraResponse toDetalleCompraResponse(DetalleCompra detalle) {
+        return DetalleCompraResponse.builder()
+            .idCompra(detalle.getIdCompra())
+            .idProducto(detalle.getIdProducto())
+            .nombreProducto(detalle.getNombreProducto())
+            .batcode(detalle.getBarcode())
+            .cantidad(detalle.getCantidad())
+            .precioUnitario(detalle.getPrecioUnitario())
+            .total(detalle.getTotal())
+            .build();
+    }
 
-        return dto;
+    private List<DetalleCompraResponse> toDetalleCompraResponseList(List<DetalleCompra> detalles) {
+        return detalles.stream()
+            .map(this::toDetalleCompraResponse)
+            .toList();
     }
 
 }
