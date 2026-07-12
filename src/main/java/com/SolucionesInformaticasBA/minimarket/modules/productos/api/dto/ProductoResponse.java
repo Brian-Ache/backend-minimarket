@@ -13,5 +13,4 @@ public class ProductoResponse {
     private String barcode;
     private float precio;
     private boolean manejaLotes;
-    private int stock;
 }

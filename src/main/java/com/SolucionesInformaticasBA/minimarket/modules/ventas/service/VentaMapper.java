@@ -3,7 +3,7 @@ package com.SolucionesInformaticasBA.minimarket.modules.ventas.service;
 import org.springframework.stereotype.Component;
 
 import com.SolucionesInformaticasBA.minimarket.dto.response.VentaResponseDTO;
-import com.SolucionesInformaticasBA.minimarket.model.entity.Venta;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.Venta;
 
 @Component
 public class VentaMapper {

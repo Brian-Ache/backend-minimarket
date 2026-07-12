@@ -22,6 +22,4 @@ public class ProductoRequest {
 
     private boolean manejaLotes;
 
-    @PositiveOrZero
-    private int stock;
 }

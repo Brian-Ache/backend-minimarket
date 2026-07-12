@@ -9,12 +9,12 @@ import com.SolucionesInformaticasBA.minimarket.dto.request.DetalleVentaRequestDT
 import com.SolucionesInformaticasBA.minimarket.dto.request.VentaRequestDTO;
 import com.SolucionesInformaticasBA.minimarket.dto.response.DetalleVentaResponseDTO;
 import com.SolucionesInformaticasBA.minimarket.dto.response.VentaResponseDTO;
-import com.SolucionesInformaticasBA.minimarket.model.entity.DetalleVenta;
-import com.SolucionesInformaticasBA.minimarket.model.entity.Venta;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.entity.Producto;
 import com.SolucionesInformaticasBA.minimarket.modules.stock.entity.MovimientoStock;
-import com.SolucionesInformaticasBA.minimarket.modules.stock.enums.TipoMovimiento;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.DetalleVenta;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.Venta;
 
 import jakarta.transaction.Transactional;
 

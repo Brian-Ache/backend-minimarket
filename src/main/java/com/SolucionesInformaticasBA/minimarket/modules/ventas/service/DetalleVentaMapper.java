@@ -4,11 +4,10 @@ import java.math.BigDecimal;
 
 import org.springframework.stereotype.Component;
 
-import com.SolucionesInformaticasBA.minimarket.model.entity.DetalleVenta;
-
 import com.SolucionesInformaticasBA.minimarket.dto.request.DetalleVentaRequestDTO;
 import com.SolucionesInformaticasBA.minimarket.dto.response.DetalleVentaResponseDTO;
-import com.SolucionesInformaticasBA.minimarket.model.entity.Venta;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.DetalleVenta;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.Venta;
 import com.SolucionesInformaticasBA.minimarket.model.entity.Producto;
 @Component
 public class DetalleVentaMapper {

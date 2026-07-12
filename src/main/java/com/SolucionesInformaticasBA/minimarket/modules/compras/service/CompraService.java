@@ -12,10 +12,9 @@ import com.SolucionesInformaticasBA.minimarket.modules.compras.entity.Compra;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.entity.DetalleCompra;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.repository.CompraRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.repository.DetalleCompraRepository;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.entity.Producto;
-import com.SolucionesInformaticasBA.minimarket.modules.stock.entity.MovimientoStock;
-import com.SolucionesInformaticasBA.minimarket.modules.stock.enums.TipoMovimiento;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 
