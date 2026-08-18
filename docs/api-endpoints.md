@@ -48,31 +48,9 @@ Errores de validación (`400`):
 
 Todas públicas (no requieren token).
 
-### `POST /api/auth/v1/register`
-
-Registra un nuevo usuario. Se crea con `enabled: false`.
-
-**Request:**
-```json
-{
-  "nombre": "string (max 50)",
-  "apellido": "string (max 50)",
-  "email": "email (max 100)",
-  "username": "string (max 50)",
-  "password": "string (min 8, max 72)"
-}
-```
-
-**Response `200`:**
-```json
-{
-  "accessToken": "string (JWT)",
-  "refreshToken": "string",
-  "usuario": { "...UsuarioResponse" }
-}
-```
-
----
+> **`POST /api/auth/v1/register` fue dado de baja.** El alta de usuarios la hace únicamente el
+> ADMIN mediante [`POST /api/users/v1`](#post-apiusersv1). La lógica de autorregistro sigue
+> implementada en `AuthApi.register` pero sin endpoint, a la espera del envío de mails.
 
 ### `POST /api/auth/v1/login`
 
@@ -84,7 +62,14 @@ Registra un nuevo usuario. Se crea con `enabled: false`.
 }
 ```
 
-**Response `200`:** igual que register
+**Response `200`:**
+```json
+{
+  "accessToken": "string (JWT)",
+  "refreshToken": "string",
+  "usuario": { "...UsuarioResponse" }
+}
+```
 
 ---
 
@@ -105,11 +90,18 @@ Rota el refresh token (invalida el anterior, genera uno nuevo).
 
 ### `POST /api/auth/v1/logout`
 
-Revoca el refresh token.
+Revoca el refresh token. Es idempotente: desloguear un token ya revocado o inexistente
+también devuelve `204`.
 
-**Header:** `Authorization: Bearer <refreshToken>`
+**Request:**
+```json
+{ "refreshToken": "string" }
+```
 
 **Response `204`**
+
+> El refresh token va en el **body**, no en el header. El access token sigue siendo válido
+> hasta que expire (`jwt.expiration-hours`).
 
 ---
 
@@ -154,6 +146,29 @@ Confirma el reseteo con el token generado.
 ---
 
 ## 2. Usuarios — `/api/users/v1`
+
+### `POST /api/users/v1`
+
+Alta de usuario. **Solo ADMIN** (`403` para EMPLEADO). El usuario se crea con `enabled: true`,
+listo para loguearse.
+
+**Request:**
+```json
+{
+  "nombre": "string (max 50)",
+  "apellido": "string (max 50)",
+  "email": "email (max 100)",
+  "username": "string (max 50)",
+  "password": "string (min 8, max 72)",
+  "rol": "ADMIN | EMPLEADO (opcional, default EMPLEADO)"
+}
+```
+
+**Response `201`:** `{ ...UsuarioResponse }`
+
+**Errores:** `400` email ya registrado · `403` sin rol ADMIN
+
+---
 
 ### `GET /api/users/v1/me`
 

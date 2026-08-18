@@ -13,7 +13,6 @@ import com.SolucionesInformaticasBA.minimarket.shared.exeption.UnauthorizedExcep
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
@@ -30,8 +29,11 @@ public class JwtProvider {
 
     @PostConstruct
     public void init() {
-        if (secret.isBlank()) {
-            secret = generateDefaultSecret();
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException(
+                    "jwt.secret es obligatorio. Definí la variable de entorno JWT_SECRET "
+                            + "con al menos 32 bytes en base64 (openssl rand -base64 48). "
+                            + "Un secreto autogenerado invalidaría todas las sesiones en cada arranque.");
         }
         secretKey = Keys.hmacShaKeyFor(Decoders.BASE64.decode(secret));
     }
@@ -64,8 +66,4 @@ public class JwtProvider {
         return UUID.fromString(claims.getSubject());
     }
 
-    private String generateDefaultSecret() {
-        var key = Keys.secretKeyFor(SignatureAlgorithm.HS256);
-        return java.util.Base64.getEncoder().encodeToString(key.getEncoded());
-    }
 }

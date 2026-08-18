@@ -5,10 +5,13 @@ import java.util.UUID;
 
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.ActualizarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarPasswordRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CrearUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 
 public interface UsuarioApi {
+    UsuarioResponse crear(CrearUsuarioRequest request);
+
     Usuario getUsuarioById(UUID id);
 
     UsuarioResponse getById(UUID id);

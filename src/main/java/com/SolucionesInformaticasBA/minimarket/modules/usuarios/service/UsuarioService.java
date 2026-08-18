@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.*;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.repository.UsuarioRepository;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
@@ -23,6 +24,32 @@ public class UsuarioService implements UsuarioApi {
 
     private final UsuarioRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+
+    /**
+     * Alta de usuarios. Es exclusiva del ADMIN (ver UsuarioController), por eso el usuario
+     * queda habilitado de entrada: no hay autorregistro ni verificación por email en el MVP.
+     */
+    @Override
+    @Transactional
+    public UsuarioResponse crear(CrearUsuarioRequest request) {
+        if (userRepository.existsByEmailAndDeletedAtIsNull(request.getEmail())) {
+            throw new BadRequestException("El email ya está registrado");
+        }
+
+        Usuario u = Usuario.builder()
+                .nombre(request.getNombre())
+                .apellido(request.getApellido())
+                .email(request.getEmail())
+                .username(request.getUsername())
+                .hashPassword(passwordEncoder.encode(request.getPassword()))
+                .rol(request.getRol() != null ? request.getRol() : Rol.EMPLEADO)
+                .enabled(true)
+                .build();
+
+        // saveAndFlush: sin el flush, created_at/updated_at todavía no están en la entidad
+        // y la respuesta del alta saldría con esos campos en null.
+        return toUserResponse(userRepository.saveAndFlush(u));
+    }
 
     @Override
     public Usuario getUsuarioById(UUID id){

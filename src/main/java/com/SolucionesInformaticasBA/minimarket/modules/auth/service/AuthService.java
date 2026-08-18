@@ -25,8 +25,10 @@ import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundE
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.UnauthorizedException;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class AuthService implements AuthApi {
 
@@ -37,7 +39,7 @@ public class AuthService implements AuthApi {
 
     @Override
     @Transactional
-    public AuthResponse register(RegisterRequest request) {
+    public UsuarioResponse register(RegisterRequest request) {
         if (userRepository.existsByEmailAndDeletedAtIsNull(request.getEmail())) {
             throw new BadRequestException("El email ya está registrado");
         }
@@ -48,21 +50,19 @@ public class AuthService implements AuthApi {
                 .email(request.getEmail())
                 .username(request.getUsername())
                 .hashPassword(passwordEncoder.encode(request.getPassword()))
-                .rol(Rol.EMPLEADO) // Revisar por defecto
-                .enabled(false)
+                .rol(Rol.EMPLEADO)
+                .enabled(false) // se habilita al verificar el email
                 .build();
 
-        user = userRepository.save(user);
-        tokenService.generateVerificationToken(user.getId());
+        user = userRepository.saveAndFlush(user);
 
-        var accessToken = jwtProvider.generateAccessToken(user.getId(), user.getRol());
-        var refreshToken = tokenService.generateRefreshToken(user.getId());
+        // El token en claro solo se puede entregar acá: en la base queda hasheado.
+        String tokenVerificacion = tokenService.generateVerificationToken(user.getId());
+        log.info("Usuario {} creado por autorregistro. Token de verificación pendiente de envío por email.",
+                user.getEmail());
+        log.debug("Token de verificación de {}: {}", user.getEmail(), tokenVerificacion);
 
-        return AuthResponse.builder()
-                .accessToken(accessToken)
-                .refreshToken(refreshToken)
-                .usuario(toUserResponse(user))
-                .build();
+        return toUserResponse(user);
     }
 
     @Override

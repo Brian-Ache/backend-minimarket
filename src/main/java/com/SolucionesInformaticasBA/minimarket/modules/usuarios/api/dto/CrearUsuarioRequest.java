@@ -1,16 +1,14 @@
-package com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto;
+package com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto;
+
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
-/**
- * Alta autogestionada de usuarios. Preparada pero sin endpoint: hoy el alta la hace
- * el ADMIN vía POST /api/users/v1. Ver {@code AuthApi#register}.
- */
 @Data
-public class RegisterRequest {
+public class CrearUsuarioRequest {
 
     @NotBlank
     @Size(min = 1, max = 50)
@@ -32,4 +30,7 @@ public class RegisterRequest {
     @NotBlank
     @Size(min = 8, max = 72)
     private String password;
+
+    /** Opcional: si no se indica, se crea como EMPLEADO. */
+    private Rol rol;
 }

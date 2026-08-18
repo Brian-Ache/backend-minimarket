@@ -93,25 +93,24 @@ public class TokenService {
         authTokensRepository.save(token);
     }
 
+    /**
+     * Revoca una sesión. Es idempotente a propósito: desloguear un token ya revocado,
+     * expirado o inexistente no es un error para el cliente.
+     */
     @Transactional
     public void revokeRefreshToken(String rawToken) {
-        var hashedToken = hashToken(rawToken);
-        var refreshToken = refreshTokenRepository.findByTokenHashAndIsActiveTrue(hashedToken)
-                .orElseThrow(() -> new BadRequestException("Refresh token inválido"));
-
-        refreshToken.setRevokedAt(LocalDateTime.now());
-        refreshToken.setActive(false);
-        refreshTokenRepository.save(refreshToken);
+        refreshTokenRepository.findByTokenHashAndIsActiveTrue(hashToken(rawToken))
+                .ifPresent(refreshToken -> {
+                    refreshToken.setRevokedAt(LocalDateTime.now());
+                    refreshToken.setActive(false);
+                    refreshTokenRepository.save(refreshToken);
+                });
     }
 
+    /** Cierra todas las sesiones del usuario (cambio de contraseña, baja, etc.). */
     @Transactional
-    public void revokeAllUserRefreshTokens(UUID userId) {
-        var activeTokens = refreshTokenRepository.findByUserIdAndIsActiveTrue(userId);
-        activeTokens.ifPresent(token -> {
-            token.setRevokedAt(LocalDateTime.now());
-            token.setActive(false);
-            refreshTokenRepository.save(token);
-        });
+    public int revokeAllUserRefreshTokens(UUID userId) {
+        return refreshTokenRepository.revokeAllByUserId(userId, LocalDateTime.now());
     }
 
     private String createAuthToken(UUID userId, TokenType tokenType, long durationHours) {

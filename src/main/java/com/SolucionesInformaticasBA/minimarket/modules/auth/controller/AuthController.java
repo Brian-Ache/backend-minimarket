@@ -1,10 +1,8 @@
 package com.SolucionesInformaticasBA.minimarket.modules.auth.controller;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -21,10 +19,7 @@ public class AuthController {
 
     private final AuthApi authApi;
 
-    @PostMapping("/v1/register")
-    public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(authApi.register(request));
-    }
+    // El alta de usuarios es exclusiva del ADMIN: POST /api/users/v1
 
     @PostMapping("/v1/login")
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
@@ -37,9 +32,8 @@ public class AuthController {
     }
 
     @PostMapping("/v1/logout")
-    public ResponseEntity<Void> logout(@RequestHeader("Authorization") String authHeader) {
-        var token = authHeader.replace("Bearer ", "");
-        authApi.logout(token);
+    public ResponseEntity<Void> logout(@Valid @RequestBody RefreshTokenRequest request) {
+        authApi.logout(request.getRefreshToken());
         return ResponseEntity.noContent().build();
     }
 

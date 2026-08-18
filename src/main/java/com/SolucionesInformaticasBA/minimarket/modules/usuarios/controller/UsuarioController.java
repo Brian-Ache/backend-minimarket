@@ -3,7 +3,9 @@ package com.SolucionesInformaticasBA.minimarket.modules.usuarios.controller;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.ActualizarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarPasswordRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CrearUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
@@ -28,6 +31,12 @@ import lombok.RequiredArgsConstructor;
 public class UsuarioController {
 
     private final UsuarioApi usuarioApi;
+
+    @PostMapping("/v1")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UsuarioResponse> crear(@Valid @RequestBody CrearUsuarioRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(usuarioApi.crear(request));
+    }
 
     @GetMapping("/v1/me")
     public ResponseEntity<UsuarioResponse> getMe() {

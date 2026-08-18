@@ -2,9 +2,11 @@ package com.SolucionesInformaticasBA.minimarket.security;
 
 
 import java.io.IOException;
+import java.util.List;
 
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -33,8 +35,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 var userId = claims.getSubject();
                 var rol = claims.get("rol", String.class);
 
+                // El prefijo ROLE_ es el que espera hasRole(...) / @PreAuthorize
+                var authorities = rol != null
+                        ? List.of(new SimpleGrantedAuthority("ROLE_" + rol))
+                        : List.<SimpleGrantedAuthority>of();
+
                 var authentication = new UsernamePasswordAuthenticationToken(
-                        userId, null, java.util.List.of());
+                        userId, null, authorities);
 
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (Exception e) {
