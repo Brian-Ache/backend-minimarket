@@ -103,7 +103,8 @@ Logout -> revoca el refresh token (idempotente)
 - **Contraseñas:** BCrypt.
 - **Baja de usuario:** revoca sus sesiones; su JWT deja de servir en la request siguiente.
 - **Configuración obligatoria:** `JWT_SECRET`. Sin él la app no arranca.
-- **CSRF** deshabilitado (API stateless); **CORS** configurable por `CORS_ALLOWED_ORIGINS`.
+- **CSRF** deshabilitado (API stateless); **CORS** configurable por `CORS_ALLOWED_ORIGINS`,
+  con GET, POST, PUT, PATCH, DELETE y OPTIONS habilitados.
 
 > El access token no se puede revocar antes de que expire: el logout invalida el refresh token,
 > pero el JWT ya emitido sigue siendo válido hasta su vencimiento. Con 24 h por defecto la
@@ -274,7 +275,4 @@ Configuración por variables de entorno (ver `.env.example`): `DB_URL`, `DB_USER
   siga así, los totales acumulan error de redondeo.
 - El envío de emails no está implementado, así que la verificación de cuenta y el reseteo
   autogestionado de contraseña quedan fuera del circuito.
-- **CORS no permite `PATCH`** (`CorsConfig` habilita GET, POST, PUT, DELETE y OPTIONS), pero
-  `PATCH /api/users/v1/{id}` existe: desde el navegador el preflight lo rechaza. Es agregar el
-  método a la lista.
 - Queda un directorio `controller/` vacío en la raíz del paquete, resto de la estructura previa.

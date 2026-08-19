@@ -20,8 +20,10 @@ public class CorsConfig {
 
         configuration.setAllowedOriginPatterns(allowedOrigins);
 
+        // PATCH incluido: lo usa PATCH /api/users/v1/{id}. Sin él, el navegador rechaza
+        // la petición en el preflight y el endpoint es inalcanzable desde el front.
         configuration.setAllowedMethods(
-                List.of("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
         );
 
         configuration.setAllowedHeaders(List.of("*"));

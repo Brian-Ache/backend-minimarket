@@ -78,6 +78,8 @@ Requieren cambios en el front:
   en `null`.
 - Nuevo `GET /api/ventas/v1/resumen/sesion/{idSesion}`: desglose por medio de pago de un turno,
   complemento del corte.
+- **CORS habilita `PATCH`**, que faltaba en la lista de métodos permitidos: el preflight del
+  navegador rechazaba `PATCH /api/users/v1/{id}` y el endpoint era inalcanzable desde el front.
 
 ### Base de datos
 
