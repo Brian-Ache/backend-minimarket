@@ -27,4 +27,7 @@ public interface UsuarioApi {
     void changePassword(UUID id, CambiarPasswordRequest request);
 
     boolean existById(UUID id);
+
+    /** Activo (sin baja lógica) y habilitado. Lo consulta el filtro JWT en cada request. */
+    boolean puedeOperar(UUID id);
 }

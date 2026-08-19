@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
@@ -32,9 +32,8 @@ public class ProductoController {
 
     @PostMapping("/v1")
     public ResponseEntity<ProductoResponse> crear(
-            @RequestHeader UUID idUsuario,
             @Valid @RequestBody ProductoRequest request) {
-        return ResponseEntity.ok(productosApi.crear(idUsuario, request));
+        return ResponseEntity.ok(productosApi.crear(SecurityUtils.getCurrentUserId(), request));
     }
 
     @GetMapping("/v1")

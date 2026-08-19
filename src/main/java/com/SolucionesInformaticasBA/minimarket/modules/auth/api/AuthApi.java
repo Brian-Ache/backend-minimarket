@@ -28,6 +28,9 @@ public interface AuthApi {
 
     void logout(String refreshToken);
 
+    /** Cierra todas las sesiones abiertas de un usuario (baja, bloqueo, cambio de rol). */
+    void revokeAllSessions(java.util.UUID userId);
+
     void verifyEmail(VerifyEmailRequest request);
 
     void requestPasswordReset(PasswordResetRequest request);

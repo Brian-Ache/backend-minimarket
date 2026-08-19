@@ -1,6 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.modules.inventario.api;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.AjusteStockRequest;
@@ -24,4 +25,11 @@ public interface InventarioApi {
     List<LoteResponse> getByEstado(String estado);
 
     List<MovimientoStockResponse> obtenerMovimientos(UUID idProducto);
+
+    /**
+     * Existencias reales de cada producto: la tabla `stock` para los productos comunes y la
+     * suma de sus lotes activos para los que manejan lotes. Se resuelve en dos consultas
+     * agregadas, no una por producto.
+     */
+    Map<UUID, Integer> getExistenciasPorProducto();
 }

@@ -13,7 +13,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,6 +23,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVent
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.ResumenDiarioResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
@@ -37,9 +37,8 @@ public class VentaController {
 
     @PostMapping("/v1")
     public ResponseEntity<VentaResponse> realizarVenta(
-            @RequestHeader("idUsuario") UUID idUsuario,
             @Valid @RequestBody VentaRequest request) {
-        return ResponseEntity.ok(ventasApi.realizarVenta(idUsuario, request));
+        return ResponseEntity.ok(ventasApi.realizarVenta(SecurityUtils.getCurrentUserId(), request));
     }
 
     @GetMapping("/v1/{id}")
@@ -67,15 +66,23 @@ public class VentaController {
     @PostMapping("/v1/{id}/cobrar")
     public ResponseEntity<CobrarVentaResponse> cobrar(
             @PathVariable UUID id,
-            @RequestHeader UUID idUsuario,
             @Valid @RequestBody CobrarVentaRequest request) {
-        return ResponseEntity.ok(ventasApi.cobrar(id, idUsuario, request));
+        return ResponseEntity.ok(ventasApi.cobrar(id, SecurityUtils.getCurrentUserId(), request));
     }
 
     @GetMapping("/v1/resumen/diario")
     public ResponseEntity<ResumenDiarioResponse> getResumenDiario(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) Optional<LocalDate> fecha) {
         return ResponseEntity.ok(ventasApi.getResumenDiario(fecha.orElse(LocalDate.now())));
+    }
+
+    /**
+     * Desglose por medio de pago de un turno de caja. Complementa el corte, que solo cuenta
+     * efectivo: acá se ve cuánto se cobró con tarjeta y transferencia en ese mismo turno.
+     */
+    @GetMapping("/v1/resumen/sesion/{idSesion}")
+    public ResponseEntity<ResumenDiarioResponse> getResumenPorSesion(@PathVariable UUID idSesion) {
+        return ResponseEntity.ok(ventasApi.getResumenPorSesion(idSesion));
     }
 
     @DeleteMapping("/v1/{id}")

@@ -3,15 +3,22 @@ package com.SolucionesInformaticasBA.minimarket.shared.exeption;
 import java.time.LocalDateTime;
 import java.util.Map;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
+
+import lombok.extern.slf4j.Slf4j;
 
 @RestControllerAdvice
+@Slf4j
 public class GlobalExceptionHandler {
     
 
@@ -47,8 +54,40 @@ public class GlobalExceptionHandler {
                 "timestamp", LocalDateTime.now()));
     }
 
+    /**
+     * Ruta inexistente. Sin este handler la excepción caía en el catch-all de abajo y una URL
+     * mal escrita respondía 500, haciendo pasar un error del cliente por una falla del servidor.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(NoResourceFoundException ex) {
+        return buildResponse(HttpStatus.NOT_FOUND, "Recurso no encontrado");
+    }
+
+    /** Tipo inválido en un path variable o query param (por ejemplo un UUID mal formado). */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        return buildResponse(HttpStatus.BAD_REQUEST,
+                "Valor inválido para el parámetro '" + ex.getName() + "'");
+    }
+
+    /** JSON mal formado o ilegible. */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> handleNotReadable(HttpMessageNotReadableException ex) {
+        return buildResponse(HttpStatus.BAD_REQUEST, "El cuerpo de la petición es inválido");
+    }
+
+    /** Choque con una restricción de la base (único, clave foránea, etc.). */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleDataIntegrity(DataIntegrityViolationException ex) {
+        log.warn("Violación de integridad", ex);
+        return buildResponse(HttpStatus.CONFLICT,
+                "La operación choca con una restricción de datos existente");
+    }
+
+    // Sin este log, cualquier 500 desaparece sin rastro y no hay forma de diagnosticarlo.
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneral(Exception ex) {
+        log.error("Error no controlado", ex);
         return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Error interno del servidor");
     }
 

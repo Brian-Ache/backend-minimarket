@@ -42,6 +42,10 @@ public class MovimientoStock {
     @Column(name = "id_usuario")
     private UUID idUsuario;
 
+    // Venta o compra que originó el movimiento. Permite revertirlo al anularla.
+    @Column(name = "id_referencia")
+    private UUID idReferencia;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

@@ -51,6 +51,26 @@ public class SesionCaja {
 
     private Float diferencia;
 
+    // Desglose del arqueo, congelado al cerrar. Un corte es un documento contable:
+    // se guarda como quedó, no se recalcula al consultarlo.
+    @Column(name = "total_ventas")
+    private Float totalVentas;
+
+    @Column(name = "cantidad_ventas")
+    private Integer cantidadVentas;
+
+    @Column(name = "total_compras")
+    private Float totalCompras;
+
+    @Column(name = "cantidad_compras")
+    private Integer cantidadCompras;
+
+    @Column(name = "total_entradas_manuales")
+    private Float totalEntradasManuales;
+
+    @Column(name = "total_salidas_manuales")
+    private Float totalSalidasManuales;
+
     @Column(length = 255)
     private String observaciones;
 

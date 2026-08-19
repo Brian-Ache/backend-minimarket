@@ -8,6 +8,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.AuthApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.*;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
@@ -24,6 +25,7 @@ public class UsuarioService implements UsuarioApi {
 
     private final UsuarioRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuthApi authApi;
 
     /**
      * Alta de usuarios. Es exclusiva del ADMIN (ver UsuarioController), por eso el usuario
@@ -98,6 +100,9 @@ public class UsuarioService implements UsuarioApi {
         Usuario u = findActiveUser(id);
         u.setDeletedAt(LocalDateTime.now());
         userRepository.save(u);
+
+        // Sin esto el usuario dado de baja seguiría operando con sus tokens vigentes.
+        authApi.revokeAllSessions(id);
     }
 
     @Override
@@ -115,6 +120,11 @@ public class UsuarioService implements UsuarioApi {
 
     public boolean existById(UUID id){
         return userRepository.existsByIdAndDeletedAtIsNull(id);
+    }
+
+    @Override
+    public boolean puedeOperar(UUID id){
+        return userRepository.existsByIdAndDeletedAtIsNullAndEnabledTrue(id);
     }
 
     private Usuario findActiveUser(UUID id) {

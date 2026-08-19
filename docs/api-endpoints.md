@@ -14,11 +14,13 @@ Base URL: `http://localhost:8080`
 ```
 
 | Status | Causa |
-| ------ | ---------------------------------- |
-| `400` | `BadRequestException` o validación |
-| `401` | `UnauthorizedException` |
-| `404` | `ResourceNotFoundException` |
-| `500` | Error interno del servidor |
+| ------ | ---------------------------------------------------------------- |
+| `400` | Validación, regla de negocio, JSON ilegible o parámetro mal formado |
+| `401` | Token ausente, inválido, expirado o de un usuario dado de baja |
+| `403` | Autenticado pero sin permisos para ese recurso |
+| `404` | Recurso inexistente o eliminado · ruta inexistente |
+| `409` | Choque con una restricción de datos existente |
+| `500` | Error interno (queda registrado en el log del servidor con stacktrace) |
 
 Errores de validación (`400`):
 
@@ -38,9 +40,31 @@ Errores de validación (`400`):
 - **IDs:** todos UUID v4
 - **Fechas:** ISO 8601 (`2026-07-12T15:00:00`)
 - **Soft delete:** GET por ID de registro eliminado responde `404`
-- **Header `idUsuario`:** los endpoints que requieren identificar al usuario autenticado lo reciben como header `idUsuario: UUID` (no se extrae del JWT)
+- **Identidad:** el usuario que ejecuta la operación se toma **del JWT**. El header `idUsuario`
+  fue eliminado de todos los endpoints; si se envía, se ignora
+- **Roles:** `ADMIN` y `EMPLEADO`. Ver la matriz de permisos más abajo
+- **Códigos de auth:** `401` token ausente, inválido, expirado o de un usuario dado de baja
+  (el front debe reautenticar) · `403` autenticado pero sin permisos para ese recurso
 - **Swagger UI:** `/swagger-ui/index.html`
 - **OpenAPI spec:** `/v3/api-docs`
+
+### Matriz de permisos
+
+| Operación | ADMIN | EMPLEADO |
+|---|:---:|:---:|
+| Vender, cobrar, comprar | ✅ | ✅ |
+| Abrir caja, movimientos manuales | ✅ | ✅ |
+| Inventario: stock, lotes, ajustes | ✅ | ✅ |
+| Consultar catálogo (GET productos/categorías/proveedores) | ✅ | ✅ |
+| Ver y editar su propio usuario, cambiar su contraseña | ✅ | ✅ |
+| Crear/editar/borrar productos, categorías y proveedores | ✅ | ❌ |
+| Anular ventas y compras (DELETE) | ✅ | ❌ |
+| Corte de caja | ✅ | ❌ |
+| Reportes | ✅ | ❌ |
+| Alta, listado, edición y baja de usuarios | ✅ | ❌ |
+
+Cambiar la contraseña exige conocer la actual, así que **ni el ADMIN puede hacerlo por otro
+usuario**: para eso está el flujo de reseteo.
 
 ---
 
@@ -256,8 +280,6 @@ Soft delete.
 
 ### `POST /api/productos/v1`
 
-**Header:** `idUsuario: UUID`
-
 **Request:**
 ```json
 {
@@ -464,8 +486,6 @@ Soft delete.
 
 Registra una venta con sus detalles. Si el producto maneja lotes, descuenta del lote más próximo a vencer (FIFO). Si no, descuenta del stock global.
 
-**Header:** `idUsuario: UUID`
-
 **Request:**
 ```json
 {
@@ -477,10 +497,12 @@ Registra una venta con sus detalles. Si el producto maneja lotes, descuenta del 
       "nombreManual": "string | null (si PRODUCTO)",
       "precioUnitario": "float (requerido si MANUAL, ignorado si PRODUCTO)"
     }
-  ],
-  "idSesion": "UUID (opcional)"
+  ]
 }
 ```
+
+> `idSesion` ya no se envía: la sesión de caja se resuelve al cobrar, y solo si el pago es
+> en efectivo.
 
 **Response `200`:**
 ```json
@@ -496,15 +518,18 @@ Registra una venta con sus detalles. Si el producto maneja lotes, descuenta del 
 }
 ```
 
-**Error `400`:** stock insuficiente
+**Error `400`:** stock insuficiente · sin detalles · cantidad <= 0
 
 ---
 
 ### `POST /api/ventas/v1/{id}/cobrar`
 
-Marca una venta como cobrada. Si tiene `idSesion`, registra entrada automática en caja.
+Marca una venta como cobrada.
 
-**Header:** `idUsuario: UUID`
+**Solo el pago en efectivo impacta en la caja.** Si `metodoPago` es `EFECTIVO`, la venta se
+asocia a la sesión abierta y genera la entrada automática; con `TARJETA` o `TRANSFERENCIA` la
+venta queda igualmente cobrada y registrada con su medio de pago, pero no toca el arqueo —que
+cuenta billetes— ni requiere que haya una caja abierta.
 
 **Request:**
 ```json
@@ -518,21 +543,37 @@ Marca una venta como cobrada. Si tiene `idSesion`, registra entrada automática 
 ```json
 {
   "venta": { "...VentaResponse" },
-  "cambio": "float (montoRecibido - total)"
+  "cambio": "float (solo en EFECTIVO; 0 en los demás medios)"
 }
 ```
 
-**Error `400`:** si ya está cobrada o monto recibido < total
+**Errores `400`:** ya está cobrada · monto recibido < total · método de pago inválido ·
+`EFECTIVO` sin ninguna sesión de caja abierta
 
 ---
 
 ### `GET /api/ventas/v1/resumen/diario`
 
-Resumen de ventas cobradas del día.
+Resumen de las ventas **cobradas** del día, desglosado por medio de pago. Filtra por
+**fecha de cobro**, no de creación: una venta abierta ayer y cobrada hoy es plata de hoy.
 
 **Query params:** `?fecha=2026-07-12` (opcional, default hoy)
 
-**Response `200`:**
+**Response `200`:** `{ ...ResumenVentas }`
+
+---
+
+### `GET /api/ventas/v1/resumen/sesion/{idSesion}`
+
+Mismo desglose, acotado a un turno de caja. Complementa el corte, que solo cuenta efectivo:
+acá se ve cuánto entró por tarjeta y transferencia en ese turno.
+
+**Response `200`:** `{ ...ResumenVentas }`
+
+---
+
+### ResumenVentas
+
 ```json
 {
   "fecha": "date",
@@ -580,9 +621,17 @@ Filtra por rango de fechas.
 
 ### `DELETE /api/ventas/v1/{id}`
 
-Soft delete de la venta y sus detalles.
+Anula la venta: la marca como eliminada junto a sus detalles y **devuelve la mercadería al
+stock**. Si el producto maneja lotes, repone en cada lote exactamente la cantidad que se le
+descontó, incluso cuando el FIFO repartió una línea entre varios. Los movimientos originales
+no se borran: la reversa queda registrada como un movimiento `AJUSTE` adicional.
+
+**Solo ADMIN.**
 
 **Response `204`**
+
+**Error `400`:** la venta ya está cobrada — movió plata y puede estar dentro de un corte
+cerrado, así que corresponde una devolución, no una anulación
 
 ---
 
@@ -605,9 +654,10 @@ Soft delete de la venta y sus detalles.
 
 ### `POST /api/compras/v1`
 
-Registra una compra. Si el producto maneja lotes, crea automáticamente un `Lote` y registra el movimiento de stock. Si tiene `idSesion`, registra salida automática en caja.
+Registra una compra. Si el producto maneja lotes, crea automáticamente un `Lote` y registra el movimiento de stock.
 
-**Header:** `idUsuario: UUID`
+Con `pagoEnEfectivo: true` se descuenta de la caja: genera la salida automática en la sesión
+abierta (falla con `400` si no hay ninguna). Reemplaza al `idSesion` que antes mandaba el cliente.
 
 **Request:**
 ```json
@@ -625,7 +675,7 @@ Registra una compra. Si el producto maneja lotes, crea automáticamente un `Lote
   "tipoComprobante": "REMITO | FACTURA (opcional)",
   "nroComprobante": "string (opcional)",
   "observaciones": "string (opcional)",
-  "idSesion": "UUID (opcional)"
+  "pagoEnEfectivo": "boolean (default false)"
 }
 ```
 
@@ -673,9 +723,16 @@ Registra una compra. Si el producto maneja lotes, crea automáticamente un `Lote
 
 ### `DELETE /api/compras/v1/{id}`
 
-Soft delete.
+Anula la compra: saca del stock lo que había ingresado y, si se pagó por caja, devuelve la
+plata al turno con un movimiento de origen `REVERSA`. Los lotes que quedan en cero se dan de
+baja.
+
+**Solo ADMIN.**
 
 **Response `204`**
+
+**Errores `400`:** ya se vendió parte de la mercadería ingresada · la compra se pagó por caja
+y ese turno ya cerró su corte (o no hay ninguno abierto)
 
 ---
 
@@ -702,8 +759,6 @@ Módulo unificado de caja: sesiones, movimientos manuales, resumen diario y cort
 ### `POST /api/caja/v1/abrir`
 
 Abre una nueva sesión de caja. Valida que no exista otra sesión abierta.
-
-**Header:** `idUsuario: UUID`
 
 **Request:**
 ```json
@@ -741,8 +796,6 @@ Obtiene la sesión de caja actualmente abierta.
 
 Registra un movimiento manual de entrada (ej: "fondo para vuelto").
 
-**Header:** `idUsuario: UUID`
-
 **Request:**
 ```json
 {
@@ -758,8 +811,6 @@ Registra un movimiento manual de entrada (ej: "fondo para vuelto").
 ### `POST /api/caja/v1/salidas`
 
 Registra un movimiento manual de salida (ej: "compra de café para el personal").
-
-**Header:** `idUsuario: UUID`
 
 **Request:**
 ```json
@@ -797,34 +848,54 @@ Lista movimientos de caja. Si no se especifica rango, usa la sesión activa.
 
 ---
 
+### `GET /api/caja/v1/resumen/sesion`
+
+Estado del turno abierto: es lo que se mira antes de cerrar la caja. Solo cuenta **efectivo**,
+que es lo que el cajero tiene para contar. Para ver cuánto se cobró con tarjeta o transferencia
+en ese mismo turno, usar [`GET /api/ventas/v1/resumen/sesion/{idSesion}`](#get-apiventasv1resumensesionidsesion).
+
+**Response `200`:** `{ ...ResumenCaja }`
+
+**Error `400`:** no hay ninguna caja abierta
+
+---
+
 ### `GET /api/caja/v1/resumen/diario`
 
-Resumen completo de la sesión activa (ventas, compras, movimientos manuales, saldo esperado).
+Resumen de un día completo, calculado sobre los movimientos de esa fecha. **No requiere que
+haya una caja abierta**, así que sirve para consultar días ya cerrados. El saldo inicial es la
+suma de los saldos de apertura de las sesiones de ese día.
 
 **Query params:** `?fecha=2026-07-12` (opcional, default hoy)
 
-**Response `200`:**
+**Response `200`:** `{ ...ResumenCaja }`
+
+---
+
+### ResumenCaja
+
 ```json
 {
   "fecha": "date",
   "saldoInicial": "float",
-  "totalVentas": "float",
-  "cantidadVentas": "int",
-  "totalCompras": "float",
-  "cantidadCompras": "int",
-  "totalEntradasManuales": "float",
-  "totalSalidasManuales": "float",
+  "totalVentas": "float | null",
+  "cantidadVentas": "int | null",
+  "totalCompras": "float | null",
+  "cantidadCompras": "int | null",
+  "totalEntradasManuales": "float | null",
+  "totalSalidasManuales": "float | null",
   "saldoEsperado": "float"
 }
 ```
+
+> Los totales son `null` únicamente en cortes cerrados antes de que el desglose se persistiera:
+> significa "dato desconocido", que no es lo mismo que 0.
 
 ---
 
 ### `POST /api/caja/v1/corte`
 
 Realiza el corte de caja: cierra la sesión activa, calcula saldo esperado y diferencia.
-
-**Header:** `idUsuario: UUID`
 
 **Request:**
 ```json
@@ -872,6 +943,8 @@ Corte por ID. Valida que la sesión esté cerrada.
 ---
 
 ### `GET /api/caja/v1/corte/historial`
+
+El desglose (`resumen`) de cada corte queda congelado al cerrarlo, no se recalcula.
 
 Historial de todos los cortes realizados.
 
@@ -949,8 +1022,6 @@ Soft delete.
 ### `POST /api/inventario/v1/controlar`
 
 Ajuste físico de stock. Registra la diferencia como movimiento `AJUSTE`.
-
-**Header:** `idUsuario: UUID`
 
 **Request:**
 ```json
@@ -1048,6 +1119,12 @@ Shorthands para filtrar por estado.
 
 ## 10. Reportes — `/api/reportes/v1`
 
+**Solo ADMIN.**
+
+> Todos los reportes de dinero usan la misma fuente: **ventas cobradas, filtradas por fecha de
+> cobro**, con rangos sin solapamiento entre días consecutivos. `/reportes/ventas`,
+> `/reportes/ganancias` y `/ventas/resumen/diario` devuelven el mismo total para el mismo rango.
+
 ### `GET /api/reportes/v1/ventas`
 
 Reporte de ventas por día en un rango de fechas.
@@ -1075,7 +1152,15 @@ Reporte de ventas por día en un rango de fechas.
 
 ### `GET /api/reportes/v1/ganancias`
 
-Reporte de ganancias (ventas - compras) por día.
+Ganancia del período, calculada como **margen sobre lo vendido y cobrado**:
+`gananciaBruta = totalVentas - costoMercaderiaVendida`, usando el costo congelado en cada línea
+de venta al momento de venderla.
+
+`totalCompras` se informa aparte y **no entra en el cálculo**: es flujo de caja. Restarlo daría
+pérdida cada vez que se repone mercadería, aunque el negocio haya ganado plata.
+
+`unidadesSinCosto` cuenta las unidades vendidas sin costo conocido (ítems manuales o productos
+sin costo cargado). Si es alto, la ganancia informada está sobrestimada.
 
 **Query params:** `desde=2026-07-01&hasta=2026-07-12`
 
@@ -1085,14 +1170,17 @@ Reporte de ganancias (ventas - compras) por día.
   "desde": "date",
   "hasta": "date",
   "totalVentas": "float",
-  "totalCompras": "float",
+  "costoMercaderiaVendida": "float",
   "gananciaBruta": "float",
+  "totalCompras": "float",
+  "unidadesSinCosto": "int",
   "porDia": [
     {
       "fecha": "date",
       "ventas": "float",
-      "compras": "float",
-      "ganancia": "float"
+      "costo": "float",
+      "ganancia": "float",
+      "compras": "float"
     }
   ]
 }
@@ -1102,7 +1190,8 @@ Reporte de ganancias (ventas - compras) por día.
 
 ### `GET /api/reportes/v1/inventario`
 
-Stock actual de todos los productos.
+Stock actual de todos los productos. Para los productos que manejan lotes, `stockActual` es la
+suma de sus lotes activos (antes salía siempre en 0, porque solo se miraba la tabla `stock`).
 
 **Response `200`:**
 ```json

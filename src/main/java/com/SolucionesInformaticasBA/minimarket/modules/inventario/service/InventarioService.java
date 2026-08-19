@@ -3,6 +3,7 @@ package com.SolucionesInformaticasBA.minimarket.modules.inventario.service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -38,46 +39,47 @@ public class InventarioService implements InventarioApi{
         if (!productosApi.existsById(request.getIdProducto())) {
             throw new ResourceNotFoundException("Producto no encontrado");
         }
-        Stock stock = toStockEntity(request);
-        Stock guadado = stockRepository.save(stock);
+        // Un producto tiene una sola fila de stock activa: con dos, las consultas por
+        // producto pasarían a fallar de forma permanente.
+        if (stockRepository.findByIdProductoAndDeletedAtIsNull(request.getIdProducto()).isPresent()) {
+            throw new BadRequestException("El producto ya tiene stock inicializado");
+        }
+        Stock guadado = stockRepository.save(toStockEntity(request));
 
         return toStockResponse(guadado);
     }
 
+    /** Un producto sin fila de stock todavía no tiene movimientos: es stock 0, no un error. */
     public StockResponse getByIdProducto(UUID idProducto){
-        Stock s = stockRepository.findByIdProductoAndDeletedAtIsNull(idProducto);
-        return toStockResponse(s);
+        return stockRepository.findByIdProductoAndDeletedAtIsNull(idProducto)
+            .map(this::toStockResponse)
+            .orElseGet(() -> StockResponse.builder().idProducto(idProducto).cantidad(0).build());
     }
 
     @Transactional
     public StockResponse aumentar(MovimientoStockRequest request){
-        Stock stock = stockRepository.findByIdProductoAndDeletedAtIsNull(request.getIdProducto());
-        if (stock == null) {
-            throw new ResourceNotFoundException("Stock no encontrado para el producto");
-        }
-        int nuevoStock = stock.getCantidad() + request.getCantidad();
+        validarCantidadPositiva(request.getCantidad());
+        Stock stock = buscarStock(request.getIdProducto());
 
-        stock.setCantidad(nuevoStock);
+        stock.setCantidad(stock.getCantidad() + request.getCantidad());
         stockRepository.save(stock);
 
-        MovimientoStock m = MovimientoStock.builder()
+        movimientoStockRepository.save(MovimientoStock.builder()
             .idProducto(request.getIdProducto())
             .cantidad(request.getCantidad())
-            .tipo(TipoMovimiento.valueOf(request.getTipo()))
+            .tipo(parseTipo(request.getTipo()))
             .motivo(request.getMotivo())
             .idUsuario(request.getIdUsuario())
-            .build();
-        movimientoStockRepository.save(m);
+            .idReferencia(request.getIdReferencia())
+            .build());
 
         return toStockResponse(stock);
     }
 
     @Transactional
     public StockResponse disminuir(MovimientoStockRequest request){
-        Stock stock = stockRepository.findByIdProductoAndDeletedAtIsNull(request.getIdProducto());
-        if (stock == null) {
-            throw new ResourceNotFoundException("Stock no encontrado para el producto");
-        }
+        validarCantidadPositiva(request.getCantidad());
+        Stock stock = buscarStock(request.getIdProducto());
 
         int nuevoStock = stock.getCantidad() - request.getCantidad();
         if (nuevoStock < 0) {
@@ -87,21 +89,21 @@ public class InventarioService implements InventarioApi{
         stock.setCantidad(nuevoStock);
         stockRepository.save(stock);
 
-        MovimientoStock m = MovimientoStock.builder()
+        movimientoStockRepository.save(MovimientoStock.builder()
             .idProducto(request.getIdProducto())
             .cantidad(-request.getCantidad())
-            .tipo(TipoMovimiento.valueOf(request.getTipo()))
+            .tipo(parseTipo(request.getTipo()))
             .motivo(request.getMotivo())
             .idUsuario(request.getIdUsuario())
-            .build();
-        movimientoStockRepository.save(m);
+            .idReferencia(request.getIdReferencia())
+            .build());
 
         return toStockResponse(stock);
     }
 
     @Transactional
     public void delete(UUID idProducto){
-        Stock s = stockRepository.findByIdProductoAndDeletedAtIsNull(idProducto);
+        Stock s = buscarStock(idProducto);
         s.setDeletedAt(LocalDateTime.now());
         stockRepository.save(s);
     }
@@ -115,10 +117,9 @@ public class InventarioService implements InventarioApi{
         if(!productosApi.existsById(request.getIdProducto())){
             throw new ResourceNotFoundException("Producto no encontrado");
         }
-        if(request.getStockReal() < 0) throw new RuntimeException("Stock invalido");
+        if(request.getStockReal() < 0) throw new BadRequestException("El stock real no puede ser negativo");
 
-        Stock stock = stockRepository.findByIdProductoAndDeletedAtIsNull(request.getIdProducto());
-        if(stock == null) throw new ResourceNotFoundException("Stock no encontrado para el producto");
+        Stock stock = buscarStock(request.getIdProducto());
 
         int diferencia = request.getStockReal() - stock.getCantidad();
 
@@ -145,6 +146,24 @@ public class InventarioService implements InventarioApi{
         movimientoStockRepository.save(m);
     }
 
+    @Override
+    public Map<UUID, Integer> getExistenciasPorProducto(){
+        Map<UUID, Integer> existencias = new HashMap<>();
+
+        for (Object[] fila : stockRepository.cantidadesPorProducto()) {
+            if (fila[0] != null) {
+                existencias.put((UUID) fila[0], ((Number) fila[1]).intValue());
+            }
+        }
+        // Los productos con lotes no usan la tabla stock: su existencia es la suma de lotes.
+        for (Object[] fila : loteRepository.sumCantidadAgrupadaPorProducto()) {
+            if (fila[0] != null) {
+                existencias.put((UUID) fila[0], ((Number) fila[1]).intValue());
+            }
+        }
+        return existencias;
+    }
+
     public List<MovimientoStockResponse> obtenerMovimientos(UUID idProducto){
         return movimientoStockRepository.findByIdProductoAndDeletedAtIsNullOrderByCreatedAtDesc(idProducto)
             .stream()
@@ -154,7 +173,8 @@ public class InventarioService implements InventarioApi{
 
     @Transactional
     public LoteResponse crear(LoteRequest request){
-        if(request.getFechaVencimiento() == null) throw new RuntimeException("Fecha de vencimiento obligatoria");
+        if(request.getFechaVencimiento() == null) throw new BadRequestException("Fecha de vencimiento obligatoria");
+        validarCantidadPositiva(request.getCantidad());
 
         ProductoResponse producto = productosApi.getById(request.getIdProducto());
         if (!producto.isManejaLotes()) {
@@ -168,46 +188,59 @@ public class InventarioService implements InventarioApi{
     }
 
     public List<LoteResponse> getAll(){
-        List<Lote> lotes = loteRepository.findAllByDeletedAtIsNull().stream()
-            .map(this::actualizarEstado)
-            .toList();
-
         Map<UUID, String> nombresProductos = productosApi.getAll().stream()
             .collect(Collectors.toMap(ProductoResponse::getId, ProductoResponse::getNombre));
 
-        return lotes.stream()
+        return loteRepository.findAllByDeletedAtIsNull().stream()
             .map(l -> toLoteResponse(l, nombresProductos))
             .toList();
     }
 
     public List<LoteResponse> getByEstado(String estado) {
+        String buscado = parseEstadoLote(estado).name();
         return getAll().stream()
-            .filter(lote -> lote.getEstado().equals(EstadoLote.valueOf(estado.toUpperCase()).name()))
+            .filter(lote -> buscado.equals(lote.getEstado()))
             .toList();
     }
 
     // Helpers
 
-    private EstadoLote calcularEstado(LocalDate fechaVencimiento){
-        LocalDate hoy = LocalDate.now();
-
-        if(fechaVencimiento == null) return EstadoLote.SIN_FECHA;
-        if(fechaVencimiento.isBefore(hoy)) return EstadoLote.VENCIDO;
-        if(fechaVencimiento.isBefore(hoy.plusDays(7))) return EstadoLote.PROXIMO;
-
-        return EstadoLote.VIGENTE;
+    private Stock buscarStock(UUID idProducto){
+        return stockRepository.findByIdProductoAndDeletedAtIsNull(idProducto)
+            .orElseThrow(() -> new ResourceNotFoundException("Stock no encontrado para el producto"));
     }
 
-    private Lote actualizarEstado(Lote lote){
-        EstadoLote actual = lote.getEstado();
-        EstadoLote nuevo = calcularEstado(lote.getFechaVencimiento());
-
-        if (actual != nuevo){
-            lote.setEstado(nuevo);
-            loteRepository.save(lote);
+    private void validarCantidadPositiva(int cantidad){
+        if (cantidad <= 0) {
+            throw new BadRequestException("La cantidad debe ser mayor a 0");
         }
+    }
 
-        return lote;
+    private TipoMovimiento parseTipo(String tipo){
+        try {
+            return TipoMovimiento.valueOf(tipo);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new BadRequestException("Tipo de movimiento inválido: " + tipo);
+        }
+    }
+
+    private EstadoLote parseEstadoLote(String estado){
+        try {
+            return EstadoLote.valueOf(estado.toUpperCase());
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new BadRequestException("Estado de lote inválido: " + estado);
+        }
+    }
+
+    /**
+     * El estado es una función de la fecha de vencimiento y del día de hoy, así que se calcula
+     * al leer. Antes se persistía y se "refrescaba" desde el GET de lotes: un endpoint de
+     * lectura que escribía en la base, y que además dejaba el dato desactualizado hasta que
+     * alguien consultara. La columna `lote.estado` se sigue guardando al crear el lote, para
+     * que las consultas SQL directas tengan un valor razonable.
+     */
+    private EstadoLote calcularEstado(LocalDate fechaVencimiento){
+        return EstadoLote.calcularPara(fechaVencimiento);
     }
 
     private Stock toStockEntity(StockRequest request){
@@ -239,7 +272,7 @@ public class InventarioService implements InventarioApi{
             .numeroLote(l.getNumeroLote())
             .fechaVencimiento(l.getFechaVencimiento())
             .cantidad(l.getCantidad())
-            .estado(l.getEstado().name())
+            .estado(calcularEstado(l.getFechaVencimiento()).name())
             .build();
     }
 
@@ -251,7 +284,7 @@ public class InventarioService implements InventarioApi{
             .numeroLote(l.getNumeroLote())
             .fechaVencimiento(l.getFechaVencimiento())
             .cantidad(l.getCantidad())
-            .estado(l.getEstado().name())
+            .estado(calcularEstado(l.getFechaVencimiento()).name())
             .build();
     }
 

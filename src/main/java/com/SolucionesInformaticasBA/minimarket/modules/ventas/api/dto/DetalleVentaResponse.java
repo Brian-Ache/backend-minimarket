@@ -12,4 +12,7 @@ public class DetalleVentaResponse {
     private float precioUnitario;
     private float subtotal;
     private String tipo;
+
+    /** Costo congelado al momento de la venta. Null en ítems manuales o sin costo cargado. */
+    private Float costoUnitario;
 }

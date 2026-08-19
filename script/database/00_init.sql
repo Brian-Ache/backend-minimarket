@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 ) ENGINE = InnoDB;
 
 -- Refresh tokens de sesión JWT.
-CREATE TABLE IF NOT EXISTS refresh_token (
+-- En plural, como el resto de las tablas: la entidad ahora lo declara con @Table.
+CREATE TABLE IF NOT EXISTS refresh_tokens (
     id              BINARY(16)  NOT NULL,
     token_hash      VARCHAR(64) NOT NULL,
     user_id         BINARY(16)  NOT NULL,
@@ -61,9 +62,9 @@ CREATE TABLE IF NOT EXISTS refresh_token (
     expires_at      DATETIME(6) NOT NULL,
     created_at      DATETIME(6) NOT NULL,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_refresh_token_token_hash (token_hash),
-    KEY ix_refresh_token_user_activo (user_id, is_active),
-    CONSTRAINT fk_refresh_token_usuario
+    UNIQUE KEY uk_refresh_tokens_token_hash (token_hash),
+    KEY ix_refresh_tokens_user_activo (user_id, is_active),
+    CONSTRAINT fk_refresh_tokens_usuario
         FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
 ) ENGINE = InnoDB;
 
@@ -135,7 +136,12 @@ CREATE TABLE IF NOT EXISTS stock (
     created_at      DATETIME(6) NOT NULL,
     updated_at      DATETIME(6) NOT NULL,
     deleted_at      DATETIME(6) NULL,
+    -- Una sola fila de stock activa por producto. Los NULL no colisionan entre sí en un
+    -- UNIQUE de MySQL, así que las filas borradas quedan exentas y el código puede reutilizarse.
+    producto_activo BINARY(16)
+        GENERATED ALWAYS AS (IF(deleted_at IS NULL, id_producto, NULL)) VIRTUAL,
     PRIMARY KEY (id),
+    UNIQUE KEY uk_stock_producto_activo (producto_activo),
     KEY ix_stock_producto (id_producto, deleted_at),
     CONSTRAINT fk_stock_producto
         FOREIGN KEY (id_producto) REFERENCES productos (id) ON DELETE RESTRICT
@@ -168,6 +174,10 @@ CREATE TABLE IF NOT EXISTS movimientos_stock (
     tipo            ENUM('AJUSTE','COMPRA','MERMA','VENTA') NULL,
     motivo          VARCHAR(255) NULL,
     id_usuario      BINARY(16)   NULL,
+    -- Venta o compra que originó el movimiento. Es lo que permite revertir exactamente lo
+    -- que descontó (o ingresó) un comprobante al anularlo, incluso cuando el FIFO repartió
+    -- una línea entre varios lotes. Polimórfica, por eso sin FK.
+    id_referencia   BINARY(16)   NULL,
     created_at      DATETIME(6)  NOT NULL,
     updated_at      DATETIME(6)  NOT NULL,
     deleted_at      DATETIME(6)  NULL,
@@ -175,6 +185,7 @@ CREATE TABLE IF NOT EXISTS movimientos_stock (
     KEY ix_mov_stock_producto_fecha (id_producto, deleted_at, created_at),
     KEY ix_mov_stock_lote (id_lote),
     KEY ix_mov_stock_usuario (id_usuario),
+    KEY ix_mov_stock_referencia (id_referencia, tipo, deleted_at),
     CONSTRAINT fk_mov_stock_producto
         FOREIGN KEY (id_producto) REFERENCES productos (id) ON DELETE RESTRICT,
     CONSTRAINT fk_mov_stock_lote
@@ -196,6 +207,14 @@ CREATE TABLE IF NOT EXISTS sesiones_caja (
     saldo_final             FLOAT        NULL,           -- contado físicamente al cierre
     saldo_esperado          FLOAT        NULL,           -- calculado por el sistema
     diferencia              FLOAT        NULL,           -- saldo_final - saldo_esperado
+    -- Desglose del arqueo, congelado al cerrar. Un corte es un documento contable: se guarda
+    -- como quedó y no se recalcula al consultarlo.
+    total_ventas            FLOAT        NULL,
+    cantidad_ventas         INT          NULL,
+    total_compras           FLOAT        NULL,
+    cantidad_compras        INT          NULL,
+    total_entradas_manuales FLOAT        NULL,
+    total_salidas_manuales  FLOAT        NULL,
     observaciones           VARCHAR(255) NULL,
     id_usuario_apertura     BINARY(16)   NOT NULL,
     id_usuario_cierre       BINARY(16)   NULL,
@@ -203,7 +222,11 @@ CREATE TABLE IF NOT EXISTS sesiones_caja (
     created_at              DATETIME(6)  NOT NULL,
     updated_at              DATETIME(6)  NOT NULL,
     deleted_at              DATETIME(6)  NULL,
+    -- Impide que dos aperturas concurrentes dejen dos turnos abiertos a la vez.
+    sesion_abierta  VARCHAR(10)
+        GENERATED ALWAYS AS (IF(estado = 'ABIERTA' AND deleted_at IS NULL, 'ABIERTA', NULL)) VIRTUAL,
     PRIMARY KEY (id),
+    UNIQUE KEY uk_sesiones_una_abierta (sesion_abierta),
     -- Soporta "buscar la última sesión abierta".
     KEY ix_sesiones_estado_fecha (estado, deleted_at, created_at),
     KEY ix_sesiones_created_at (created_at),
@@ -216,7 +239,8 @@ CREATE TABLE IF NOT EXISTS sesiones_caja (
 ) ENGINE = InnoDB;
 
 -- Movimientos de efectivo de una sesión.
--- origen: 'MANUAL' (ingreso/retiro a mano), 'VENTA' o 'COMPRA' (automáticos).
+-- origen: 'MANUAL' (ingreso/retiro a mano), 'VENTA' o 'COMPRA' (automáticos),
+-- 'REVERSA' (devolución a caja por anulación de un comprobante).
 -- id_referencia apunta a ventas.id o compras.id según el origen: al ser
 -- polimórfica NO lleva FK.
 CREATE TABLE IF NOT EXISTS movimientos_caja (
@@ -242,7 +266,7 @@ CREATE TABLE IF NOT EXISTS movimientos_caja (
     CONSTRAINT fk_mov_caja_usuario
         FOREIGN KEY (id_usuario) REFERENCES usuarios (id) ON DELETE RESTRICT,
     CONSTRAINT ck_mov_caja_origen
-        CHECK (origen IS NULL OR origen IN ('MANUAL','VENTA','COMPRA'))
+        CHECK (origen IS NULL OR origen IN ('MANUAL','VENTA','COMPRA','REVERSA'))
 ) ENGINE = InnoDB;
 
 -- =====================================================================
@@ -257,7 +281,8 @@ CREATE TABLE IF NOT EXISTS ventas (
     total           FLOAT       NOT NULL,
     cobrada         BIT(1)      NULL DEFAULT b'0',
     fecha_cobro     DATETIME(6) NULL,
-    metodo_pago     VARCHAR(20) NULL,                    -- EFECTIVO / TARJETA / ...
+    metodo_pago     VARCHAR(20) NULL,                    -- EFECTIVO / TARJETA / TRANSFERENCIA
+                                                         -- solo EFECTIVO genera movimiento de caja
     monto_recibido  FLOAT       NULL,
     id_sesion       BINARY(16)  NULL,
     created_at      DATETIME(6) NOT NULL,
@@ -267,6 +292,8 @@ CREATE TABLE IF NOT EXISTS ventas (
     KEY ix_ventas_fecha (created_at, deleted_at),
     KEY ix_ventas_usuario (id_usuario, deleted_at),
     KEY ix_ventas_cobrada_fecha (cobrada, deleted_at, created_at),
+    -- Los reportes de dinero filtran por fecha de cobro, no de creación.
+    KEY ix_ventas_fecha_cobro (fecha_cobro, deleted_at),
     KEY ix_ventas_sesion (id_sesion),
     CONSTRAINT fk_ventas_usuario
         FOREIGN KEY (id_usuario) REFERENCES usuarios (id) ON DELETE RESTRICT,
@@ -285,6 +312,9 @@ CREATE TABLE IF NOT EXISTS detalles_ventas (
     nombre_producto VARCHAR(255) NULL,
     cantidad        INT          NOT NULL,
     precio_unitario FLOAT        NOT NULL,
+    -- Costo al momento de vender. Sin esto la ganancia no se puede calcular hacia atrás:
+    -- el costo del producto puede haber cambiado después.
+    costo_unitario  FLOAT        NULL,
     created_at      DATETIME(6)  NOT NULL,
     updated_at      DATETIME(6)  NOT NULL,
     deleted_at      DATETIME(6)  NULL,

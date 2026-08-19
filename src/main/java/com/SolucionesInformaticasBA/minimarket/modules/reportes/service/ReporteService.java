@@ -41,31 +41,35 @@ public class ReporteService implements ReportesApi {
 
     @Override
     public ReporteVentasResponse getReporteVentas(LocalDate desde, LocalDate hasta) {
+        // Una sola consulta para todo el rango: antes se pedía el resumen día por día, así que
+        // un reporte mensual disparaba 30 consultas.
+        List<VentaResponse> ventas = ventasApi.getByFechaCobradas(
+            desde.atStartOfDay(), hasta.plusDays(1).atStartOfDay());
+
+        Map<LocalDate, float[]> porDiaMap = new HashMap<>();
+        for (VentaResponse v : ventas) {
+            LocalDate dia = fechaDeCobro(v);
+            float[] acc = porDiaMap.computeIfAbsent(dia, k -> new float[2]);
+            acc[0] += v.getTotal();
+            acc[1] += 1;
+        }
+
+        // Los días sin ventas también salen en el reporte, en cero.
         List<VentaDiaria> porDia = new ArrayList<>();
-        int totalTransacciones = 0;
-        float totalIngresos = 0;
-
-        LocalDate fecha = desde;
-        while (!fecha.isAfter(hasta)) {
-            com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.ResumenDiarioResponse resumen =
-                ventasApi.getResumenDiario(fecha);
-
+        for (LocalDate d = desde; !d.isAfter(hasta); d = d.plusDays(1)) {
+            float[] acc = porDiaMap.getOrDefault(d, new float[2]);
             porDia.add(VentaDiaria.builder()
-                .fecha(fecha)
-                .cantidad(resumen.getCantidadVentas())
-                .total(resumen.getTotalVentas())
+                .fecha(d)
+                .cantidad((int) acc[1])
+                .total(acc[0])
                 .build());
-
-            totalTransacciones += resumen.getCantidadVentas();
-            totalIngresos += resumen.getTotalVentas();
-            fecha = fecha.plusDays(1);
         }
 
         return ReporteVentasResponse.builder()
             .desde(desde)
             .hasta(hasta)
-            .totalTransacciones(totalTransacciones)
-            .totalIngresos(totalIngresos)
+            .totalTransacciones(ventas.size())
+            .totalIngresos((float) ventas.stream().mapToDouble(VentaResponse::getTotal).sum())
             .porDia(porDia)
             .build();
     }
@@ -75,28 +79,49 @@ public class ReporteService implements ReportesApi {
         LocalDateTime desdeDt = desde.atStartOfDay();
         LocalDateTime hastaDt = hasta.plusDays(1).atStartOfDay();
 
-        List<VentaResponse> ventas = ventasApi.getByFecha(desdeDt, hastaDt);
+        // Solo ventas cobradas: una venta abierta todavía no es plata ganada.
+        List<VentaResponse> ventas = ventasApi.getByFechaCobradas(desdeDt, hastaDt);
         List<CompraResponse> compras = compraApi.getByFecha(desdeDt, hastaDt);
 
-        float totalVentas = (float) ventas.stream().mapToDouble(VentaResponse::getTotal).sum();
-        float totalCompras = (float) compras.stream().mapToDouble(CompraResponse::getTotal).sum();
-
+        float totalVentas = 0;
+        float costoTotal = 0;
+        int unidadesSinCosto = 0;
         Map<LocalDate, float[]> porDiaMap = new HashMap<>();
+
         for (VentaResponse v : ventas) {
-            LocalDate d = v.getFecha().toLocalDate();
-            porDiaMap.computeIfAbsent(d, k -> new float[2])[0] += v.getTotal();
+            LocalDate dia = fechaDeCobro(v);
+            float[] acc = porDiaMap.computeIfAbsent(dia, k -> new float[3]);
+
+            for (DetalleVentaResponse d : v.getDetalles()) {
+                float ventaLinea = d.getSubtotal();
+                totalVentas += ventaLinea;
+                acc[0] += ventaLinea;
+
+                if (d.getCostoUnitario() != null) {
+                    float costoLinea = d.getCostoUnitario() * d.getCantidad();
+                    costoTotal += costoLinea;
+                    acc[1] += costoLinea;
+                } else {
+                    // Ítem manual o producto sin costo cargado: se cuenta aparte para que
+                    // quede claro que la ganancia informada está sobrestimada.
+                    unidadesSinCosto += d.getCantidad();
+                }
+            }
         }
+
+        float totalCompras = 0;
         for (CompraResponse c : compras) {
-            LocalDate d = c.getFecha().toLocalDate();
-            porDiaMap.computeIfAbsent(d, k -> new float[2])[1] += c.getTotal();
+            totalCompras += c.getTotal();
+            porDiaMap.computeIfAbsent(c.getFecha().toLocalDate(), k -> new float[3])[2] += c.getTotal();
         }
 
         List<GananciaDiaria> porDia = porDiaMap.entrySet().stream()
             .map(e -> GananciaDiaria.builder()
                 .fecha(e.getKey())
                 .ventas(e.getValue()[0])
-                .compras(e.getValue()[1])
+                .costo(e.getValue()[1])
                 .ganancia(e.getValue()[0] - e.getValue()[1])
+                .compras(e.getValue()[2])
                 .build())
             .sorted(Comparator.comparing(GananciaDiaria::getFecha))
             .toList();
@@ -105,8 +130,10 @@ public class ReporteService implements ReportesApi {
             .desde(desde)
             .hasta(hasta)
             .totalVentas(totalVentas)
+            .costoMercaderiaVendida(costoTotal)
+            .gananciaBruta(totalVentas - costoTotal)
             .totalCompras(totalCompras)
-            .gananciaBruta(totalVentas - totalCompras)
+            .unidadesSinCosto(unidadesSinCosto)
             .porDia(porDia)
             .build();
     }
@@ -115,25 +142,21 @@ public class ReporteService implements ReportesApi {
     public List<ReporteInventarioItem> getReporteInventario() {
         List<ProductoResponse> productos = productosApi.getAll();
 
-        return productos.stream().map(p -> {
-            int stock = 0;
-            try {
-                stock = inventarioApi.getByIdProducto(p.getId()).getCantidad();
-            } catch (Exception e) {
-                stock = 0;
-            }
+        // Dos consultas agregadas en total: la tabla stock para los productos comunes y la
+        // suma de lotes para los que manejan lotes, que antes salían siempre en 0.
+        Map<UUID, Integer> existencias = inventarioApi.getExistenciasPorProducto();
 
-            return ReporteInventarioItem.builder()
+        return productos.stream().map(p -> ReporteInventarioItem.builder()
                 .idProducto(p.getId())
                 .nombre(p.getNombre())
                 .barcode(p.getBarcode())
-                .stockActual(stock)
+                .stockActual(existencias.getOrDefault(p.getId(), 0))
                 .precio(p.getPrecio())
                 .costo(p.getCosto())
                 .categoria(p.getCategoria())
                 .manejaLotes(p.isManejaLotes())
-                .build();
-        }).toList();
+                .build())
+            .toList();
     }
 
     @Override
@@ -141,7 +164,8 @@ public class ReporteService implements ReportesApi {
         LocalDateTime desdeDt = desde.atStartOfDay();
         LocalDateTime hastaDt = hasta.plusDays(1).atStartOfDay();
 
-        List<VentaResponse> ventas = ventasApi.getByFecha(desdeDt, hastaDt);
+        // Misma fuente que el resto de los reportes de dinero: solo ventas cobradas.
+        List<VentaResponse> ventas = ventasApi.getByFechaCobradas(desdeDt, hastaDt);
 
         Map<UUID, ProductoAgg> agg = new HashMap<>();
 
@@ -167,6 +191,11 @@ public class ReporteService implements ReportesApi {
                 .totalVendido(e.getValue().total)
                 .build())
             .toList();
+    }
+
+    /** Día al que imputar la venta: el del cobro, que es cuando entró la plata. */
+    private LocalDate fechaDeCobro(VentaResponse v) {
+        return v.getFechaCobro() != null ? v.getFechaCobro().toLocalDate() : v.getFecha().toLocalDate();
     }
 
     private static class ProductoAgg {

@@ -12,4 +12,7 @@ public interface DetalleVentaRepository extends JpaRepository<DetalleVenta, UUID
     List<DetalleVenta> findByIdVentaAndDeletedAtIsNull(UUID idVenta);
 
     List<DetalleVenta> findByIdProductoAndDeletedAtIsNull(UUID idProducto);
+
+    // Detalles de varias ventas en una sola consulta: evita un query por venta al listar.
+    List<DetalleVenta> findByIdVentaInAndDeletedAtIsNull(List<UUID> idsVenta);
 }

@@ -45,28 +45,35 @@ public class UsuarioController {
     }
 
     @GetMapping("/v1/{id}")
+    @PreAuthorize("hasRole('ADMIN') or #id.toString() == authentication.principal")
     public ResponseEntity<UsuarioResponse> getById(@PathVariable UUID id) {
         return ResponseEntity.ok(usuarioApi.getById(id));
     }
 
     @GetMapping("/v1")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<UsuarioResponse>> getAll() {
         return ResponseEntity.ok(usuarioApi.getAll());
     }
 
     @PatchMapping("/v1/{id}")
+    @PreAuthorize("hasRole('ADMIN') or #id.toString() == authentication.principal")
     public ResponseEntity<UsuarioResponse> update(@PathVariable UUID id,
             @Valid @RequestBody ActualizarUsuarioRequest request) {
         return ResponseEntity.ok(usuarioApi.update(id, request));
     }
 
     @DeleteMapping("/v1/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         usuarioApi.delete(id);
         return ResponseEntity.noContent().build();
     }
 
+    // Solo el dueño: cambiar la contraseña exige conocer la actual, así que ni el ADMIN
+    // puede hacerlo por otro (para eso está el flujo de reseteo).
     @PostMapping("/v1/{id}/change-password")
+    @PreAuthorize("#id.toString() == authentication.principal")
     public ResponseEntity<Void> changePassword(@PathVariable UUID id,
             @Valid @RequestBody CambiarPasswordRequest request) {
         usuarioApi.changePassword(id, request);

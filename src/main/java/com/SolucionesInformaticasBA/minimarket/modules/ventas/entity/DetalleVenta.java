@@ -29,7 +29,8 @@ public class DetalleVenta {
     @Column(name = "id_venta", nullable = false)
     private UUID idVenta;
 
-    @Column(name = "id_producto", nullable = false)
+    // Nullable: los ítems MANUAL (venta suelta sin producto de catálogo) no lo tienen.
+    @Column(name = "id_producto")
     private UUID idProducto;
 
     // nombre del producto vendido, tanto si existe en el sistema como si es manual
@@ -41,6 +42,11 @@ public class DetalleVenta {
 
     @Column(name = "precio_unitario", nullable = false)
     private float precioUnitario;
+
+    // Costo del producto al momento de vender. Congelarlo acá es lo que permite calcular
+    // la ganancia real después, aunque el costo del producto cambie más adelante.
+    @Column(name = "costo_unitario")
+    private Float costoUnitario;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)

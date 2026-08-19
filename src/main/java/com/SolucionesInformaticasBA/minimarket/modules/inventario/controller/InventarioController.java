@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -22,7 +21,9 @@ import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.Movimi
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.StockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.StockResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
+import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 
 @RestController
@@ -32,7 +33,7 @@ public class InventarioController {
     private final InventarioApi inventarioApi;
 
     @PostMapping("/v1/stock")
-    public ResponseEntity<StockResponse> crearStock(@RequestBody StockRequest request){
+    public ResponseEntity<StockResponse> crearStock(@Valid @RequestBody StockRequest request){
         return ResponseEntity.ok(inventarioApi.crear(request));
     }
 
@@ -41,13 +42,16 @@ public class InventarioController {
         return ResponseEntity.ok(inventarioApi.getByIdProducto(idProducto));
     }
 
+    // El idUsuario que venga en el body se ignora: la identidad sale siempre del JWT.
     @PutMapping("/v1/stock/aumentar")
-    public ResponseEntity<StockResponse> aumentarStock(@RequestBody MovimientoStockRequest request){
+    public ResponseEntity<StockResponse> aumentarStock(@Valid @RequestBody MovimientoStockRequest request){
+        request.setIdUsuario(SecurityUtils.getCurrentUserId());
         return ResponseEntity.ok(inventarioApi.aumentar(request));
     }
 
     @PutMapping("/v1/stock/disminuir")
-    public ResponseEntity<StockResponse> disminuirStock(@RequestBody MovimientoStockRequest request){
+    public ResponseEntity<StockResponse> disminuirStock(@Valid @RequestBody MovimientoStockRequest request){
+        request.setIdUsuario(SecurityUtils.getCurrentUserId());
         return ResponseEntity.ok(inventarioApi.disminuir(request));
     }
 
@@ -59,9 +63,8 @@ public class InventarioController {
 
     @PostMapping("/v1/controlar")
     public ResponseEntity<String> controlarStock(
-            @RequestHeader("idUsuario") UUID idUsuario,
-            @RequestBody AjusteStockRequest request){
-        inventarioApi.controlarStock(idUsuario, request);
+            @Valid @RequestBody AjusteStockRequest request){
+        inventarioApi.controlarStock(SecurityUtils.getCurrentUserId(), request);
         return ResponseEntity.ok("Stock controlado correctamente");
     }
 
@@ -71,7 +74,7 @@ public class InventarioController {
     }
 
     @PostMapping("/v1/lotes")
-    public ResponseEntity<LoteResponse> crearLote(@RequestBody LoteRequest request){
+    public ResponseEntity<LoteResponse> crearLote(@Valid @RequestBody LoteRequest request){
         return ResponseEntity.ok(inventarioApi.crear(request));
     }
 

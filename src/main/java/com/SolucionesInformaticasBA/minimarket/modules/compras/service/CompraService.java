@@ -3,7 +3,9 @@ package com.SolucionesInformaticasBA.minimarket.modules.compras.service;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 
@@ -16,6 +18,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.Inventario
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.Lote;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.MovimientoStock;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.EstadoLote;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.LoteRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.MovimientoStockRepository;
@@ -24,6 +27,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.Product
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.ProveedoresApi;
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto.ProveedorResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
+import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
@@ -53,7 +57,9 @@ public class CompraService implements CompraApi {
             throw new BadRequestException("El proveedor especificado no existe");
         }
 
-        Compra compra = toCompraEntity(request, idUsuario);
+        // Igual que en ventas: se guarda primero para poder referenciar la compra en cada
+        // movimiento de stock y hacer reversible la anulación.
+        Compra compra = compraRepository.save(toCompraEntity(request, idUsuario));
 
         List<DetalleCompra> detalles = new ArrayList<>();
         float total = 0;
@@ -71,6 +77,8 @@ public class CompraService implements CompraApi {
                     .numeroLote(d.getNumeroLote())
                     .fechaVencimiento(d.getFechaVencimiento())
                     .cantidad(d.getCantidad())
+                    // Sin esto el lote quedaba con estado NULL hasta que alguien listara lotes.
+                    .estado(EstadoLote.calcularPara(d.getFechaVencimiento()))
                     .build();
                 lote = loteRepository.save(lote);
 
@@ -81,6 +89,7 @@ public class CompraService implements CompraApi {
                     .tipo(TipoMovimiento.COMPRA)
                     .motivo("Ingreso por compra")
                     .idUsuario(idUsuario)
+                    .idReferencia(compra.getId())
                     .build();
                 movimientoStockRepository.save(m);
             } else {
@@ -90,21 +99,26 @@ public class CompraService implements CompraApi {
                     .tipo("COMPRA")
                     .motivo("Ingreso por compra")
                     .idUsuario(idUsuario)
+                    .idReferencia(compra.getId())
                     .build());
             }
         }
 
         compra.setTotal(total);
-        compra = compraRepository.save(compra);
 
         for (DetalleCompra d : detalles) {
             d.setIdCompra(compra.getId());
         }
         detalleCompraRepository.saveAll(detalles);
 
-        if (request.getIdSesion() != null) {
-            cajaApi.registrarSalidaAutomatica(request.getIdSesion(), idUsuario, total, "COMPRA", compra.getId());
+        // La sesión se resuelve acá y solo si se pagó de la caja; nunca se acepta del cliente.
+        if (request.isPagoEnEfectivo()) {
+            UUID idSesion = cajaApi.getIdSesionActiva();
+            compra.setIdSesion(idSesion);
+            cajaApi.registrarSalidaAutomatica(idSesion, idUsuario, total, "COMPRA", compra.getId());
         }
+
+        compra = compraRepository.saveAndFlush(compra);
 
         return toCompraResponse(compra, toDetalleCompraResponseList(detalles));
     }
@@ -119,49 +133,137 @@ public class CompraService implements CompraApi {
     }
 
     public List<CompraResponse> getAll() {
-        return compraRepository.findAll().stream()
-            .filter(c -> c.getDeletedAt() == null)
-            .map(c -> {
-                List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-                return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-            })
-            .toList();
+        return toCompraResponseList(
+            compraRepository.findAll().stream().filter(c -> c.getDeletedAt() == null).toList());
     }
 
     public List<CompraResponse> getByUsuario(UUID idUsuario) {
-        return compraRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario).stream()
-            .map(c -> {
-                List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-                return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-            })
-            .toList();
+        return toCompraResponseList(compraRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario));
     }
 
     public List<CompraResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta) {
-        return compraRepository.findByCreatedAtBetweenAndDeletedAtIsNull(desde, hasta).stream()
-            .map(c -> {
-                List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-                return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-            })
-            .toList();
+        return toCompraResponseList(compraRepository.findEnRango(desde, hasta));
     }
 
+    /**
+     * Anula una compra: saca del stock lo que había ingresado y, si se pagó de la caja,
+     * devuelve la plata al turno. Falla si la mercadería ya se vendió o si el turno que
+     * registró el pago ya cerró su corte.
+     */
     @Transactional
     public void delete(UUID id) {
         Compra compra = compraRepository.findByIdAndDeletedAtIsNull(id)
             .orElseThrow(() -> new ResourceNotFoundException("Compra no encontrada"));
 
-        compra.setDeletedAt(java.time.LocalDateTime.now());
+        UUID idUsuario = SecurityUtils.getCurrentUserId();
+        LocalDateTime ahora = LocalDateTime.now();
+
+        revertirCaja(compra, idUsuario);
+        revertirStock(compra, idUsuario);
+
+        compra.setDeletedAt(ahora);
         compraRepository.save(compra);
 
         List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(id);
         for (DetalleCompra d : detalles) {
-            d.setDeletedAt(java.time.LocalDateTime.now());
+            d.setDeletedAt(ahora);
         }
         detalleCompraRepository.saveAll(detalles);
     }
 
+    /**
+     * Devuelve la salida de caja al turno actual. Solo se permite si la compra se pagó en la
+     * sesión que sigue abierta: un corte ya firmado no se toca.
+     */
+    private void revertirCaja(Compra compra, UUID idUsuario) {
+        if (compra.getIdSesion() == null) {
+            return;
+        }
+        UUID sesionActiva;
+        try {
+            sesionActiva = cajaApi.getIdSesionActiva();
+        } catch (BadRequestException e) {
+            throw new BadRequestException(
+                "No se puede anular: la compra se pagó por caja y no hay un turno abierto "
+                        + "donde devolver la plata");
+        }
+        if (!compra.getIdSesion().equals(sesionActiva)) {
+            throw new BadRequestException(
+                "No se puede anular: la compra se pagó en un turno de caja que ya fue cerrado");
+        }
+        cajaApi.registrarEntradaAutomatica(
+            sesionActiva, idUsuario, compra.getTotal(), "REVERSA", compra.getId());
+    }
+
+    /** Saca del stock lo que ingresó la compra, usando los movimientos que la referencian. */
+    private void revertirStock(Compra compra, UUID idUsuario) {
+        List<MovimientoStock> movimientos =
+            movimientoStockRepository.findByIdReferenciaAndTipoAndDeletedAtIsNull(
+                compra.getId(), TipoMovimiento.COMPRA);
+
+        for (MovimientoStock m : movimientos) {
+            int aDescontar = Math.abs(m.getCantidad());
+            if (aDescontar == 0) continue;
+
+            if (m.getIdLote() != null) {
+                Lote lote = loteRepository.findById(m.getIdLote())
+                    .orElseThrow(() -> new BadRequestException(
+                        "No se puede revertir la compra: falta el lote " + m.getIdLote()));
+
+                if (lote.getCantidad() < aDescontar) {
+                    throw new BadRequestException(
+                        "No se puede anular: ya se vendió parte del lote " + lote.getNumeroLote());
+                }
+                lote.setCantidad(lote.getCantidad() - aDescontar);
+                if (lote.getCantidad() == 0) {
+                    lote.setDeletedAt(LocalDateTime.now());
+                }
+                loteRepository.save(lote);
+
+                movimientoStockRepository.save(MovimientoStock.builder()
+                    .idProducto(m.getIdProducto())
+                    .idLote(lote.getId())
+                    .cantidad(-aDescontar)
+                    .tipo(TipoMovimiento.AJUSTE)
+                    .motivo("Reversa por anulación de compra " + compra.getId())
+                    .idUsuario(idUsuario)
+                    .idReferencia(compra.getId())
+                    .build());
+            } else {
+                // disminuir ya rechaza dejar el stock en negativo
+                inventarioApi.disminuir(MovimientoStockRequest.builder()
+                    .idProducto(m.getIdProducto())
+                    .cantidad(aDescontar)
+                    .tipo("AJUSTE")
+                    .motivo("Reversa por anulación de compra " + compra.getId())
+                    .idUsuario(idUsuario)
+                    .idReferencia(compra.getId())
+                    .build());
+            }
+        }
+    }
+
     // Helpers
+
+    /**
+     * Igual que en ventas: los detalles de todas las compras se traen en una sola consulta y
+     * se agrupan en memoria, en vez de un query por compra.
+     */
+    private List<CompraResponse> toCompraResponseList(List<Compra> compras) {
+        if (compras.isEmpty()) {
+            return List.of();
+        }
+
+        Map<UUID, List<DetalleCompra>> porCompra = detalleCompraRepository
+            .findByIdCompraInAndDeletedAtIsNull(compras.stream().map(Compra::getId).toList())
+            .stream()
+            .collect(Collectors.groupingBy(DetalleCompra::getIdCompra));
+
+        return compras.stream()
+            .map(c -> toCompraResponse(c,
+                toDetalleCompraResponseList(porCompra.getOrDefault(c.getId(), List.of()))))
+            .toList();
+    }
 
     private Compra toCompraEntity(CompraRequest request, UUID idUsuario) {
         return Compra.builder()
@@ -171,7 +273,6 @@ public class CompraService implements CompraApi {
             .tipoComprobante(request.getTipoComprobante())
             .nroComprobante(request.getNroComprobante())
             .observaciones(request.getObservaciones())
-            .idSesion(request.getIdSesion())
             .build();
     }
 

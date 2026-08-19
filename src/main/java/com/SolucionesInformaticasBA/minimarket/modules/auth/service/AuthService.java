@@ -110,6 +110,12 @@ public class AuthService implements AuthApi {
     }
 
     @Override
+    public void revokeAllSessions(java.util.UUID userId) {
+        int revocadas = tokenService.revokeAllUserRefreshTokens(userId);
+        log.info("Se revocaron {} sesiones del usuario {}", revocadas, userId);
+    }
+
+    @Override
     @Transactional
     public void verifyEmail(VerifyEmailRequest request) {
         AuthToken authToken = tokenService.validateAuthToken(request.getToken(), TokenType.VERIFICATION);
