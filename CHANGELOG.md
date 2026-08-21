@@ -13,12 +13,37 @@ despliegue, no el modelo de datos.
 
 ### Agregado
 
+- **Rol `SUPERADMIN`**, dueño del sistema, en jerarquía `SUPERADMIN > ADMIN > EMPLEADO`. Cada
+  rol puede todo lo del rol de abajo y gestiona (alta, bloqueo, baja) a los de nivel inferior.
+  La jerarquía es estricta: un ADMIN no puede dar de alta, bloquear ni eliminar a otro ADMIN, y
+  al SUPERADMIN no lo toca nadie. Tampoco se puede uno bloquear o borrar a sí mismo.
+  - No hay alta de SUPERADMIN por API: sale del seed de la base. Si fuera un endpoint,
+    apoderarse de una sesión de superadmin alcanzaría para fabricarse otro.
+  - Las reglas por URL no cambiaron: el filtro JWT publica las authorities del rol **y las de
+    los roles inferiores**, así que los `hasRole('ADMIN')` existentes ya incluyen al SUPERADMIN.
+- **Cambio de rol**: `PATCH /api/users/v1/{id}/rol`. Exige jerarquía por partida doble —el
+  objetivo y el rol nuevo tienen que estar por debajo de quien lo pide—, así que en la práctica
+  solo el SUPERADMIN mueve gente entre ADMIN y EMPLEADO, y `SUPERADMIN` nunca es asignable.
+  Nadie se cambia el rol a sí mismo. Corta las sesiones del usuario para que reciba un token
+  con el rol nuevo.
 - **Bloqueo de usuarios**, reversible y sin borrar la cuenta:
-  `POST /api/users/v1/{id}/bloquear` y `/desbloquear`, solo ADMIN. El usuario bloqueado conserva
-  su historial y sus sesiones se cortan en el acto. No se puede bloquear la cuenta propia.
-- **`username` es único.** Se valida en el alta (`400` si está en uso) y en la base.
+  `POST /api/users/v1/{id}/bloquear` y `/desbloquear`, para ADMIN y SUPERADMIN según la
+  jerarquía. El usuario bloqueado conserva su historial y sus sesiones se cortan en el acto.
+- **Login indistinto con email o username.** Gana el email, que es la credencial principal.
+  También vale para pedir el reseteo de contraseña.
+- **`username` es único.** Se valida en el alta (`400` si está en uso) y en la base. No puede
+  contener `@`: un username con forma de email haría ambiguo el login.
 
 ### Cambiado
+
+- **El rol se lee de la base en cada request**, no del claim del JWT. El claim queda viejo
+  apenas cambia el rol del usuario, y un ADMIN degradado habría seguido mandando hasta que su
+  token expirara (24 h por defecto). El claim sigue viajando en el token, ahora como dato
+  informativo para el front. En el código: `UsuarioApi.puedeOperar(id)` pasa a ser
+  `rolVigente(id)`, que devuelve el rol o vacío si el usuario no puede operar.
+- `DELETE /api/users/v1/{id}` ahora rechaza la baja de la cuenta propia y la de usuarios que no
+  estén por debajo del que la pide. Antes cualquier ADMIN podía borrar a cualquiera, incluido él
+  mismo, y dejar el comercio sin administrador.
 
 - El flag `enabled` pasa a la columna `estado`. El booleano solo distinguía "verificado" de "no
   verificado" y no dejaba lugar para el bloqueo: suspender a alguien obligaba a borrarlo,
@@ -31,11 +56,12 @@ despliegue, no el modelo de datos.
 - `05_migracion_estado_usuario.sql` — migra `enabled` a `estado` (1 ⇒ `ACTIVO`, 0 ⇒
   `PENDIENTE`) y agrega el índice único de `username`. **Verificar antes que no haya usernames
   repetidos**: el script trae la consulta y explica cómo seguir si el índice falla.
+- `06_migracion_superadmin.sql` — agrega `SUPERADMIN` al ENUM de `rol` y da de alta el
+  superadmin (`superadmin@minimarket.local` / `Super123!`). **Cambiar esa contraseña apenas se
+  ingresa.** Trae también la variante para promover una cuenta existente.
 
 ### Pendiente de `docs/cambios.md`
 
-- Rol `SUPERADMIN` con jerarquía (`SUPERADMIN > ADMIN > EMPLEADO`).
-- Login indistinto con email o username (la unicidad, que era el requisito, ya está).
 - Alta por invitación con SMTP, y recuperación de contraseña por email: el flujo del servidor ya
   existe, falta el envío.
 - Permisos configurables por empleado — descartado por ahora: todas las funciones activas.

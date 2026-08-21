@@ -8,6 +8,24 @@
 USE minimarket;
 
 -- ---------------------------------------------------------------------
+-- Superadministrador — llave maestra del sistema
+-- email:    superadmin@minimarket.local
+-- password: Super123!
+--
+-- Es el único camino para tener un SUPERADMIN: no hay endpoint que lo cree, porque ningún rol
+-- manda sobre su propio nivel. **Cambiar esta contraseña antes de exponer el sistema.**
+-- ---------------------------------------------------------------------
+SET @id_superadmin = UUID_TO_BIN('11111111-1111-4111-8111-111111111100', 0);
+
+INSERT INTO usuarios (id, nombre, apellido, username, email, hash_password, rol, estado, created_at, updated_at)
+VALUES (
+    @id_superadmin, 'Super', 'Admin', 'superadmin', 'superadmin@minimarket.local',
+    '$2a$10$th8pTK4hJAP0kr9Dzh/Jh.RyVhLMd4SkmREGeImqB3F/lYOuEw6ky',
+    'SUPERADMIN', 'ACTIVO', NOW(6), NOW(6)
+)
+ON DUPLICATE KEY UPDATE updated_at = NOW(6);
+
+-- ---------------------------------------------------------------------
 -- Usuario administrador
 -- email:    admin@minimarket.local
 -- password: Admin123!

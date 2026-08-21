@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -37,20 +38,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             try {
                 var claims = jwtProvider.validateToken(token);
                 var userId = claims.getSubject();
-                var rol = claims.get("rol", String.class);
 
-                // Un JWT válido no alcanza: el usuario pudo ser dado de baja o deshabilitado
-                // después de emitirlo, y el token seguiría vigente hasta expirar.
-                if (!usuarioApi.puedeOperar(UUID.fromString(userId))) {
+                // Un JWT válido no alcanza: el usuario pudo ser dado de baja, bloqueado o
+                // cambiado de rol después de emitirlo, y el token seguiría vigente hasta
+                // expirar. Por eso el rol sale de la base y no del claim: es el estado de
+                // ahora, no el de cuando se logueó.
+                var rolVigente = usuarioApi.rolVigente(UUID.fromString(userId));
+
+                if (rolVigente.isEmpty()) {
                     SecurityContextHolder.clearContext();
                     filterChain.doFilter(request, response);
                     return;
                 }
 
-                // El prefijo ROLE_ es el que espera hasRole(...) / @PreAuthorize
-                var authorities = rol != null
-                        ? List.of(new SimpleGrantedAuthority("ROLE_" + rol))
-                        : List.<SimpleGrantedAuthority>of();
+                var authorities = authoritiesDe(rolVigente.get());
 
                 var authentication = new UsernamePasswordAuthenticationToken(
                         userId, null, authorities);
@@ -62,6 +63,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * Authorities del rol, con el prefijo {@code ROLE_} que esperan {@code hasRole(...)} y
+     * {@code @PreAuthorize}.
+     *
+     * <p>Un SUPERADMIN recibe además las de ADMIN y EMPLEADO. La jerarquía se materializa acá,
+     * en las authorities, en lugar de con un {@code RoleHierarchy} de Spring: vale igual para
+     * las reglas de {@code SecurityConfig} y para los {@code @PreAuthorize}, sin que cada
+     * {@code hasRole('ADMIN')} tenga que enumerar los roles de arriba.
+     */
+    private List<SimpleGrantedAuthority> authoritiesDe(Rol rol) {
+        return rol.rolesQueEjerce().stream()
+                .map(r -> new SimpleGrantedAuthority("ROLE_" + r.name()))
+                .toList();
     }
 
     private String extractToken(HttpServletRequest request) {

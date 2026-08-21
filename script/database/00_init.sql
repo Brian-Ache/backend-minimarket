@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS usuarios (
     username        VARCHAR(50)  NOT NULL,
     email           VARCHAR(100) NOT NULL,
     hash_password   VARCHAR(255) NOT NULL,               -- BCrypt
-    rol             ENUM('ADMIN','EMPLEADO') NOT NULL,
+    -- Jerarquía SUPERADMIN > ADMIN > EMPLEADO. El SUPERADMIN es la llave maestra del sistema
+    -- y no se puede crear por API: sale del seed.
+    rol             ENUM('SUPERADMIN','ADMIN','EMPLEADO') NOT NULL,
     -- Situación de la cuenta. PENDIENTE = creada sin acceso todavía · ACTIVO = opera ·
     -- BLOQUEADO = acceso suspendido. Es independiente de deleted_at: un bloqueado sigue
     -- existiendo y conserva su historial.

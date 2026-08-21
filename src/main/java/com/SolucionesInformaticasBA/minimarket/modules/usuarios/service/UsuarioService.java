@@ -2,6 +2,7 @@ package com.SolucionesInformaticasBA.minimarket.modules.usuarios.service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -17,6 +18,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.repository.UsuarioRepository;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
+import com.SolucionesInformaticasBA.minimarket.shared.exeption.ForbiddenException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
 import lombok.RequiredArgsConstructor;
@@ -30,12 +32,24 @@ public class UsuarioService implements UsuarioApi {
     private final AuthApi authApi;
 
     /**
-     * Alta de usuarios. Es exclusiva del ADMIN (ver UsuarioController), por eso el usuario
-     * queda habilitado de entrada: no hay autorregistro ni verificación por email en el MVP.
+     * Alta de usuarios. Cada quien da de alta por debajo de su nivel: el SUPERADMIN crea ADMIN
+     * y EMPLEADO, el ADMIN solo EMPLEADO. El usuario queda habilitado de entrada porque lo crea
+     * alguien de confianza con su contraseña: no hay autorregistro ni verificación por email
+     * en el MVP.
      */
     @Override
     @Transactional
     public UsuarioResponse crear(CrearUsuarioRequest request) {
+        Rol rolNuevo = request.getRol() != null ? request.getRol() : Rol.EMPLEADO;
+        Usuario actor = usuarioAutenticado();
+
+        // Nadie manda sobre su propio nivel, así que esto también deja fuera la creación de
+        // otro SUPERADMIN: la llave maestra viene del seed, no de un endpoint.
+        if (!actor.getRol().mandaSobre(rolNuevo)) {
+            throw new ForbiddenException(
+                    "Un " + actor.getRol() + " no puede dar de alta a un " + rolNuevo);
+        }
+
         if (userRepository.existsByEmailAndDeletedAtIsNull(request.getEmail())) {
             throw new BadRequestException("El email ya está registrado");
         }
@@ -49,9 +63,9 @@ public class UsuarioService implements UsuarioApi {
                 .email(request.getEmail())
                 .username(request.getUsername())
                 .hashPassword(passwordEncoder.encode(request.getPassword()))
-                .rol(request.getRol() != null ? request.getRol() : Rol.EMPLEADO)
-                // Lo crea un ADMIN con su contraseña, así que ya puede operar: no hay
-                // circuito de verificación por email en el MVP.
+                .rol(rolNuevo)
+                // Lo da de alta alguien de mayor jerarquía, con su contraseña, así que ya
+                // puede operar: no hay circuito de verificación por email en el MVP.
                 .estado(EstadoUsuario.ACTIVO)
                 .build();
 
@@ -102,6 +116,40 @@ public class UsuarioService implements UsuarioApi {
     }
 
     /**
+     * Promueve o degrada a un usuario. Solo entre roles por debajo del propio: el SUPERADMIN
+     * mueve entre ADMIN y EMPLEADO, el ADMIN no puede fabricar otro ADMIN ni tocar a uno.
+     *
+     * <p>Corta las sesiones del usuario: el rol viaja en el JWT y el front decide qué mostrar
+     * con ese dato, así que tiene que volver a loguearse para recibir un token que diga la
+     * verdad. Sus permisos reales, eso sí, cambian en la request siguiente, porque el filtro
+     * lee el rol de la base y no del token.
+     */
+    @Override
+    @Transactional
+    public UsuarioResponse cambiarRol(UUID id, CambiarRolRequest request) {
+        Usuario u = findActiveUser(id);
+        Usuario actor = exigirMandoSobre(u, "cambiarle el rol", "cambiarte el rol");
+
+        Rol rolNuevo = request.getRol();
+
+        // El rol nuevo también tiene que estar por debajo del actor: si no, un ADMIN se
+        // fabricaría un par —o un SUPERADMIN— y se saltearía la jerarquía por la ventana.
+        if (!actor.getRol().mandaSobre(rolNuevo)) {
+            throw new ForbiddenException(
+                    "Un " + actor.getRol() + " no puede asignar el rol " + rolNuevo);
+        }
+        if (u.getRol() == rolNuevo) {
+            throw new BadRequestException("El usuario ya tiene el rol " + rolNuevo);
+        }
+
+        u.setRol(rolNuevo);
+        u = userRepository.save(u);
+        authApi.revokeAllSessions(id);
+
+        return toUserResponse(u);
+    }
+
+    /**
      * Suspende el acceso sin borrar la cuenta: el usuario conserva su historial y puede
      * reactivarse. Cortar las sesiones es parte del bloqueo, si no seguiría operando con el
      * token que ya tenía en la mano.
@@ -110,12 +158,10 @@ public class UsuarioService implements UsuarioApi {
     @Transactional
     public UsuarioResponse bloquear(UUID id) {
         Usuario u = findActiveUser(id);
+        exigirMandoSobre(u, "bloquear", "bloquearte");
 
         if (u.getEstado() == EstadoUsuario.BLOQUEADO) {
             throw new BadRequestException("El usuario ya está bloqueado");
-        }
-        if (id.equals(SecurityUtils.getCurrentUserId())) {
-            throw new BadRequestException("No podés bloquear tu propia cuenta");
         }
 
         u.setEstado(EstadoUsuario.BLOQUEADO);
@@ -130,6 +176,7 @@ public class UsuarioService implements UsuarioApi {
     @Transactional
     public UsuarioResponse desbloquear(UUID id) {
         Usuario u = findActiveUser(id);
+        exigirMandoSobre(u, "desbloquear", "desbloquearte");
 
         if (u.getEstado() != EstadoUsuario.BLOQUEADO) {
             throw new BadRequestException("El usuario no está bloqueado");
@@ -143,6 +190,8 @@ public class UsuarioService implements UsuarioApi {
     @Transactional
     public void delete(UUID id) {
         Usuario u = findActiveUser(id);
+        exigirMandoSobre(u, "eliminar", "eliminarte");
+
         u.setDeletedAt(LocalDateTime.now());
         userRepository.save(u);
 
@@ -168,8 +217,42 @@ public class UsuarioService implements UsuarioApi {
     }
 
     @Override
-    public boolean puedeOperar(UUID id){
-        return userRepository.existsByIdAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO);
+    public Optional<Rol> rolVigente(UUID id) {
+        return userRepository.findByIdAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO)
+                .map(Usuario::getRol);
+    }
+
+    /**
+     * Exige que quien ejecuta la operación esté por encima del objetivo en la jerarquía, y
+     * devuelve al actor para no volver a buscarlo.
+     *
+     * <p>Los {@code @PreAuthorize} del controller solo miran el rol de quien llama; la decisión
+     * completa necesita también el rol del objetivo, y eso solo se sabe acá. Sin esta regla, un
+     * ADMIN podría bloquear o borrar al SUPERADMIN, o dos ADMIN podrían sacarse del sistema
+     * entre sí.
+     *
+     * <p>El rol del actor se relee de la base y no se toma del JWT: si acaban de degradarlo, su
+     * token todavía dice ADMIN y seguiría mandando hasta que expire.
+     *
+     * @param accion       infinitivo que encaja en "Un ADMIN no puede {accion} a un ADMIN"
+     * @param accionPropia infinitivo que encaja en "No podés {accionPropia} a vos mismo"
+     */
+    private Usuario exigirMandoSobre(Usuario objetivo, String accion, String accionPropia) {
+        Usuario actor = usuarioAutenticado();
+
+        if (actor.getId().equals(objetivo.getId())) {
+            throw new BadRequestException("No podés " + accionPropia + " a vos mismo");
+        }
+        if (!actor.getRol().mandaSobre(objetivo.getRol())) {
+            throw new ForbiddenException(
+                    "Un " + actor.getRol() + " no puede " + accion + " a un " + objetivo.getRol());
+        }
+        return actor;
+    }
+
+    /** El usuario detrás del JWT de la request en curso, tal como está hoy en la base. */
+    private Usuario usuarioAutenticado() {
+        return findActiveUser(SecurityUtils.getCurrentUserId());
     }
 
     private Usuario findActiveUser(UUID id) {

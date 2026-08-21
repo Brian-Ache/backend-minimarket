@@ -32,8 +32,10 @@ public interface UsuarioRepository extends JpaRepository<Usuario, UUID> {
     boolean existsByIdAndDeletedAtIsNull(UUID id);
 
     // Usado por el filtro JWT: un usuario dado de baja o deshabilitado no puede seguir
-    // operando aunque su token todavía no haya expirado.
-    boolean existsByIdAndDeletedAtIsNullAndEstado(UUID id, EstadoUsuario estado);
+    // operando aunque su token todavía no haya expirado. Trae la fila entera y no un boolean
+    // porque el filtro necesita además el rol vigente, que puede haber cambiado después de
+    // emitido el token.
+    Optional<Usuario> findByIdAndDeletedAtIsNullAndEstado(UUID id, EstadoUsuario estado);
 
     List<Usuario> findAllByDeletedAtIsNull();
 }

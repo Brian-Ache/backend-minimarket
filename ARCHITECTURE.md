@@ -89,17 +89,27 @@ guarda el SHA-256.
 Login  -> access token (JWT) + refresh token
 Request-> Authorization: Bearer <access token>
          JwtAuthenticationFilter valida firma y vigencia,
-         verifica que el usuario siga activo y habilitado,
-         y publica el rol como authority ROLE_<ROL>
+         busca en la base el rol vigente del usuario (vacío si está dado de
+         baja o bloqueado) y publica ROLE_<ROL> más las authorities de los
+         roles de menor jerarquía
 Refresh-> rota el par (revoca el anterior)
 Logout -> revoca el refresh token (idempotente)
 ```
 
 - **Identidad:** siempre desde el JWT, vía `SecurityUtils.getCurrentUserId()`. Ningún endpoint
   acepta el id de usuario del cliente.
-- **Roles:** `ADMIN` y `EMPLEADO`, aplicados con `@EnableMethodSecurity`. Las reglas por URL
-  están en `SecurityConfig`; `@PreAuthorize` se usa solo donde el permiso depende de quién es el
-  dueño del recurso (`/api/users/{id}`).
+- **Roles:** `SUPERADMIN` > `ADMIN` > `EMPLEADO`, aplicados con `@EnableMethodSecurity`. Las
+  reglas por URL están en `SecurityConfig`; `@PreAuthorize` se usa solo donde el permiso depende
+  de quién es el dueño del recurso (`/api/users/{id}`).
+- **Jerarquía:** el filtro JWT le da a cada usuario las authorities de su rol **y las de todos
+  los de abajo**, así un `hasRole('ADMIN')` alcanza también al SUPERADMIN sin enumerar roles en
+  cada regla. El rol sale de la base en cada request (`UsuarioApi.rolVigente`), no del claim del
+  token: si saliera del claim, degradar a alguien no tendría efecto hasta que su JWT expirara. Los permisos que además dependen del rol del **objetivo** —dar de alta, bloquear
+  o eliminar a otro usuario— se deciden en `UsuarioService`, que es donde ese rol se conoce: se
+  exige mando estricto, de modo que un ADMIN no puede tocar a otro ADMIN ni al SUPERADMIN, y
+  nadie se bloquea ni se borra a sí mismo.
+- **SUPERADMIN:** llave maestra, no se crea por API (ningún rol manda sobre su propio nivel).
+  Sale del seed de la base; ver `script/database/06_migracion_superadmin.sql`.
 - **Contraseñas:** BCrypt.
 - **Estado de cuenta:** `PENDIENTE` / `ACTIVO` / `BLOQUEADO`, independiente del borrado lógico.
   Solo un usuario `ACTIVO` puede autenticarse y operar.
@@ -112,15 +122,17 @@ Logout -> revoca el refresh token (idempotente)
 
 > El access token no se puede revocar antes de que expire: el logout invalida el refresh token,
 > pero el JWT ya emitido sigue siendo válido hasta su vencimiento. Con 24 h por defecto la
-> ventana es amplia; conviene bajarla a 1–2 h y apoyarse en el refresh. Sí se corta de inmediato
-> el acceso de un usuario dado de baja, porque el filtro lo verifica en cada request.
+> ventana es amplia; conviene bajarla a 1–2 h y apoyarse en el refresh. Lo que sí tiene efecto
+> inmediato, porque el filtro lo consulta en cada request, es la baja, el bloqueo y el cambio de
+> rol: el token viejo deja de servir, o pasa a otorgar los permisos del rol nuevo.
 
-| Operación | ADMIN | EMPLEADO |
-|---|:---:|:---:|
-| Vender, cobrar, comprar, mover caja e inventario | ✅ | ✅ |
-| Consultar catálogo · ver y editar su propio usuario | ✅ | ✅ |
-| Alta/baja de usuarios · escritura de catálogo | ✅ | ❌ |
-| Anular ventas y compras · corte de caja · reportes | ✅ | ❌ |
+| Operación | SUPERADMIN | ADMIN | EMPLEADO |
+|---|:---:|:---:|:---:|
+| Vender, cobrar, comprar, mover caja e inventario | ✅ | ✅ | ✅ |
+| Consultar catálogo · ver y editar su propio usuario | ✅ | ✅ | ✅ |
+| Escritura de catálogo · anular ventas y compras · corte de caja · reportes | ✅ | ✅ | ❌ |
+| Alta, bloqueo y baja de EMPLEADO | ✅ | ✅ | ❌ |
+| Alta, bloqueo y baja de ADMIN | ✅ | ❌ | ❌ |
 
 ## Modelo de Datos
 
@@ -129,7 +141,7 @@ Logout -> revoca el refresh token (idempotente)
 
 | Tabla | Propósito |
 |---|---|
-| `usuarios` | Usuarios del sistema (ADMIN / EMPLEADO), con estado de cuenta |
+| `usuarios` | Usuarios del sistema (SUPERADMIN / ADMIN / EMPLEADO), con estado de cuenta |
 | `auth_tokens` | Tokens de un solo uso: verificación y reseteo de contraseña |
 | `refresh_tokens` | Sesiones activas (hash del refresh token) |
 | `categorias` | Categorías de producto |

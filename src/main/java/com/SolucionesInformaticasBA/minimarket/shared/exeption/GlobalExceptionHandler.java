@@ -37,6 +37,14 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.UNAUTHORIZED, ex.getMessage());
     }
 
+    // Permiso denegado por jerarquía de roles: el motivo lo arma el servicio y se conserva,
+    // porque "un ADMIN no puede bloquear a otro ADMIN" es accionable y no filtra nada que
+    // quien lo recibe no sepa ya.
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<Map<String, Object>> handleForbidden(ForbiddenException ex) {
+        return buildResponse(HttpStatus.FORBIDDEN, ex.getMessage());
+    }
+
     // Sin esto, la denegación de @PreAuthorize cae en el handler genérico y sale como 500.
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, Object>> handleAccessDenied(AccessDeniedException ex) {

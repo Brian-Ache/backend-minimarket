@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.ActualizarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarPasswordRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarRolRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CrearUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
@@ -32,6 +33,9 @@ public class UsuarioController {
 
     private final UsuarioApi usuarioApi;
 
+    // hasRole('ADMIN') alcanza también al SUPERADMIN: el filtro JWT le da las authorities de
+    // todos los roles por debajo del suyo. Qué rol puede crear cada uno, y sobre quién puede
+    // operar, lo decide UsuarioService, que es donde se conoce el rol del objetivo.
     @PostMapping("/v1")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UsuarioResponse> crear(@Valid @RequestBody CrearUsuarioRequest request) {
@@ -61,6 +65,17 @@ public class UsuarioController {
     public ResponseEntity<UsuarioResponse> update(@PathVariable UUID id,
             @Valid @RequestBody ActualizarUsuarioRequest request) {
         return ResponseEntity.ok(usuarioApi.update(id, request));
+    }
+
+    /**
+     * Promueve o degrada a un usuario. Va aparte del PATCH general porque ese lo puede llamar
+     * el dueño del recurso sobre sí mismo, y nadie se cambia el rol solo.
+     */
+    @PatchMapping("/v1/{id}/rol")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UsuarioResponse> cambiarRol(@PathVariable UUID id,
+            @Valid @RequestBody CambiarRolRequest request) {
+        return ResponseEntity.ok(usuarioApi.cambiarRol(id, request));
     }
 
     /** Suspende el acceso sin borrar la cuenta. Corta las sesiones abiertas del usuario. */

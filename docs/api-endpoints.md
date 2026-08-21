@@ -42,32 +42,47 @@ Errores de validación (`400`):
 - **Soft delete:** GET por ID de registro eliminado responde `404`
 - **Identidad:** el usuario que ejecuta la operación se toma **del JWT**. El header `idUsuario`
   fue eliminado de todos los endpoints; si se envía, se ignora
-- **Roles:** `ADMIN` y `EMPLEADO`. Ver la matriz de permisos más abajo
+- **Roles:** `SUPERADMIN` > `ADMIN` > `EMPLEADO`, en jerarquía: cada rol puede todo lo del rol
+  de abajo, y además gestiona (alta, bloqueo y baja) a los usuarios de nivel inferior. La
+  jerarquía es estricta, así que **un ADMIN no puede tocar a otro ADMIN**. Ver la matriz de
+  permisos más abajo
 - **Estado de cuenta:** `PENDIENTE` (creada, sin acceso todavía) · `ACTIVO` (opera) ·
   `BLOQUEADO` (acceso suspendido, reversible). Solo un usuario `ACTIVO` puede loguearse y
   operar; el bloqueo tiene efecto inmediato sobre las sesiones abiertas
 - **Códigos de auth:** `401` token ausente, inválido, expirado o de un usuario dado de baja
   (el front debe reautenticar) · `403` autenticado pero sin permisos para ese recurso
+- **El rol se lee de la base en cada request**, no del claim del token: bloquear a alguien,
+  darlo de baja o cambiarle el rol tiene efecto en la llamada siguiente, sin esperar a que su
+  JWT expire. El claim `rol` del token es informativo, para que el front sepa qué mostrar
 - **Swagger UI:** `/swagger-ui/index.html`
 - **OpenAPI spec:** `/v3/api-docs`
 
 ### Matriz de permisos
 
-| Operación | ADMIN | EMPLEADO |
-|---|:---:|:---:|
-| Vender, cobrar, comprar | ✅ | ✅ |
-| Abrir caja, movimientos manuales | ✅ | ✅ |
-| Inventario: stock, lotes, ajustes | ✅ | ✅ |
-| Consultar catálogo (GET productos/categorías/proveedores) | ✅ | ✅ |
-| Ver y editar su propio usuario, cambiar su contraseña | ✅ | ✅ |
-| Crear/editar/borrar productos, categorías y proveedores | ✅ | ❌ |
-| Anular ventas y compras (DELETE) | ✅ | ❌ |
-| Corte de caja | ✅ | ❌ |
-| Reportes | ✅ | ❌ |
-| Alta, listado, edición y baja de usuarios | ✅ | ❌ |
+| Operación | SUPERADMIN | ADMIN | EMPLEADO |
+|---|:---:|:---:|:---:|
+| Vender, cobrar, comprar | ✅ | ✅ | ✅ |
+| Abrir caja, movimientos manuales | ✅ | ✅ | ✅ |
+| Inventario: stock, lotes, ajustes | ✅ | ✅ | ✅ |
+| Consultar catálogo (GET productos/categorías/proveedores) | ✅ | ✅ | ✅ |
+| Ver y editar su propio usuario, cambiar su contraseña | ✅ | ✅ | ✅ |
+| Crear/editar/borrar productos, categorías y proveedores | ✅ | ✅ | ❌ |
+| Anular ventas y compras (DELETE) | ✅ | ✅ | ❌ |
+| Corte de caja | ✅ | ✅ | ❌ |
+| Reportes | ✅ | ✅ | ❌ |
+| Listar y ver usuarios | ✅ | ✅ | ❌ |
+| Alta, bloqueo y baja de EMPLEADO | ✅ | ✅ | ❌ |
+| Alta, bloqueo y baja de ADMIN | ✅ | ❌ | ❌ |
+| Promover o degradar entre ADMIN y EMPLEADO | ✅ | ❌ | ❌ |
+| Alta, bloqueo, baja o asignación del rol SUPERADMIN | ❌ | ❌ | ❌ |
 
-Cambiar la contraseña exige conocer la actual, así que **ni el ADMIN puede hacerlo por otro
-usuario**: para eso está el flujo de reseteo.
+Nadie gestiona a un usuario de su mismo nivel ni de uno superior, y **nadie se bloquea ni se
+borra a sí mismo**. De ahí que no exista alta de SUPERADMIN por API: la llave maestra sale del
+seed de la base (`01_seed.sql` / `06_migracion_superadmin.sql`). Si el alta de superadmins fuera
+un endpoint, tomar una sesión de superadmin alcanzaría para fabricarse otro.
+
+Cambiar la contraseña exige conocer la actual, así que **ni el ADMIN ni el SUPERADMIN pueden
+hacerlo por otro usuario**: para eso está el flujo de reseteo.
 
 ---
 
@@ -176,8 +191,11 @@ Confirma el reseteo con el token generado.
 
 ### `POST /api/users/v1`
 
-Alta de usuario. **Solo ADMIN** (`403` para EMPLEADO). El usuario se crea en estado `ACTIVO`,
-listo para loguearse.
+Alta de usuario. **ADMIN o SUPERADMIN** (`403` para EMPLEADO). El usuario se crea en estado
+`ACTIVO`, listo para loguearse.
+
+Solo se puede dar de alta **por debajo del propio nivel**: el SUPERADMIN crea ADMIN y EMPLEADO,
+el ADMIN solo EMPLEADO. `rol` es opcional y por defecto es `EMPLEADO`.
 
 **Request:**
 ```json
@@ -193,7 +211,8 @@ listo para loguearse.
 
 **Response `201`:** `{ ...UsuarioResponse }`
 
-**Errores:** `400` email o username ya en uso · `403` sin rol ADMIN
+**Errores:** `400` email o username ya en uso · `403` sin rol ADMIN, o el rol pedido no está por
+debajo del propio (`"Un ADMIN no puede dar de alta a un ADMIN"`)
 
 ---
 
@@ -237,17 +256,47 @@ Actualiza nombre y/o apellido.
 
 ---
 
+### `PATCH /api/users/v1/{id}/rol`
+
+Promueve o degrada a un usuario. Va aparte del `PATCH` general porque ese lo puede llamar el
+dueño del recurso sobre sí mismo, y **nadie se cambia el rol solo**.
+
+Se exige jerarquía **por partida doble**: el objetivo tiene que estar por debajo tuyo *y* el rol
+nuevo también. Así un ADMIN no puede promover a un EMPLEADO para fabricarse un par, y `SUPERADMIN`
+nunca es un valor asignable.
+
+En la práctica: **solo el SUPERADMIN mueve gente entre ADMIN y EMPLEADO.**
+
+**Request:**
+```json
+{ "rol": "ADMIN | EMPLEADO" }
+```
+
+**Response `200`:** `{ ...UsuarioResponse }` con el rol nuevo
+
+**Errores:** `400` ya tiene ese rol · `400` es tu propia cuenta · `403` el objetivo no está por
+debajo tuyo (`"Un ADMIN no puede cambiarle el rol a un ADMIN"`) o el rol pedido no lo está
+(`"Un ADMIN no puede asignar el rol ADMIN"`)
+
+> El cambio corta las sesiones del usuario: tiene que volver a loguearse para recibir un token
+> que declare el rol nuevo. Sus **permisos** reales, en cambio, cambian ya en la request
+> siguiente — el backend lee el rol de la base en cada llamada, no del token.
+
+---
+
 ### `POST /api/users/v1/{id}/bloquear`
 
 Suspende el acceso **sin borrar la cuenta**: el usuario conserva su historial de ventas,
 compras y movimientos, y puede reactivarse. Corta sus sesiones abiertas, así que el bloqueo es
 inmediato y no espera a que expire su token.
 
-**Solo ADMIN.**
+**ADMIN o SUPERADMIN**, y solo sobre usuarios de nivel inferior: un ADMIN bloquea EMPLEADO, el
+SUPERADMIN también bloquea ADMIN. Al SUPERADMIN no lo bloquea nadie.
 
 **Response `200`:** `{ ...UsuarioResponse }` con `estado: "BLOQUEADO"`
 
-**Errores `400`:** ya está bloqueado · es tu propia cuenta
+**Errores:** `400` ya está bloqueado · `400` es tu propia cuenta · `403` el objetivo no está por
+debajo tuyo (`"Un ADMIN no puede bloquear a un ADMIN"`)
 
 ---
 
@@ -255,11 +304,11 @@ inmediato y no espera a que expire su token.
 
 Devuelve el acceso. El usuario tiene que volver a iniciar sesión.
 
-**Solo ADMIN.**
+**Mismas reglas de jerarquía que `bloquear`.**
 
 **Response `200`:** `{ ...UsuarioResponse }` con `estado: "ACTIVO"`
 
-**Error `400`:** el usuario no está bloqueado
+**Errores:** `400` el usuario no está bloqueado · `403` el objetivo no está por debajo tuyo
 
 ---
 
@@ -268,9 +317,12 @@ Devuelve el acceso. El usuario tiene que volver a iniciar sesión.
 Baja lógica de la cuenta y revocación de sus sesiones. Para suspender temporalmente a alguien
 usar `bloquear`, que es reversible.
 
-**Solo ADMIN.**
+**Mismas reglas de jerarquía que `bloquear`**, incluida la propia cuenta: nadie se da de baja a
+sí mismo.
 
 **Response `204`**
+
+**Errores:** `400` es tu propia cuenta · `403` el objetivo no está por debajo tuyo
 
 ---
 
@@ -299,7 +351,7 @@ usar `bloquear`, que es reversible.
   "apellido": "string",
   "username": "string",
   "email": "string",
-  "rol": "ADMIN | EMPLEADO",
+  "rol": "SUPERADMIN | ADMIN | EMPLEADO",
   "estado": "PENDIENTE | ACTIVO | BLOQUEADO",
   "createdAt": "datetime",
   "updatedAt": "datetime"
