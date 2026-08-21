@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+import com.SolucionesInformaticasBA.minimarket.shared.mail.EmailException;
+
 import lombok.extern.slf4j.Slf4j;
 
 @RestControllerAdvice
@@ -43,6 +45,15 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ForbiddenException.class)
     public ResponseEntity<Map<String, Object>> handleForbidden(ForbiddenException ex) {
         return buildResponse(HttpStatus.FORBIDDEN, ex.getMessage());
+    }
+
+    // El pedido estaba bien; lo que falló es el SMTP. 502 para que el cliente sepa que
+    // corresponde reintentar y no que corrija los datos.
+    @ExceptionHandler(EmailException.class)
+    public ResponseEntity<Map<String, Object>> handleEmail(EmailException ex) {
+        log.error("Error de envío de email", ex);
+        return buildResponse(HttpStatus.BAD_GATEWAY,
+                "No se pudo enviar el email. Verificá la configuración de SMTP e intentá de nuevo");
     }
 
     // Sin esto, la denegación de @PreAuthorize cae en el handler genérico y sale como 500.

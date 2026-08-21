@@ -74,6 +74,106 @@ public class UsuarioService implements UsuarioApi {
         return toUserResponse(userRepository.saveAndFlush(u));
     }
 
+    /**
+     * Alta por invitación: crea la cuenta en estado PENDIENTE y le manda el mail a la persona
+     * para que defina su contraseña. Es el flujo pensado para el día a día — quien invita nunca
+     * conoce la contraseña del invitado, a diferencia de {@link #crear}.
+     *
+     * <p>La cuenta nace con una contraseña aleatoria que nadie sabe. La columna es NOT NULL y
+     * dejarla en un valor conocido (vacío, un default) sería una credencial válida esperando a
+     * que alguien la pruebe; con esto no hay contraseña que adivinar hasta que el invitado
+     * elija la suya.
+     */
+    @Override
+    @Transactional
+    public UsuarioResponse invitar(InvitarUsuarioRequest request) {
+        Rol rolNuevo = request.getRol() != null ? request.getRol() : Rol.EMPLEADO;
+        Usuario actor = usuarioAutenticado();
+
+        if (!actor.getRol().mandaSobre(rolNuevo)) {
+            throw new ForbiddenException(
+                    "Un " + actor.getRol() + " no puede dar de alta a un " + rolNuevo);
+        }
+
+        if (userRepository.existsByEmailAndDeletedAtIsNull(request.getEmail())) {
+            throw new BadRequestException("El email ya está registrado");
+        }
+
+        String username = resolverUsername(request);
+
+        Usuario u = Usuario.builder()
+                .nombre(request.getNombre())
+                .apellido(request.getApellido())
+                .email(request.getEmail())
+                .username(username)
+                .hashPassword(passwordEncoder.encode(passwordInutilizable()))
+                .rol(rolNuevo)
+                .estado(EstadoUsuario.PENDIENTE)
+                .build();
+
+        u = userRepository.saveAndFlush(u);
+
+        // Si el mail no sale, esto tira y la transacción se va abajo con el usuario: mejor que
+        // dejar una cuenta muerta que nadie puede activar y que ocupa el email y el username.
+        authApi.enviarInvitacion(u.getId(), u.getEmail(), u.getNombre());
+
+        return toUserResponse(u);
+    }
+
+    /**
+     * Reenvía la invitación de una cuenta que sigue PENDIENTE, con un token nuevo. El anterior
+     * queda invalidado. Sirve para el caso normal: el enlace venció, o el mail no llegó.
+     */
+    @Override
+    @Transactional
+    public void reenviarInvitacion(UUID id) {
+        Usuario u = findActiveUser(id);
+        exigirMandoSobre(u, "reenviarle la invitación", "reenviarte la invitación");
+
+        if (u.getEstado() != EstadoUsuario.PENDIENTE) {
+            throw new BadRequestException(
+                    "Solo se puede reenviar la invitación de una cuenta pendiente");
+        }
+
+        authApi.enviarInvitacion(u.getId(), u.getEmail(), u.getNombre());
+    }
+
+    /**
+     * Username pedido, o derivado de la parte local del email si no vino ninguno. Ante colisión
+     * agrega un sufijo numérico en vez de fallar: quien invita no tiene por qué saber qué
+     * nombres de usuario están tomados.
+     */
+    private String resolverUsername(InvitarUsuarioRequest request) {
+        if (request.getUsername() != null && !request.getUsername().isBlank()) {
+            String pedido = request.getUsername().trim();
+            if (userRepository.existsByUsernameAndDeletedAtIsNull(pedido)) {
+                throw new BadRequestException("El nombre de usuario ya está en uso");
+            }
+            return pedido;
+        }
+
+        String base = request.getEmail().split("@")[0]
+                .replaceAll("[^a-zA-Z0-9._-]", "")
+                .toLowerCase();
+
+        if (base.isBlank()) {
+            base = "usuario";
+        }
+        base = base.substring(0, Math.min(base.length(), 40));
+
+        String candidato = base;
+        int sufijo = 1;
+        while (userRepository.existsByUsernameAndDeletedAtIsNull(candidato)) {
+            candidato = base + ++sufijo;
+        }
+        return candidato;
+    }
+
+    /** Contraseña que nadie conoce, ni siquiera quien invita: se descarta apenas se hashea. */
+    private String passwordInutilizable() {
+        return UUID.randomUUID() + "-" + UUID.randomUUID();
+    }
+
     @Override
     public Usuario getUsuarioById(UUID id){
         return findActiveUser(id);

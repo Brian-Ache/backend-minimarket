@@ -25,8 +25,18 @@ import lombok.RequiredArgsConstructor;
 public class TokenService {
 
     private static final long VERIFICATION_TOKEN_DURATION_HOURS = 24;
-    private static final long PASSWORD_RESET_TOKEN_DURATION_HOURS = 1;
     private static final long REFRESH_TOKEN_DURATION_HOURS = 720;
+
+    // Públicas porque el texto del mail avisa cuánto dura el enlace, y ese dato tiene que salir
+    // de la misma constante que lo calcula.
+    public static final long PASSWORD_RESET_TOKEN_DURATION_HOURS = 1;
+
+    /**
+     * Más larga que las demás: la invitación le llega a alguien que no está esperando el mail y
+     * que puede leerlo recién al otro día. Tres días es margen suficiente sin dejar la puerta
+     * abierta indefinidamente; vencida, el administrador reenvía.
+     */
+    public static final long INVITATION_TOKEN_DURATION_HOURS = 72;
 
     private final AuthTokensRepository authTokensRepository;
     private final RefreshTokenRepository refreshTokenRepository;
@@ -37,6 +47,22 @@ public class TokenService {
 
     public String generatePasswordResetToken(UUID userId) {
         return createAuthToken(userId, TokenType.PASSWORD_RESET, PASSWORD_RESET_TOKEN_DURATION_HOURS);
+    }
+
+    public String generateInvitationToken(UUID userId) {
+        return createAuthToken(userId, TokenType.INVITATION, INVITATION_TOKEN_DURATION_HOURS);
+    }
+
+    /**
+     * Invalida los tokens sin usar de un tipo. Se llama antes de emitir uno nuevo: si un
+     * administrador reenvía la invitación, el enlace anterior tiene que dejar de servir, porque
+     * si no cada reenvío deja otra puerta abierta hasta que expire.
+     */
+    @Transactional
+    public void invalidateAuthTokens(UUID userId, TokenType tokenType) {
+        var tokens = authTokensRepository.findByUserIdAndTokenTypeAndUsedFalse(userId, tokenType);
+        tokens.forEach(token -> token.setUsed(true));
+        authTokensRepository.saveAll(tokens);
     }
 
     public String generateRefreshToken(UUID userId) {

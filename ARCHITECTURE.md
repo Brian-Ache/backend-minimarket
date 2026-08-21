@@ -27,9 +27,9 @@ src/main/java/com/SolucionesInformaticasBA/minimarket/
 +-- MinimarketApplication.java     # Entry point
 +-- config/                        # CorsConfig, PasswordEncoderConfig
 +-- security/                      # SecurityConfig, JwtProvider, JwtAuthenticationFilter
-+-- shared/                        # SecurityUtils + excepciones y handler global
++-- shared/                        # SecurityUtils, mail/EmailService, excepciones y handler
 +-- modules/
-    +-- auth/                      # Login, refresh, logout, verificación y reseteo
+    +-- auth/                      # Login, refresh, logout, invitaciones y reseteo
     +-- usuarios/                  # Alta y gestión de usuarios
     +-- categorias/                # Catálogo: categorías
     +-- proveedores/               # Catálogo: proveedores
@@ -67,7 +67,7 @@ ventas    -> caja, inventario, productos, usuarios
 compras   -> caja, inventario, productos, proveedores, usuarios
 productos -> categorias, proveedores, usuarios
 inventario-> productos, usuarios
-usuarios  -> auth                      (para revocar sesiones al dar de baja)
+usuarios  -> auth                      (revocar sesiones, y enviar la invitación al dar de alta)
 auth, caja, categorias, proveedores    (sin dependencias salientes)
 ```
 
@@ -116,7 +116,15 @@ Logout -> revoca el refresh token (idempotente)
 - **Baja y bloqueo:** ambos revocan las sesiones del usuario y su JWT deja de servir en la
   request siguiente, porque el filtro consulta el estado en cada llamada. La diferencia es que
   el bloqueo es reversible y conserva la cuenta.
+- **Alta por invitación:** el administrador carga los datos, la cuenta nace `PENDIENTE` con una
+  contraseña aleatoria que nadie conoce, y la persona define la suya desde el enlace que le
+  llega por mail (token `INVITATION`, 72 h, de un solo uso). Si el mail no sale, el alta se
+  revierte: no queda una cuenta muerta ocupando ese email.
 - **Configuración obligatoria:** `JWT_SECRET`. Sin él la app no arranca.
+- **Mails** (`shared/mail/EmailService`): invitaciones y reseteo de contraseña. **Sin
+  `MAIL_HOST` no se manda nada** — el mail queda en el log con el enlace incluido, que es como
+  se trabaja en desarrollo sin un SMTP. Variables: `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`,
+  `MAIL_PASSWORD`, `MAIL_FROM`, `MAIL_FROM_NAME` y `FRONTEND_URL` (la base de los enlaces).
 - **CSRF** deshabilitado (API stateless); **CORS** configurable por `CORS_ALLOWED_ORIGINS`,
   con GET, POST, PUT, PATCH, DELETE y OPTIONS habilitados.
 
@@ -142,7 +150,7 @@ Logout -> revoca el refresh token (idempotente)
 | Tabla | Propósito |
 |---|---|
 | `usuarios` | Usuarios del sistema (SUPERADMIN / ADMIN / EMPLEADO), con estado de cuenta |
-| `auth_tokens` | Tokens de un solo uso: verificación y reseteo de contraseña |
+| `auth_tokens` | Tokens de un solo uso: invitación, verificación y reseteo de contraseña |
 | `refresh_tokens` | Sesiones activas (hash del refresh token) |
 | `categorias` | Categorías de producto |
 | `proveedores` | Proveedores |

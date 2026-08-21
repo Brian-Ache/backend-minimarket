@@ -20,6 +20,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.Actualiz
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarPasswordRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarRolRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CrearUsuarioRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.InvitarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
@@ -40,6 +41,24 @@ public class UsuarioController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UsuarioResponse> crear(@Valid @RequestBody CrearUsuarioRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(usuarioApi.crear(request));
+    }
+
+    /**
+     * Alta por invitación: la persona recibe un mail y define ahí su contraseña. Es el flujo
+     * previsto para el día a día; {@code POST /v1} queda para el alta directa.
+     */
+    @PostMapping("/v1/invitaciones")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UsuarioResponse> invitar(@Valid @RequestBody InvitarUsuarioRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(usuarioApi.invitar(request));
+    }
+
+    /** Manda de nuevo la invitación, con token nuevo. Solo si la cuenta sigue PENDIENTE. */
+    @PostMapping("/v1/{id}/invitaciones/reenviar")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> reenviarInvitacion(@PathVariable UUID id) {
+        usuarioApi.reenviarInvitacion(id);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/v1/me")

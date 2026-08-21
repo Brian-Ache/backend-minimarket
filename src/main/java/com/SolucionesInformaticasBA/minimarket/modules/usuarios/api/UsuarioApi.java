@@ -8,12 +8,19 @@ import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.Actualiz
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarPasswordRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarRolRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CrearUsuarioRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.InvitarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 
 public interface UsuarioApi {
+
+    /** Alta directa, con contraseña elegida por quien la crea. Ver también {@link #invitar}. */
     UsuarioResponse crear(CrearUsuarioRequest request);
+
+    UsuarioResponse invitar(InvitarUsuarioRequest request);
+
+    void reenviarInvitacion(UUID id);
 
     Usuario getUsuarioById(UUID id);
 

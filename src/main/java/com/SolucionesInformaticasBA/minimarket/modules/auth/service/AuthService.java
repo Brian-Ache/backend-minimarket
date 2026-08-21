@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.AuthApi;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AceptarInvitacionRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AuthResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.LoginRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetConfirmRequest;
@@ -26,6 +27,8 @@ import com.SolucionesInformaticasBA.minimarket.security.JwtProvider;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.UnauthorizedException;
+import com.SolucionesInformaticasBA.minimarket.shared.mail.EmailException;
+import com.SolucionesInformaticasBA.minimarket.shared.mail.EmailService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +42,7 @@ public class AuthService implements AuthApi {
     private final TokenService tokenService;
     private final JwtProvider jwtProvider;
     private final PasswordEncoder passwordEncoder;
+    private final EmailService emailService;
 
     @Override
     @Transactional
@@ -133,6 +137,44 @@ public class AuthService implements AuthApi {
         tokenService.markAuthTokenAsUsed(authToken.getId());
     }
 
+    @Override
+    @Transactional
+    public void enviarInvitacion(java.util.UUID userId, String email, String nombre) {
+        // Un reenvío no puede dejar viva la invitación anterior: sería otra puerta abierta
+        // hasta que expire.
+        tokenService.invalidateAuthTokens(userId, TokenType.INVITATION);
+
+        String token = tokenService.generateInvitationToken(userId);
+
+        // Si el mail falla, la excepción propaga y voltea la transacción del alta: preferimos
+        // no tener el usuario a tenerlo sin que nadie pueda avisarle.
+        emailService.enviarInvitacion(email, nombre, token,
+                TokenService.INVITATION_TOKEN_DURATION_HOURS);
+
+        log.info("Invitación enviada a {}", email);
+    }
+
+    @Override
+    @Transactional
+    public void aceptarInvitacion(AceptarInvitacionRequest request) {
+        AuthToken authToken = tokenService.validateAuthToken(request.getToken(), TokenType.INVITATION);
+
+        Usuario u = userRepository.findById(authToken.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
+
+        if (u.getDeletedAt() != null || u.getEstado() == EstadoUsuario.BLOQUEADO) {
+            // Lo dieron de baja o lo bloquearon entre la invitación y la aceptación.
+            throw new BadRequestException("La invitación ya no es válida");
+        }
+
+        u.setHashPassword(passwordEncoder.encode(request.getPassword()));
+        u.setEstado(EstadoUsuario.ACTIVO);
+        userRepository.save(u);
+        tokenService.markAuthTokenAsUsed(authToken.getId());
+
+        log.info("Invitación aceptada por {}", u.getEmail());
+    }
+
     /**
      * Resuelve al usuario por email o por nombre de usuario, indistinto.
      *
@@ -152,15 +194,26 @@ public class AuthService implements AuthApi {
      * Acepta email o username, igual que el login: quien entra con su nombre de usuario va a
      * escribir eso mismo acá. El mail de recuperación se manda de todos modos a su email.
      *
-     * <p>Responde igual exista o no la cuenta, para no revelar qué emails están registrados.
+     * <p>Responde igual exista o no la cuenta, para no revelar qué emails están registrados. Por
+     * eso, a diferencia de la invitación, un fallo de SMTP se traga y se loguea: devolver 502
+     * solo cuando la cuenta existe delataría cuáles existen.
      */
     @Override
+    @Transactional
     public void requestPasswordReset(PasswordResetRequest request) {
         String id = request.getUsername() == null ? "" : request.getUsername().trim();
 
         userRepository.findByEmailAndDeletedAtIsNull(id)
                 .or(() -> userRepository.findByUsernameAndDeletedAtIsNull(id))
-                .ifPresent(u -> tokenService.generatePasswordResetToken(u.getId()));
+                .ifPresent(u -> {
+                    String token = tokenService.generatePasswordResetToken(u.getId());
+                    try {
+                        emailService.enviarResetPassword(u.getEmail(), u.getNombre(), token,
+                                TokenService.PASSWORD_RESET_TOKEN_DURATION_HOURS);
+                    } catch (EmailException e) {
+                        log.error("No se pudo enviar el reseteo de contraseña a {}", u.getEmail(), e);
+                    }
+                });
     }
 
     @Override

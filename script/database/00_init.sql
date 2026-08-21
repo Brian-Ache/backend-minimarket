@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS usuarios (
 -- Tokens de un solo uso: verificación de email y reseteo de contraseña.
 CREATE TABLE IF NOT EXISTS auth_tokens (
     id              BINARY(16)  NOT NULL,
-    token_type      ENUM('PASSWORD_RESET','VERIFICATION') NOT NULL,
+    -- INVITATION: alta por invitación, el token además habilita a definir la contraseña.
+    token_type      ENUM('PASSWORD_RESET','VERIFICATION','INVITATION') NOT NULL,
     token_hash      VARCHAR(64) NOT NULL,                -- SHA-256 del token en claro
     user_id         BINARY(16)  NOT NULL,
     expires_at      DATETIME(6) NOT NULL,

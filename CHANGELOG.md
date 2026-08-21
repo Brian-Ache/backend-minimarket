@@ -21,6 +21,21 @@ despliegue, no el modelo de datos.
     apoderarse de una sesión de superadmin alcanzaría para fabricarse otro.
   - Las reglas por URL no cambiaron: el filtro JWT publica las authorities del rol **y las de
     los roles inferiores**, así que los `hasRole('ADMIN')` existentes ya incluyen al SUPERADMIN.
+- **Alta por invitación con SMTP**, el flujo que pedía `docs/cambios.md`:
+  - `POST /api/users/v1/invitaciones` — el administrador carga nombre, apellido, email y rol; la
+    cuenta nace `PENDIENTE` con una contraseña aleatoria que nadie conoce, y a la persona le
+    llega un mail para definir la suya. `username` es opcional: si no viene se deriva del email.
+  - `POST /api/auth/v1/invitacion/aceptar` — público, cierra el alta: define la contraseña y
+    activa la cuenta. El enlace dura 72 h y sirve una sola vez.
+  - `POST /api/users/v1/{id}/invitaciones/reenviar` — token nuevo, el anterior se invalida.
+  - Si el envío falla, el alta se revierte y responde `502`: no queda una cuenta muerta ocupando
+    ese email y ese username que nadie puede activar.
+- **Reseteo de contraseña por email**: `POST /api/auth/v1/password-reset` ahora manda el mail.
+  Sigue respondiendo `200` exista o no la cuenta — y también si el SMTP falla, porque un `502`
+  solo para las cuentas que existen revelaría cuáles existen.
+- **Configuración de SMTP** (`MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`,
+  `MAIL_FROM`, `MAIL_FROM_NAME`) y `FRONTEND_URL` para armar los enlaces de los mails.
+  **Sin `MAIL_HOST` la app funciona igual**: deja el mail en el log, con el enlace incluido.
 - **Cambio de rol**: `PATCH /api/users/v1/{id}/rol`. Exige jerarquía por partida doble —el
   objetivo y el rol nuevo tienen que estar por debajo de quien lo pide—, así que en la práctica
   solo el SUPERADMIN mueve gente entre ADMIN y EMPLEADO, y `SUPERADMIN` nunca es asignable.
@@ -59,12 +74,16 @@ despliegue, no el modelo de datos.
 - `06_migracion_superadmin.sql` — agrega `SUPERADMIN` al ENUM de `rol` y da de alta el
   superadmin (`superadmin@minimarket.local` / `Super123!`). **Cambiar esa contraseña apenas se
   ingresa.** Trae también la variante para promover una cuenta existente.
+- `07_migracion_invitaciones.sql` — agrega `INVITATION` al ENUM de `auth_tokens.token_type`.
+  Tipo propio y no reusar `VERIFICATION`: con el de verificación el usuario solo confirma su
+  email, con el de invitación define su contraseña por primera vez. Si compartieran tipo, un
+  token de verificación serviría para setear la contraseña de esa cuenta.
 
 ### Pendiente de `docs/cambios.md`
 
-- Alta por invitación con SMTP, y recuperación de contraseña por email: el flujo del servidor ya
-  existe, falta el envío.
 - Permisos configurables por empleado — descartado por ahora: todas las funciones activas.
+
+Con esto queda cubierto todo `docs/cambios.md` salvo ese último punto.
 
 ## 0.2.0 (2026-08-18)
 

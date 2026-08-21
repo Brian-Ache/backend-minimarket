@@ -71,8 +71,8 @@ Errores de validación (`400`):
 | Corte de caja | ✅ | ✅ | ❌ |
 | Reportes | ✅ | ✅ | ❌ |
 | Listar y ver usuarios | ✅ | ✅ | ❌ |
-| Alta, bloqueo y baja de EMPLEADO | ✅ | ✅ | ❌ |
-| Alta, bloqueo y baja de ADMIN | ✅ | ❌ | ❌ |
+| Invitar, dar de alta, bloquear y dar de baja a un EMPLEADO | ✅ | ✅ | ❌ |
+| Invitar, dar de alta, bloquear y dar de baja a un ADMIN | ✅ | ❌ | ❌ |
 | Promover o degradar entre ADMIN y EMPLEADO | ✅ | ❌ | ❌ |
 | Alta, bloqueo, baja o asignación del rol SUPERADMIN | ❌ | ❌ | ❌ |
 
@@ -90,9 +90,11 @@ hacerlo por otro usuario**: para eso está el flujo de reseteo.
 
 Todas públicas (no requieren token).
 
-> **`POST /api/auth/v1/register` fue dado de baja.** El alta de usuarios la hace únicamente el
-> ADMIN mediante [`POST /api/users/v1`](#post-apiusersv1). La lógica de autorregistro sigue
-> implementada en `AuthApi.register` pero sin endpoint, a la espera del envío de mails.
+> **`POST /api/auth/v1/register` fue dado de baja.** El alta la hace un administrador,
+> invitando ([`POST /api/users/v1/invitaciones`](#post-apiusersv1invitaciones)) o directamente
+> ([`POST /api/users/v1`](#post-apiusersv1)). La lógica de autorregistro sigue implementada en
+> `AuthApi.register` pero sin endpoint: no hay caso de uso para que alguien se dé de alta solo
+> en el sistema de un comercio.
 
 ### `POST /api/auth/v1/login`
 
@@ -158,16 +160,41 @@ también devuelve `204`.
 
 ---
 
-### `POST /api/auth/v1/password-reset`
+### `POST /api/auth/v1/invitacion/aceptar`
 
-Solicita reseteo de contraseña. Genera un token (no envía email aún).
+Cierre del alta por invitación: define la contraseña y pasa la cuenta a `ACTIVO`. **Público** —
+quien la acepta todavía no tiene contraseña, su credencial es el token del mail.
 
 **Request:**
 ```json
-{ "username": "string (email del usuario)" }
+{
+  "token": "string (el del enlace del mail)",
+  "password": "string (min 8, max 72)"
+}
 ```
 
-**Response `200`**
+**Response `200`** — después hay que loguearse normalmente.
+
+**Errores `400`:** token inválido, vencido o ya usado · token de otro tipo · la cuenta fue
+bloqueada o dada de baja entre la invitación y la aceptación
+
+---
+
+### `POST /api/auth/v1/password-reset`
+
+Solicita reseteo de contraseña y **manda el mail** con el enlace. Acepta email o username; el
+mail sale siempre al email de la cuenta.
+
+**Request:**
+```json
+{ "username": "string (email o nombre de usuario)" }
+```
+
+**Response `200`** — siempre, exista o no la cuenta, y **también si el envío falla**. Un `502`
+solo para las cuentas que existen revelaría cuáles existen; el fallo queda en el log del
+servidor.
+
+El enlace vence en **1 hora** y sirve una sola vez.
 
 ---
 
@@ -189,10 +216,64 @@ Confirma el reseteo con el token generado.
 
 ## 2. Usuarios — `/api/users/v1`
 
+### `POST /api/users/v1/invitaciones`
+
+**Alta por invitación — el flujo recomendado.** Crea la cuenta en estado `PENDIENTE` y le manda
+un mail a la persona con un enlace para que **defina su propia contraseña**. Quien invita nunca
+conoce la contraseña del invitado.
+
+**ADMIN o SUPERADMIN**, con las mismas reglas de jerarquía que el alta directa: solo se invita
+por debajo del propio nivel.
+
+**Request:**
+```json
+{
+  "nombre": "string (max 50)",
+  "apellido": "string (max 50)",
+  "email": "email (max 100)",
+  "username": "string (max 50, opcional)",
+  "rol": "ADMIN | EMPLEADO (opcional, default EMPLEADO)"
+}
+```
+
+Si no se manda `username`, se deriva de la parte local del email (`ana.perez@…` → `ana.perez`),
+agregando un sufijo numérico si ya estaba tomado. Un `username` **explícito** ya en uso, en
+cambio, da `400`: ahí sí hubo una elección que respetar.
+
+**Response `201`:** `{ ...UsuarioResponse }` con `estado: "PENDIENTE"`
+
+**Errores:** `400` email ya registrado o username explícito en uso · `403` sin rol ADMIN o rol
+pedido no permitido · `502` el mail no se pudo enviar
+
+> Si el envío falla, **el alta se revierte**: no queda una cuenta muerta ocupando ese email y
+> ese username que nadie puede activar. El `502` distingue "reintentá" de "corregí los datos".
+
+El enlace vence a las **72 horas**. Vencido, se usa el reenvío.
+
+---
+
+### `POST /api/users/v1/{id}/invitaciones/reenviar`
+
+Manda la invitación de nuevo, con un token nuevo — **el anterior queda invalidado**, para que
+cada reenvío no deje otra puerta abierta hasta que expire.
+
+Solo sobre cuentas en estado `PENDIENTE`, y con las mismas reglas de jerarquía que `bloquear`.
+
+**Response `204`**
+
+**Errores:** `400` la cuenta no está pendiente · `403` el objetivo no está por debajo tuyo ·
+`502` el mail no se pudo enviar
+
+---
+
 ### `POST /api/users/v1`
 
-Alta de usuario. **ADMIN o SUPERADMIN** (`403` para EMPLEADO). El usuario se crea en estado
-`ACTIVO`, listo para loguearse.
+Alta **directa**, con una contraseña elegida por quien la crea. Sigue disponible para altas sin
+mail de por medio (importar usuarios, entornos sin SMTP); para el día a día está la
+[invitación](#post-apiusersv1invitaciones), donde la contraseña la elige su dueño.
+
+**ADMIN o SUPERADMIN** (`403` para EMPLEADO). El usuario se crea en estado `ACTIVO`, listo para
+loguearse.
 
 Solo se puede dar de alta **por debajo del propio nivel**: el SUPERADMIN crea ADMIN y EMPLEADO,
 el ADMIN solo EMPLEADO. `rol` es opcional y por defecto es `EMPLEADO`.
