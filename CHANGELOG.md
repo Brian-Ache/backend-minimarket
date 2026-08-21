@@ -1,6 +1,6 @@
 # Changelog
 
-## Sin publicar
+## 0.3.0 (2026-08-21)
 
 Primeros puntos de [`docs/cambios.md`](docs/cambios.md). El sistema se despliega **una instancia
 por comercio**, así que no hay multi-inquilino: el aislamiento entre comercios lo da el
@@ -68,16 +68,12 @@ despliegue, no el modelo de datos.
 
 ### Base de datos
 
-- `05_migracion_estado_usuario.sql` — migra `enabled` a `estado` (1 ⇒ `ACTIVO`, 0 ⇒
-  `PENDIENTE`) y agrega el índice único de `username`. **Verificar antes que no haya usernames
-  repetidos**: el script trae la consulta y explica cómo seguir si el índice falla.
-- `06_migracion_superadmin.sql` — agrega `SUPERADMIN` al ENUM de `rol` y da de alta el
-  superadmin (`superadmin@minimarket.local` / `Super123!`). **Cambiar esa contraseña apenas se
-  ingresa.** Trae también la variante para promover una cuenta existente.
-- `07_migracion_invitaciones.sql` — agrega `INVITATION` al ENUM de `auth_tokens.token_type`.
-  Tipo propio y no reusar `VERIFICATION`: con el de verificación el usuario solo confirma su
-  email, con el de invitación define su contraseña por primera vez. Si compartieran tipo, un
-  token de verificación serviría para setear la contraseña de esa cuenta.
+- `02_parche_migraciones.sql` consolida las migraciones de las fases 3 a 5 y los cambios de
+  usuarios, SUPERADMIN e invitaciones. Aplicarlo una sola vez sobre una base existente que aún
+  no tenga esas modificaciones. **Verificar antes que no haya usernames repetidos**: el parche
+  incluye la consulta y explica cómo seguir si el índice falla.
+- Para una instalación nueva usar `00_init_limpio.sql` y, opcionalmente, `01_seed.sql`. El init
+  contiene el esquema final de esta versión y no requiere ejecutar migraciones adicionales.
 
 ### Pendiente de `docs/cambios.md`
 
@@ -168,17 +164,13 @@ Requieren cambios en el front:
 
 ### Base de datos
 
-Tres migraciones acumulativas en `script/database/`, con verificación incluida:
+El parche acumulado `02_parche_migraciones.sql` reúne los cambios de las fases 3, 4 y 5:
+`movimientos_stock.id_referencia`, restricciones de stock y caja, desglose persistido del corte,
+`detalles_ventas.costo_unitario`, índice por fecha de cobro y el cambio de `refresh_token` a
+`refresh_tokens`. **Aplicar con la app detenida:** invalida las sesiones abiertas.
 
-- `02_migracion_fase3.sql` — `movimientos_stock.id_referencia` (base de las reversas), unicidad
-  de stock por producto y de sesión de caja abierta, origen `REVERSA`.
-- `03_migracion_fase4.sql` — desglose persistido del corte, `detalles_ventas.costo_unitario`,
-  índice por fecha de cobro.
-- `04_migracion_fase5.sql` — `refresh_token` pasa a `refresh_tokens`. **Aplicar con la app
-  detenida:** invalida las sesiones abiertas.
-
-Para una base nueva alcanza con `00_init.sql` + `01_seed.sql`, que ya incluyen todo. El esquema
-valida contra las entidades con `spring.jpa.hibernate.ddl-auto=validate`.
+Para una base nueva alcanza con `00_init_limpio.sql` + `01_seed.sql`. El esquema valida contra las
+entidades con `spring.jpa.hibernate.ddl-auto=validate`.
 
 ### Rendimiento
 

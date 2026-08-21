@@ -20,8 +20,8 @@ front necesita distinguir "reautenticar" (401) de "no tenés permiso" (403).
 
 **Fase 3 aplicada y verificada el 2026-08-18** (B-05, B-06, B-14, B-15, B-18, B-19). Cayó de
 paso B-22, porque las `RuntimeException` crudas estaban en los mismos métodos reescritos.
-Requiere migración de esquema: `script/database/02_migracion_fase3.sql` (o recrear con
-`00_init.sql`, que ya la incluye).
+Requiere el parche de esquema `script/database/02_parche_migraciones.sql` (o recrear con
+`00_init_limpio.sql`, que ya lo incluye).
 
 Se adelantó de la Fase 4 un pedazo de B-10: el `saldoEsperado` pasó a calcularse como
 Σ entradas − Σ salidas en vez de sumar las categorías una por una. Sin ese cambio las reversas
@@ -31,10 +31,10 @@ de caja (origen nuevo `REVERSA`) quedaban fuera del arqueo.
 B-24 (la anotación de `DetalleVenta.idProducto`, que ya estaba alineada en el esquema) y el
 logging del handler genérico de B-16 —adelantado a la fuerza: un 500 en el reporte de ganancias
 no dejaba ningún rastro y era imposible diagnosticarlo sin eso—. Requiere migración de esquema:
-`script/database/03_migracion_fase4.sql`.
+`script/database/02_parche_migraciones.sql`.
 
 **Fase 5 aplicada y verificada el 2026-08-18** (B-16, B-17, B-20, B-23, B-25). Requiere
-migración de esquema: `script/database/04_migracion_fase5.sql` (renombre de `refresh_token`).
+el parche de esquema `script/database/02_parche_migraciones.sql` (renombre de `refresh_token`).
 
 **Los 25 bugs del relevamiento están cerrados.** Queda pendiente el trabajo transversal de más
 abajo: tests automatizados, Flyway y paginación de los listados.

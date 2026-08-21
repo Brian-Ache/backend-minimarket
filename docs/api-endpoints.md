@@ -78,7 +78,7 @@ Errores de validación (`400`):
 
 Nadie gestiona a un usuario de su mismo nivel ni de uno superior, y **nadie se bloquea ni se
 borra a sí mismo**. De ahí que no exista alta de SUPERADMIN por API: la llave maestra sale del
-seed de la base (`01_seed.sql` / `06_migracion_superadmin.sql`). Si el alta de superadmins fuera
+seed de la base (`01_seed.sql`). Si el alta de superadmins fuera
 un endpoint, tomar una sesión de superadmin alcanzaría para fabricarse otro.
 
 Cambiar la contraseña exige conocer la actual, así que **ni el ADMIN ni el SUPERADMIN pueden

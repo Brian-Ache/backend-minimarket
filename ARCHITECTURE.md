@@ -1,4 +1,4 @@
-# Arquitectura — backend-minimarket v0.2.0
+# Arquitectura — backend-minimarket v0.3.0
 
 Backend de un punto de venta para minimarket: catálogo, ventas con cobro, compras a proveedores,
 inventario con lotes, caja con arqueo y reportes.
@@ -109,7 +109,7 @@ Logout -> revoca el refresh token (idempotente)
   exige mando estricto, de modo que un ADMIN no puede tocar a otro ADMIN ni al SUPERADMIN, y
   nadie se bloquea ni se borra a sí mismo.
 - **SUPERADMIN:** llave maestra, no se crea por API (ningún rol manda sobre su propio nivel).
-  Sale del seed de la base; ver `script/database/06_migracion_superadmin.sql`.
+  Sale del seed de la base; ver `script/database/01_seed.sql`.
 - **Contraseñas:** BCrypt.
 - **Estado de cuenta:** `PENDIENTE` / `ACTIVO` / `BLOQUEADO`, independiente del borrado lógico.
   Solo un usuario `ACTIVO` puede autenticarse y operar.
@@ -260,19 +260,18 @@ El detalle de cada endpoint —request, response y errores— está en
 
 ## Base de datos y despliegue
 
-Scripts en `script/database/`, pensados para aplicarse en orden:
+Scripts en `script/database/`:
 
 | Script | Contenido |
 |---|---|
-| `00_init.sql` | Esquema completo. Suficiente para una base nueva |
+| `00_init.sql` | Esquema existente, se conserva por compatibilidad |
+| `00_init_limpio.sql` | Esquema final autocontenido para una base nueva |
 | `01_seed.sql` | Datos de desarrollo (admin, catálogo de ejemplo) |
-| `02_migracion_fase3.sql` | Reversas de stock, unicidad de stock y de sesión abierta |
-| `03_migracion_fase4.sql` | Desglose del corte, costo por línea de venta |
-| `04_migracion_fase5.sql` | `refresh_token` → `refresh_tokens` |
+| `02_parche_migraciones.sql` | Parche acumulado para una base existente anterior al esquema final |
 
 El esquema está alineado con las entidades: la app puede arrancar con
-`spring.jpa.hibernate.ddl-auto=validate` y no reporta discrepancias. Las migraciones se aplican
-a mano; incorporar Flyway es trabajo pendiente.
+`spring.jpa.hibernate.ddl-auto=validate` y no reporta discrepancias. El parche se aplica a mano;
+incorporar Flyway es trabajo pendiente.
 
 Configuración por variables de entorno (ver `.env.example`): `DB_URL`, `DB_USERNAME`,
 `DB_PASSWORD`, `JWT_SECRET` (obligatoria), `JWT_EXPIRATION_HOURS`, `SERVER_PORT`,
@@ -297,6 +296,4 @@ Configuración por variables de entorno (ver `.env.example`): `DB_URL`, `DB_USER
 - Las migraciones se aplican a mano (falta Flyway).
 - **Los importes usan `float`.** Para dinero corresponde `DECIMAL` + `BigDecimal`; mientras
   siga así, los totales acumulan error de redondeo.
-- El envío de emails no está implementado, así que la verificación de cuenta y el reseteo
-  autogestionado de contraseña quedan fuera del circuito.
 - Queda un directorio `controller/` vacío en la raíz del paquete, resto de la estructura previa.

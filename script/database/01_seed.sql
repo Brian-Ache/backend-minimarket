@@ -1,7 +1,7 @@
 -- =====================================================================
 -- backend-minimarket — Datos iniciales (opcional, para desarrollo)
 -- =====================================================================
--- Requiere haber ejecutado 00_init.sql.
+-- Requiere haber ejecutado 00_init.sql o 00_init_limpio.sql.
 -- Uso:  mysql -u root -p < 01_seed.sql
 -- =====================================================================
 
