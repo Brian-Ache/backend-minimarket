@@ -1,5 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.modules.auth.service;
 
+import java.util.Optional;
+
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +19,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.RefreshToken;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.enums.TokenType;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.EstadoUsuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.repository.UsuarioRepository;
 import com.SolucionesInformaticasBA.minimarket.security.JwtProvider;
@@ -51,7 +54,7 @@ public class AuthService implements AuthApi {
                 .username(request.getUsername())
                 .hashPassword(passwordEncoder.encode(request.getPassword()))
                 .rol(Rol.EMPLEADO)
-                .enabled(false) // se habilita al verificar el email
+                .estado(EstadoUsuario.PENDIENTE) // pasa a ACTIVO al confirmar la cuenta
                 .build();
 
         user = userRepository.saveAndFlush(user);
@@ -67,8 +70,10 @@ public class AuthService implements AuthApi {
 
     @Override
     public AuthResponse login(LoginRequest request) {
-        Usuario u = userRepository.findByEmailAndDeletedAtIsNullAndEnabledTrue(request.getUsername())
-                .orElseThrow(() -> new UnauthorizedException("Credenciales inválidas o cuenta no verificada"));
+        // El estado se exige en la consulta: una cuenta pendiente o bloqueada no distingue su
+        // mensaje del de credenciales inválidas, para no filtrar qué cuentas existen.
+        Usuario u = buscarParaLogin(request.getUsername())
+                .orElseThrow(() -> new UnauthorizedException("Credenciales inválidas o cuenta sin acceso"));
 
         if (!passwordEncoder.matches(request.getPassword(), u.getHashPassword())) {
             throw new UnauthorizedException("Credenciales inválidas");
@@ -123,19 +128,39 @@ public class AuthService implements AuthApi {
         Usuario u = userRepository.findById(authToken.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
 
-        u.setEnabled(true);
+        u.setEstado(EstadoUsuario.ACTIVO);
         userRepository.save(u);
         tokenService.markAuthTokenAsUsed(authToken.getId());
     }
 
+    /**
+     * Resuelve al usuario por email o por nombre de usuario, indistinto.
+     *
+     * <p>Se busca primero por email y solo después por username, en dos consultas separadas en
+     * lugar de un OR. Es a propósito: si alguien tuviera como username el email de otra persona,
+     * un OR devolvería dos filas y la consulta reventaría. Así la precedencia queda explícita
+     * —gana el email, que es la credencial principal— y el resultado nunca es ambiguo.
+     */
+    private Optional<Usuario> buscarParaLogin(String identificador) {
+        String id = identificador == null ? "" : identificador.trim();
+
+        return userRepository.findByEmailAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO)
+                .or(() -> userRepository.findByUsernameAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO));
+    }
+
+    /**
+     * Acepta email o username, igual que el login: quien entra con su nombre de usuario va a
+     * escribir eso mismo acá. El mail de recuperación se manda de todos modos a su email.
+     *
+     * <p>Responde igual exista o no la cuenta, para no revelar qué emails están registrados.
+     */
     @Override
     public void requestPasswordReset(PasswordResetRequest request) {
-        Usuario u = userRepository.findByEmailAndDeletedAtIsNull(request.getUsername())
-                .orElse(null);
+        String id = request.getUsername() == null ? "" : request.getUsername().trim();
 
-        if (u != null) {
-            tokenService.generatePasswordResetToken(u.getId());
-        }
+        userRepository.findByEmailAndDeletedAtIsNull(id)
+                .or(() -> userRepository.findByUsernameAndDeletedAtIsNull(id))
+                .ifPresent(u -> tokenService.generatePasswordResetToken(u.getId()));
     }
 
     @Override
@@ -160,7 +185,7 @@ public class AuthService implements AuthApi {
                 .email(u.getEmail())
                 .username(u.getUsername())
                 .rol(u.getRol())
-                .enabled(u.isEnabled())
+                .estado(u.getEstado())
                 .createdAt(u.getCreatedAt())
                 .updatedAt(u.getUpdatedAt())
                 .build();

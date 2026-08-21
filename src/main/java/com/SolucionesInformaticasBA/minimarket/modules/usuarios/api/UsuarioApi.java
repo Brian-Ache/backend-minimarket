@@ -22,6 +22,10 @@ public interface UsuarioApi {
 
     UsuarioResponse update(UUID id, ActualizarUsuarioRequest request);
 
+    UsuarioResponse bloquear(UUID id);
+
+    UsuarioResponse desbloquear(UUID id);
+
     void delete(UUID id);
 
     void changePassword(UUID id, CambiarPasswordRequest request);

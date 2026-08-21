@@ -12,8 +12,10 @@ import com.SolucionesInformaticasBA.minimarket.modules.auth.api.AuthApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.*;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.EstadoUsuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.repository.UsuarioRepository;
+import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
@@ -37,6 +39,9 @@ public class UsuarioService implements UsuarioApi {
         if (userRepository.existsByEmailAndDeletedAtIsNull(request.getEmail())) {
             throw new BadRequestException("El email ya está registrado");
         }
+        if (userRepository.existsByUsernameAndDeletedAtIsNull(request.getUsername())) {
+            throw new BadRequestException("El nombre de usuario ya está en uso");
+        }
 
         Usuario u = Usuario.builder()
                 .nombre(request.getNombre())
@@ -45,7 +50,9 @@ public class UsuarioService implements UsuarioApi {
                 .username(request.getUsername())
                 .hashPassword(passwordEncoder.encode(request.getPassword()))
                 .rol(request.getRol() != null ? request.getRol() : Rol.EMPLEADO)
-                .enabled(true)
+                // Lo crea un ADMIN con su contraseña, así que ya puede operar: no hay
+                // circuito de verificación por email en el MVP.
+                .estado(EstadoUsuario.ACTIVO)
                 .build();
 
         // saveAndFlush: sin el flush, created_at/updated_at todavía no están en la entidad
@@ -94,6 +101,44 @@ public class UsuarioService implements UsuarioApi {
         return toUserResponse(u);
     }
 
+    /**
+     * Suspende el acceso sin borrar la cuenta: el usuario conserva su historial y puede
+     * reactivarse. Cortar las sesiones es parte del bloqueo, si no seguiría operando con el
+     * token que ya tenía en la mano.
+     */
+    @Override
+    @Transactional
+    public UsuarioResponse bloquear(UUID id) {
+        Usuario u = findActiveUser(id);
+
+        if (u.getEstado() == EstadoUsuario.BLOQUEADO) {
+            throw new BadRequestException("El usuario ya está bloqueado");
+        }
+        if (id.equals(SecurityUtils.getCurrentUserId())) {
+            throw new BadRequestException("No podés bloquear tu propia cuenta");
+        }
+
+        u.setEstado(EstadoUsuario.BLOQUEADO);
+        u = userRepository.save(u);
+        authApi.revokeAllSessions(id);
+
+        return toUserResponse(u);
+    }
+
+    /** Devuelve el acceso a una cuenta bloqueada. Tiene que volver a iniciar sesión. */
+    @Override
+    @Transactional
+    public UsuarioResponse desbloquear(UUID id) {
+        Usuario u = findActiveUser(id);
+
+        if (u.getEstado() != EstadoUsuario.BLOQUEADO) {
+            throw new BadRequestException("El usuario no está bloqueado");
+        }
+
+        u.setEstado(EstadoUsuario.ACTIVO);
+        return toUserResponse(userRepository.save(u));
+    }
+
     @Override
     @Transactional
     public void delete(UUID id) {
@@ -124,7 +169,7 @@ public class UsuarioService implements UsuarioApi {
 
     @Override
     public boolean puedeOperar(UUID id){
-        return userRepository.existsByIdAndDeletedAtIsNullAndEnabledTrue(id);
+        return userRepository.existsByIdAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO);
     }
 
     private Usuario findActiveUser(UUID id) {
@@ -146,7 +191,7 @@ public class UsuarioService implements UsuarioApi {
                 .username(u.getUsername())
                 .email(u.getEmail())
                 .rol(u.getRol())
-                .enabled(u.isEnabled())
+                .estado(u.getEstado())
                 .createdAt(u.getCreatedAt())
                 .updatedAt(u.getUpdatedAt())
                 .build();

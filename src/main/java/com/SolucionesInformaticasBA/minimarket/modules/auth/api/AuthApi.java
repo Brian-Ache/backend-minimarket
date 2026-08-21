@@ -18,7 +18,7 @@ public interface AuthApi {
      * (POST /api/users/v1). Para habilitar el autorregistro hace falta: (1) exponerla en
      * {@code AuthController}, (2) agregar el envío de mail con el token de verificación, y
      * (3) permitir la ruta en {@code SecurityConfig}. El usuario queda con
-     * {@code enabled=false} hasta que confirme con {@link #verifyEmail}.
+     * estado {@code PENDIENTE} hasta que confirme con {@link #verifyEmail}.
      */
     UsuarioResponse register(RegisterRequest request);
 

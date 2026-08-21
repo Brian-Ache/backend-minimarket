@@ -43,6 +43,9 @@ Errores de validación (`400`):
 - **Identidad:** el usuario que ejecuta la operación se toma **del JWT**. El header `idUsuario`
   fue eliminado de todos los endpoints; si se envía, se ignora
 - **Roles:** `ADMIN` y `EMPLEADO`. Ver la matriz de permisos más abajo
+- **Estado de cuenta:** `PENDIENTE` (creada, sin acceso todavía) · `ACTIVO` (opera) ·
+  `BLOQUEADO` (acceso suspendido, reversible). Solo un usuario `ACTIVO` puede loguearse y
+  operar; el bloqueo tiene efecto inmediato sobre las sesiones abiertas
 - **Códigos de auth:** `401` token ausente, inválido, expirado o de un usuario dado de baja
   (el front debe reautenticar) · `403` autenticado pero sin permisos para ese recurso
 - **Swagger UI:** `/swagger-ui/index.html`
@@ -173,7 +176,7 @@ Confirma el reseteo con el token generado.
 
 ### `POST /api/users/v1`
 
-Alta de usuario. **Solo ADMIN** (`403` para EMPLEADO). El usuario se crea con `enabled: true`,
+Alta de usuario. **Solo ADMIN** (`403` para EMPLEADO). El usuario se crea en estado `ACTIVO`,
 listo para loguearse.
 
 **Request:**
@@ -190,7 +193,7 @@ listo para loguearse.
 
 **Response `201`:** `{ ...UsuarioResponse }`
 
-**Errores:** `400` email ya registrado · `403` sin rol ADMIN
+**Errores:** `400` email o username ya en uso · `403` sin rol ADMIN
 
 ---
 
@@ -234,9 +237,38 @@ Actualiza nombre y/o apellido.
 
 ---
 
+### `POST /api/users/v1/{id}/bloquear`
+
+Suspende el acceso **sin borrar la cuenta**: el usuario conserva su historial de ventas,
+compras y movimientos, y puede reactivarse. Corta sus sesiones abiertas, así que el bloqueo es
+inmediato y no espera a que expire su token.
+
+**Solo ADMIN.**
+
+**Response `200`:** `{ ...UsuarioResponse }` con `estado: "BLOQUEADO"`
+
+**Errores `400`:** ya está bloqueado · es tu propia cuenta
+
+---
+
+### `POST /api/users/v1/{id}/desbloquear`
+
+Devuelve el acceso. El usuario tiene que volver a iniciar sesión.
+
+**Solo ADMIN.**
+
+**Response `200`:** `{ ...UsuarioResponse }` con `estado: "ACTIVO"`
+
+**Error `400`:** el usuario no está bloqueado
+
+---
+
 ### `DELETE /api/users/v1/{id}`
 
-Soft delete.
+Baja lógica de la cuenta y revocación de sus sesiones. Para suspender temporalmente a alguien
+usar `bloquear`, que es reversible.
+
+**Solo ADMIN.**
 
 **Response `204`**
 
@@ -268,7 +300,7 @@ Soft delete.
   "username": "string",
   "email": "string",
   "rol": "ADMIN | EMPLEADO",
-  "enabled": "boolean",
+  "estado": "PENDIENTE | ACTIVO | BLOQUEADO",
   "createdAt": "datetime",
   "updatedAt": "datetime"
 }

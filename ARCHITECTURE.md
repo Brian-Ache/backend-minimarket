@@ -101,7 +101,11 @@ Logout -> revoca el refresh token (idempotente)
   están en `SecurityConfig`; `@PreAuthorize` se usa solo donde el permiso depende de quién es el
   dueño del recurso (`/api/users/{id}`).
 - **Contraseñas:** BCrypt.
-- **Baja de usuario:** revoca sus sesiones; su JWT deja de servir en la request siguiente.
+- **Estado de cuenta:** `PENDIENTE` / `ACTIVO` / `BLOQUEADO`, independiente del borrado lógico.
+  Solo un usuario `ACTIVO` puede autenticarse y operar.
+- **Baja y bloqueo:** ambos revocan las sesiones del usuario y su JWT deja de servir en la
+  request siguiente, porque el filtro consulta el estado en cada llamada. La diferencia es que
+  el bloqueo es reversible y conserva la cuenta.
 - **Configuración obligatoria:** `JWT_SECRET`. Sin él la app no arranca.
 - **CSRF** deshabilitado (API stateless); **CORS** configurable por `CORS_ALLOWED_ORIGINS`,
   con GET, POST, PUT, PATCH, DELETE y OPTIONS habilitados.
@@ -125,7 +129,7 @@ Logout -> revoca el refresh token (idempotente)
 
 | Tabla | Propósito |
 |---|---|
-| `usuarios` | Usuarios del sistema (ADMIN / EMPLEADO) |
+| `usuarios` | Usuarios del sistema (ADMIN / EMPLEADO), con estado de cuenta |
 | `auth_tokens` | Tokens de un solo uso: verificación y reseteo de contraseña |
 | `refresh_tokens` | Sesiones activas (hash del refresh token) |
 | `categorias` | Categorías de producto |

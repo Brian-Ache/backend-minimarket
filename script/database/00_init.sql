@@ -18,7 +18,8 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- 1. USUARIOS Y AUTENTICACIÓN
 -- =====================================================================
 
--- Usuarios del sistema. `email` es la credencial de login (único).
+-- Usuarios del sistema. `email` es la credencial de login; `username` también es único,
+-- para poder identificar a la persona por cualquiera de los dos.
 CREATE TABLE IF NOT EXISTS usuarios (
     id              BINARY(16)   NOT NULL,
     nombre          VARCHAR(50)  NOT NULL,
@@ -27,12 +28,16 @@ CREATE TABLE IF NOT EXISTS usuarios (
     email           VARCHAR(100) NOT NULL,
     hash_password   VARCHAR(255) NOT NULL,               -- BCrypt
     rol             ENUM('ADMIN','EMPLEADO') NOT NULL,
-    enabled         BIT(1)       NOT NULL DEFAULT b'0',  -- se activa al verificar el email
+    -- Situación de la cuenta. PENDIENTE = creada sin acceso todavía · ACTIVO = opera ·
+    -- BLOQUEADO = acceso suspendido. Es independiente de deleted_at: un bloqueado sigue
+    -- existiendo y conserva su historial.
+    estado          ENUM('PENDIENTE','ACTIVO','BLOQUEADO') NOT NULL DEFAULT 'PENDIENTE',
     created_at      DATETIME(6)  NOT NULL,
     updated_at      DATETIME(6)  NOT NULL,
     deleted_at      DATETIME(6)  NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uk_usuarios_email (email),
+    UNIQUE KEY uk_usuarios_username (username),
     KEY ix_usuarios_deleted_at (deleted_at)
 ) ENGINE = InnoDB;
 

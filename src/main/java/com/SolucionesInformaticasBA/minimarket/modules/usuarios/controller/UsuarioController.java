@@ -63,6 +63,19 @@ public class UsuarioController {
         return ResponseEntity.ok(usuarioApi.update(id, request));
     }
 
+    /** Suspende el acceso sin borrar la cuenta. Corta las sesiones abiertas del usuario. */
+    @PostMapping("/v1/{id}/bloquear")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UsuarioResponse> bloquear(@PathVariable UUID id) {
+        return ResponseEntity.ok(usuarioApi.bloquear(id));
+    }
+
+    @PostMapping("/v1/{id}/desbloquear")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UsuarioResponse> desbloquear(@PathVariable UUID id) {
+        return ResponseEntity.ok(usuarioApi.desbloquear(id));
+    }
+
     @DeleteMapping("/v1/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {

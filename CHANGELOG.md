@@ -1,5 +1,45 @@
 # Changelog
 
+## Sin publicar
+
+Primeros puntos de [`docs/cambios.md`](docs/cambios.md). El sistema se despliega **una instancia
+por comercio**, así que no hay multi-inquilino: el aislamiento entre comercios lo da el
+despliegue, no el modelo de datos.
+
+### Cambios que rompen compatibilidad
+
+- **`UsuarioResponse` reemplaza `enabled` (booleano) por `estado`** (`PENDIENTE` | `ACTIVO` |
+  `BLOQUEADO`). El front tiene que dejar de leer `enabled`.
+
+### Agregado
+
+- **Bloqueo de usuarios**, reversible y sin borrar la cuenta:
+  `POST /api/users/v1/{id}/bloquear` y `/desbloquear`, solo ADMIN. El usuario bloqueado conserva
+  su historial y sus sesiones se cortan en el acto. No se puede bloquear la cuenta propia.
+- **`username` es único.** Se valida en el alta (`400` si está en uso) y en la base.
+
+### Cambiado
+
+- El flag `enabled` pasa a la columna `estado`. El booleano solo distinguía "verificado" de "no
+  verificado" y no dejaba lugar para el bloqueo: suspender a alguien obligaba a borrarlo,
+  perdiendo la diferencia entre "se fue" y "no puede entrar por ahora".
+- El login exige estado `ACTIVO`. El mensaje de error no distingue entre credenciales inválidas,
+  cuenta pendiente y cuenta bloqueada, para no revelar qué cuentas existen.
+
+### Base de datos
+
+- `05_migracion_estado_usuario.sql` — migra `enabled` a `estado` (1 ⇒ `ACTIVO`, 0 ⇒
+  `PENDIENTE`) y agrega el índice único de `username`. **Verificar antes que no haya usernames
+  repetidos**: el script trae la consulta y explica cómo seguir si el índice falla.
+
+### Pendiente de `docs/cambios.md`
+
+- Rol `SUPERADMIN` con jerarquía (`SUPERADMIN > ADMIN > EMPLEADO`).
+- Login indistinto con email o username (la unicidad, que era el requisito, ya está).
+- Alta por invitación con SMTP, y recuperación de contraseña por email: el flujo del servidor ya
+  existe, falta el envío.
+- Permisos configurables por empleado — descartado por ahora: todas las funciones activas.
+
 ## 0.2.0 (2026-08-18)
 
 Relevamiento y corrección de 25 bugs del MVP. Todos los defectos fueron reproducidos contra la
