@@ -4,6 +4,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.categorias.api.CategoriasApi;
@@ -59,9 +61,8 @@ public class ProductoService implements ProductosApi{
         return toResponse(producto);
     }
 
-    public List<ProductoResponse> getAll(){
-        return productoRepository.findAllByDeletedAtIsNull()
-            .stream().map(this::toResponse).toList();
+    public Page<ProductoResponse> getAll(Pageable pageable){
+        return productoRepository.findAllPaginated(pageable).map(this::toResponse);
     }
 
     public ProductoResponse getByBarcode(String barcode){
@@ -123,29 +124,45 @@ public class ProductoService implements ProductosApi{
     }
 
     @Override
-    public List<ProductoResponse> search(String q) {
-        return productoRepository.findByNombreContainingIgnoreCase(q)
-            .stream().filter(p -> p.getDeletedAt() == null)
-            .map(this::toResponse)
-            .toList();
+    public Page<ProductoResponse> search(String q, Pageable pageable) {
+        return productoRepository.findByNombreContainingIgnoreCase(q, pageable)
+            .map(this::toResponse);
     }
 
     @Override
-    public List<ProductoResponse> getByCategoria(UUID idCategoria) {
-        return productoRepository.findByIdCategoriaAndDeletedAtIsNull(idCategoria)
-            .stream().map(this::toResponse).toList();
+    public Page<ProductoResponse> searchByNombreAndCategoria(String q, UUID idCategoria, Pageable pageable) {
+        return productoRepository.searchByNombreAndCategoria(q, idCategoria, pageable)
+            .map(this::toResponse);
     }
 
     @Override
-    public List<ProductoResponse> getByProveedor(UUID idProveedor) {
-        return productoRepository.findByIdProveedorAndDeletedAtIsNull(idProveedor)
-            .stream().map(this::toResponse).toList();
+    public Page<ProductoResponse> searchByNombreAndProveedor(String q, UUID idProveedor, Pageable pageable) {
+        return productoRepository.searchByNombreAndProveedor(q, idProveedor, pageable)
+            .map(this::toResponse);
     }
 
     @Override
-    public List<ProductoResponse> getByCategoriaAndProveedor(UUID idCategoria, UUID idProveedor) {
-        return productoRepository.findByIdCategoriaAndIdProveedorAndDeletedAtIsNull(idCategoria, idProveedor)
-            .stream().map(this::toResponse).toList();
+    public Page<ProductoResponse> searchByNombreAndCategoriaAndProveedor(String q, UUID idCategoria, UUID idProveedor, Pageable pageable) {
+        return productoRepository.searchByNombreAndCategoriaAndProveedor(q, idCategoria, idProveedor, pageable)
+            .map(this::toResponse);
+    }
+
+    @Override
+    public Page<ProductoResponse> getByCategoria(UUID idCategoria, Pageable pageable) {
+        return productoRepository.findByIdCategoriaAndDeletedAtIsNull(idCategoria, pageable)
+            .map(this::toResponse);
+    }
+
+    @Override
+    public Page<ProductoResponse> getByProveedor(UUID idProveedor, Pageable pageable) {
+        return productoRepository.findByIdProveedorAndDeletedAtIsNull(idProveedor, pageable)
+            .map(this::toResponse);
+    }
+
+    @Override
+    public Page<ProductoResponse> getByCategoriaAndProveedor(UUID idCategoria, UUID idProveedor, Pageable pageable) {
+        return productoRepository.findByIdCategoriaAndIdProveedorAndDeletedAtIsNull(idCategoria, idProveedor, pageable)
+            .map(this::toResponse);
     }
 
     // Helpers

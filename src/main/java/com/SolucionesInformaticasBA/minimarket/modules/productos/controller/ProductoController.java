@@ -1,9 +1,11 @@
 package com.SolucionesInformaticasBA.minimarket.modules.productos.controller;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,20 +40,36 @@ public class ProductoController {
     }
 
     @GetMapping("/v1")
-    public ResponseEntity<List<ProductoResponse>> getAll(
+    public ResponseEntity<Page<ProductoResponse>> getAll(
+            @RequestParam Optional<String> q,
             @RequestParam Optional<UUID> categoria,
-            @RequestParam Optional<UUID> proveedor) {
-        if (categoria.isPresent() && proveedor.isPresent()) {
-            return ResponseEntity.ok(productosApi.getByCategoriaAndProveedor(categoria.get(), proveedor.get()));
-        }
-        if (categoria.isPresent()) {
-            return ResponseEntity.ok(productosApi.getByCategoria(categoria.get()));
-        }
-        if (proveedor.isPresent()) {
-            return ResponseEntity.ok(productosApi.getByProveedor(proveedor.get()));
-        }
-        return ResponseEntity.ok(productosApi.getAll());
-    }
+            @RequestParam Optional<UUID> proveedor,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+                Pageable pageable = PageRequest.of(page, size);
+                if (q.isPresent()) {
+                    if (categoria.isPresent() && proveedor.isPresent()) {
+                        return ResponseEntity.ok(productosApi.searchByNombreAndCategoriaAndProveedor(q.get(), categoria.get(), proveedor.get(), pageable));
+                    }
+                    if (categoria.isPresent()) {
+                        return ResponseEntity.ok(productosApi.searchByNombreAndCategoria(q.get(), categoria.get(), pageable));
+                    }
+                    if (proveedor.isPresent()) {
+                        return ResponseEntity.ok(productosApi.searchByNombreAndProveedor(q.get(), proveedor.get(), pageable));
+                    }
+                    return ResponseEntity.ok(productosApi.search(q.get(), pageable));
+                }
+                if (categoria.isPresent() && proveedor.isPresent()) {
+                    return ResponseEntity.ok(productosApi.getByCategoriaAndProveedor(categoria.get(), proveedor.get(), pageable));
+                }
+                if (categoria.isPresent()) {
+                    return ResponseEntity.ok(productosApi.getByCategoria(categoria.get(), pageable));
+                }
+                if (proveedor.isPresent()) {
+                    return ResponseEntity.ok(productosApi.getByProveedor(proveedor.get(), pageable));
+                }
+                return ResponseEntity.ok(productosApi.getAll(pageable));
+            }
 
     @GetMapping("/v1/{id}")
     public ResponseEntity<ProductoResponse> getById(@PathVariable UUID id){
@@ -59,8 +77,11 @@ public class ProductoController {
     }
 
     @GetMapping("/v1/search")
-    public ResponseEntity<List<ProductoResponse>> search(@RequestParam String q) {
-        return ResponseEntity.ok(productosApi.search(q));
+    public ResponseEntity<Page<ProductoResponse>> search(
+            @RequestParam String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(productosApi.search(q, PageRequest.of(page, size)));
     }
 
     @GetMapping("/v1/barcode/{barcode}")
