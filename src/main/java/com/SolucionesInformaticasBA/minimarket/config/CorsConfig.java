@@ -10,7 +10,7 @@ import org.springframework.web.cors.*;
 @Configuration
 public class CorsConfig {
 
-    @Value("${CORS_ALLOWED_ORIGINS:http://localhost:5173}")
+    @Value("${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:1420}")
     private List<String> allowedOrigins;
 
     @Bean

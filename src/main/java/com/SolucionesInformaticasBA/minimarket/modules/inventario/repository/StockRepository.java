@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.inventario.repository;
 
+import java.util.List;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -10,4 +11,6 @@ public interface StockRepository extends JpaRepository<Stock, UUID>{
     Stock findByIdProductoAndDeletedAtIsNull(UUID idProducto);
 
     Stock findByIdAndDeletedAtIsNull(UUID id);
+
+    List<Stock> findByIdProductoInAndDeletedAtIsNull(List<UUID> idProductos);
 }

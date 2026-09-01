@@ -41,6 +41,11 @@ public class InventarioController {
         return ResponseEntity.ok(inventarioApi.getByIdProducto(idProducto));
     }
 
+    @PostMapping("/v1/stock/batch")
+    public ResponseEntity<List<StockResponse>> getStockBatch(@RequestBody List<UUID> idProductos){
+        return ResponseEntity.ok(inventarioApi.getByIdProductos(idProductos));
+    }
+
     @PutMapping("/v1/stock/aumentar")
     public ResponseEntity<StockResponse> aumentarStock(@RequestBody MovimientoStockRequest request){
         return ResponseEntity.ok(inventarioApi.aumentar(request));

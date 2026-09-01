@@ -21,6 +21,8 @@ import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.Lot
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.entity.Producto;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.repository.ProductoRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.ProveedoresApi;
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto.ProveedorResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
@@ -37,6 +39,7 @@ public class CompraService implements CompraApi {
     private final DetalleCompraRepository detalleCompraRepository;
     private final UsuarioApi usuarioApi;
     private final ProductosApi productosApi;
+    private final ProductoRepository productoRepository;
     private final InventarioApi inventarioApi;
     private final LoteRepository loteRepository;
     private final MovimientoStockRepository movimientoStockRepository;
@@ -59,7 +62,19 @@ public class CompraService implements CompraApi {
         float total = 0;
 
         for (DetalleCompraRequest d : request.getDetalle()) {
-            ProductoResponse producto = productosApi.getById(d.getIdProducto());
+            Producto producto = productoRepository.findByIdAndDeletedAtIsNull(d.getIdProducto());
+            if (producto == null) {
+                throw new ResourceNotFoundException("Producto no encontrado: " + d.getIdProducto());
+            }
+
+            // Actualizar costo, margen, precio y proveedor del producto
+            producto.setCosto(d.getPrecioUnitario());
+            if (d.getMargen() != null) producto.setMargen(d.getMargen());
+            if (d.getPrecioVenta() != null) producto.setPrecio(d.getPrecioVenta());
+            if (request.getIdProveedor() != null) {
+                producto.setIdProveedor(request.getIdProveedor());
+            }
+            productoRepository.save(producto);
 
             DetalleCompra detalle = toDetalleCompraEntity(d, producto, compra);
             detalles.add(detalle);
@@ -197,7 +212,7 @@ public class CompraService implements CompraApi {
             .build();
     }
 
-    private DetalleCompra toDetalleCompraEntity(DetalleCompraRequest request, ProductoResponse producto, Compra compra) {
+    private DetalleCompra toDetalleCompraEntity(DetalleCompraRequest request, Producto producto, Compra compra) {
         float subtotal = request.getPrecioUnitario() * request.getCantidad();
         return DetalleCompra.builder()
             .idCompra(compra.getId())

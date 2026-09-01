@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.categorias.api.CategoriasApi;
 import com.SolucionesInformaticasBA.minimarket.modules.categorias.api.dto.CategoriaResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.Stock;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.StockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.*;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.entity.Producto;
@@ -27,6 +29,7 @@ import lombok.AllArgsConstructor;
 @AllArgsConstructor
 public class ProductoService implements ProductosApi{
     private final ProductoRepository productoRepository;
+    private final StockRepository stockRepository;
     private final UsuarioApi usuarioApi;
     private final CategoriasApi categoriasApi;
     private final ProveedoresApi proveedoresApi;
@@ -45,6 +48,12 @@ public class ProductoService implements ProductosApi{
 
         Producto producto = toEntity(request);
         Producto guardado = productoRepository.save(producto);
+
+        Stock stock = Stock.builder()
+            .idProducto(guardado.getId())
+            .cantidad(0)
+            .build();
+        stockRepository.save(stock);
 
         return toResponse(guardado);
     }

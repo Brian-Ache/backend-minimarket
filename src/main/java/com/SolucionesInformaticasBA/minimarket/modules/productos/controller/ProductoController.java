@@ -6,6 +6,7 @@ import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -46,7 +47,7 @@ public class ProductoController {
             @RequestParam Optional<UUID> proveedor,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-                Pageable pageable = PageRequest.of(page, size);
+                Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "updatedAt"));
                 if (q.isPresent()) {
                     if (categoria.isPresent() && proveedor.isPresent()) {
                         return ResponseEntity.ok(productosApi.searchByNombreAndCategoriaAndProveedor(q.get(), categoria.get(), proveedor.get(), pageable));
@@ -81,7 +82,7 @@ public class ProductoController {
             @RequestParam String q,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return ResponseEntity.ok(productosApi.search(q, PageRequest.of(page, size)));
+        return ResponseEntity.ok(productosApi.search(q, PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "updatedAt"))));
     }
 
     @GetMapping("/v1/barcode/{barcode}")
