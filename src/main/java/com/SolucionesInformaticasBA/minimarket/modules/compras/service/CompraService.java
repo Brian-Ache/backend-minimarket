@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
@@ -133,43 +135,97 @@ public class CompraService implements CompraApi {
         return toCompraResponse(compra, toDetalleCompraResponseList(detalles));
     }
 
-    public List<CompraResponse> getAll() {
-        return compraRepository.findAll().stream()
-            .filter(c -> c.getDeletedAt() == null)
+    public Page<CompraResponse> getAllFiltered(UUID idProveedor, String tipoComprobante,
+                                               LocalDateTime desde, LocalDateTime hasta,
+                                               Pageable pageable) {
+        return compraRepository.findAllFiltered(idProveedor, tipoComprobante, desde, hasta, pageable)
             .map(c -> {
                 List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
                 return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-            })
-            .toList();
+            });
     }
 
-    public List<CompraResponse> getByUsuario(UUID idUsuario) {
-        return compraRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario).stream()
-            .map(c -> {
-                List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-                return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-            })
-            .toList();
-    }
+    // MÉTODOS COMENTADOS: Se reemplazaron por getAllFiltered() que cubre todos los casos
+    // con un solo query parametrizado. Se mantienen comentados por si en el futuro
+    // se necesitan endpoints dedicados (ej: historial por un usuario específico).
 
-    public List<CompraResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta) {
-        return compraRepository.findByCreatedAtBetweenAndDeletedAtIsNull(desde, hasta).stream()
-            .map(c -> {
-                List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-                return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-            })
-            .toList();
-    }
+    // public Page<CompraResponse> getAll(Pageable pageable) {
+    //     return compraRepository.findAllPaginated(pageable).map(c -> {
+    //         List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
+    //         return toCompraResponse(c, toDetalleCompraResponseList(detalles));
+    //     });
+    // }
+
+    // public Page<CompraResponse> getByUsuario(UUID idUsuario, Pageable pageable) {
+    //     return compraRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario, pageable)
+    //         .map(c -> {
+    //             List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
+    //             return toCompraResponse(c, toDetalleCompraResponseList(detalles));
+    //         });
+    // }
+
+    // public Page<CompraResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta, Pageable pageable) {
+    //     return compraRepository.findByCreatedAtBetweenAndDeletedAtIsNull(desde, hasta, pageable)
+    //         .map(c -> {
+    //             List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
+    //             return toCompraResponse(c, toDetalleCompraResponseList(detalles));
+    //         });
+    // }
 
     @Transactional
-    public void delete(UUID id) {
+    public void delete(UUID id, UUID idUsuario) {
         Compra compra = compraRepository.findByIdAndDeletedAtIsNull(id)
             .orElseThrow(() -> new ResourceNotFoundException("Compra no encontrada"));
 
+        List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(id);
+
+        // Revertir stock por cada producto
+        for (DetalleCompra d : detalles) {
+            Producto producto = productoRepository.findByIdAndDeletedAtIsNull(d.getIdProducto());
+            if (producto == null) {
+                System.out.println("WARNING: Producto no encontrado (" + d.getIdProducto()
+                    + "), no se revirtió stock para el detalle " + d.getId());
+                continue;
+            }
+
+            if (producto.isManejaLotes()) {
+                // Buscar lote creado para esta compra y hacerle soft delete
+                List<Lote> lotes = loteRepository.findByIdProducto(d.getIdProducto());
+                for (Lote lote : lotes) {
+                    if (lote.getDeletedAt() == null && lote.getCantidad() == d.getCantidad()) {
+                        lote.setDeletedAt(java.time.LocalDateTime.now());
+                        loteRepository.save(lote);
+
+                        // Buscar y soft-delete el movimiento de stock asociado
+                        List<MovimientoStock> movimientos = movimientoStockRepository
+                            .findByIdProductoAndDeletedAtIsNullOrderByCreatedAtDesc(d.getIdProducto());
+                        for (MovimientoStock m : movimientos) {
+                            if (m.getIdLote() != null && m.getIdLote().equals(lote.getId())
+                                && m.getTipo() == TipoMovimiento.COMPRA) {
+                                m.setDeletedAt(java.time.LocalDateTime.now());
+                                movimientoStockRepository.save(m);
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+            } else {
+                // No maneja lotes: disminuir stock
+                inventarioApi.disminuir(MovimientoStockRequest.builder()
+                    .idProducto(d.getIdProducto())
+                    .cantidad(d.getCantidad())
+                    .tipo("COMPRA")
+                    .motivo("Reversión por eliminación de compra")
+                    .idUsuario(idUsuario)
+                    .build());
+            }
+        }
+
+        // Soft delete compra + detalles
         compra.setDeletedAt(java.time.LocalDateTime.now());
         compraRepository.save(compra);
 
-        List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(id);
         for (DetalleCompra d : detalles) {
             d.setDeletedAt(java.time.LocalDateTime.now());
         }
