@@ -69,7 +69,9 @@
 		<dependency>
 			<groupId>org.springdoc</groupId>
 			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-			<version>2.5.0</version>
+			<!-- 2.8.x es la serie que acompaña a Spring Boot 3.5; con 2.5.0 (pensada para 3.2)
+			     el arranque muere con NoSuchMethodError en ControllerAdviceBean. -->
+			<version>2.8.9</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.security</groupId>

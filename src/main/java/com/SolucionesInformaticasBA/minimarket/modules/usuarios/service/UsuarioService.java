@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.context.annotation.Lazy;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,16 @@ public class UsuarioService implements UsuarioApi {
 
     private final UsuarioRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    /**
+     * Los dos módulos se necesitan mutuamente —auth resuelve credenciales contra usuarios, y
+     * usuarios le pide a auth los tokens y los mails—, y Spring rechaza el ciclo al arrancar.
+     *
+     * <p>Se corta acá y no del otro lado a propósito: auth usa a usuarios en su camino
+     * principal (validar un login), mientras que usuarios llama a auth solo para efectos
+     * posteriores al alta o a la baja. Diferir este lado es el que menos cambia el orden real
+     * de la inicialización.
+     */
+    @Lazy
     private final AuthApi authApi;
 
     /**

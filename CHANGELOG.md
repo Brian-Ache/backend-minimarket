@@ -1,5 +1,74 @@
 # Changelog
 
+## Sin publicar
+
+Cierre del alta por invitación y limpieza de los límites entre los módulos `auth` y `usuarios`.
+
+### Cambios que rompen compatibilidad
+
+- **Se eliminó `POST /api/auth/v1/verify-email`.** El circuito de verificación de email había
+  quedado sin emisor cuando se sacó el autorregistro: nadie llamaba a
+  `generateVerificationToken`, así que el endpoint validaba tokens que el sistema nunca creaba.
+  Si el front todavía lo invoca, ahora recibe `404`.
+
+### Agregado
+
+- **El invitado elige su nombre de usuario.** `POST /api/auth/v1/invitacion/aceptar` acepta un
+  campo `username` opcional (1-50 caracteres, sin `@`). Si no viene, queda el que se derivó del
+  email al invitarlo, como hasta ahora. Un nombre ya tomado responde `400` y no se desambigua
+  con un sufijo: lo está eligiendo a mano y tiene que enterarse.
+- **`GET /api/auth/v1/invitacion?token=…`**, público, para que el formulario de aceptación
+  salude a la persona y le precargue el `usernameSugerido`. **No consume el token**, así que
+  sirve además para detectar un enlace vencido antes de hacerle llenar el formulario.
+- **Documentación OpenAPI del módulo `auth`**: los siete endpoints de `/api/auth` salen en
+  `/swagger-ui.html` con resumen, descripción y los códigos de error que devuelve cada uno. El
+  resto de los controllers sigue con la documentación autogenerada, sin anotar.
+
+### Cambiado
+
+- **`auth` deja de tocar las tablas de `usuarios`.** Accedía al `UsuarioRepository` y a la
+  entidad `Usuario` directamente: cambiaba el estado de las cuentas, escribía contraseñas y
+  duplicaba el armado de `UsuarioResponse`. Ahora todo pasa por `UsuarioApi`, que expone solo
+  DTOs. En el código: `AuthService` ya no tiene un `PasswordEncoder` —el formato del hash es
+  asunto de quien guarda la credencial— y `UsuarioApi` suma `verificarCredenciales`,
+  `buscarPorIdentificador`, `getCuentaInvitada`, `establecerPasswordInicial` y
+  `restablecerPassword`. Nada de esto cambia la API HTTP.
+- **`POST /api/auth/v1/refresh` rechaza a los usuarios dados de baja.** Buscaba la cuenta sin
+  mirar `deleted_at`, así que alguien eliminado podía seguir renovando su sesión mientras le
+  durara el refresh token.
+- **El login responde con un único mensaje de error.** Antes distinguía "credenciales inválidas
+  o cuenta sin acceso" de "credenciales inválidas"; esa diferencia dejaba deducir qué cuentas
+  existen y en qué estado están.
+
+### Eliminado
+
+- El flujo de verificación de email, entero: el endpoint, `AuthApi.verifyEmail`,
+  `TokenService.generateVerificationToken`, el valor `VERIFICATION` de `TokenType`,
+  `UsuarioApi.activarCuenta` y los DTO `VerifyEmailRequest` y `RegisterRequest` —este último ya
+  no lo referenciaba nadie desde que el alta pasó al módulo de usuarios.
+- `AuthApi.crear`, que solo delegaba en `UsuarioApi.crear` y ningún controller exponía.
+
+### Correcciones
+
+- **La aplicación no arrancaba.** `AuthService` y `UsuarioService` quedaron dependiendo uno del
+  otro al pasar auth a consumir `UsuarioApi`, y Spring rechaza las referencias circulares desde
+  Boot 2.6: el contexto moría con `BeanCurrentlyInCreationException`. Se corta con `@Lazy` sobre
+  el `AuthApi` de `UsuarioService` —el lado que solo se usa para efectos posteriores al alta o a
+  la baja— más un `lombok.config` que le permite a `@RequiredArgsConstructor` copiar la
+  anotación al constructor que genera, sin el cual el `@Lazy` sería inerte.
+- **Swagger no levantaba.** `springdoc-openapi` estaba en `2.5.0`, de la serie que acompaña a
+  Spring Boot 3.2, contra el `3.5.13` del proyecto: el arranque cortaba con `NoSuchMethodError`
+  en `ControllerAdviceBean`. Actualizado a `2.8.9`.
+
+### Base de datos
+
+- **`04_quitar_verification.sql` — aplicar ANTES de desplegar esta versión.** Borra los tokens
+  históricos de tipo `VERIFICATION` y saca ese valor del enum `auth_tokens.token_type`. El enum
+  de Java ya no lo conoce, así que una fila con ese valor falla al leerse. Si la aplicación
+  arranca antes de la migración, cualquier consulta que toque una de esas filas revienta.
+- `00_init_limpio.sql` ya crea `token_type` como `ENUM('PASSWORD_RESET','INVITATION')`: una
+  instalación nueva no necesita la migración.
+
 ## 0.3.0 (2026-08-21)
 
 Primeros puntos de [`docs/cambios.md`](docs/cambios.md). El sistema se despliega **una instancia
