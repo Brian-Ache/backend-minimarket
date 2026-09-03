@@ -2,9 +2,15 @@ package com.SolucionesInformaticasBA.minimarket.modules.auth.enums;
 
 public enum TokenType {
 
-    /** Autorregistro: confirma que el email existe. La contraseña ya la eligió el usuario. */
+    /**
+     * Confirma que el email existe, sin tocar la contraseña: la cuenta ya tiene una.
+     *
+     * <p>Sin emisor hoy. Lo emitía el autorregistro, que se eliminó; queda el circuito de
+     * validación ({@code AuthApi.verifyEmail}) esperando a quien vuelva a necesitarlo.
+     */
     VERIFICATION,
 
+    /** Reseteo de contraseña olvidada. Vive una hora: el usuario lo pidió y lo está esperando. */
     PASSWORD_RESET,
 
     /**

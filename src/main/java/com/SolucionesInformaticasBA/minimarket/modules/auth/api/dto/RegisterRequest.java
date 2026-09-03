@@ -6,8 +6,9 @@ import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 /**
- * Alta autogestionada de usuarios. Preparada pero sin endpoint: hoy el alta la hace
- * el ADMIN vía POST /api/users/v1. Ver {@code AuthApi#register}.
+ * Alta autogestionada de usuarios. Sin uso: no hay endpoint que la reciba ni método que la
+ * acepte —{@code AuthApi.register} se eliminó al pasarle el alta al módulo de usuarios—. Hoy las
+ * cuentas se crean por {@code POST /api/users/v1} o por invitación.
  */
 @Data
 public class RegisterRequest {

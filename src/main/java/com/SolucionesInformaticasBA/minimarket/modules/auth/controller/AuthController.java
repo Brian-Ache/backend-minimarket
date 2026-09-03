@@ -9,7 +9,14 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.AuthApi;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.*;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AceptarInvitacionRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AuthResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.InvitacionResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.LoginRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetConfirmRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.RefreshTokenRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.VerifyEmailRequest;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
