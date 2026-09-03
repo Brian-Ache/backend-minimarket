@@ -15,6 +15,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.StockR
 public interface InventarioApi {
     StockResponse crear(StockRequest request);
     StockResponse getByIdProducto(UUID idProducto);
+    List<StockResponse> getByIdProductos(List<UUID> idProductos);
     StockResponse aumentar(MovimientoStockRequest request);
     StockResponse disminuir(MovimientoStockRequest request);
     void delete(UUID idProducto);

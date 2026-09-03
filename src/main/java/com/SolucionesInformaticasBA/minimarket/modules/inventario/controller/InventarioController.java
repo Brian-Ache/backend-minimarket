@@ -43,6 +43,11 @@ public class InventarioController {
     }
 
     // El idUsuario que venga en el body se ignora: la identidad sale siempre del JWT.
+    @PostMapping("/v1/stock/batch")
+    public ResponseEntity<List<StockResponse>> getStockBatch(@RequestBody List<UUID> idProductos){
+        return ResponseEntity.ok(inventarioApi.getByIdProductos(idProductos));
+    }
+
     @PutMapping("/v1/stock/aumentar")
     public ResponseEntity<StockResponse> aumentarStock(@Valid @RequestBody MovimientoStockRequest request){
         request.setIdUsuario(SecurityUtils.getCurrentUserId());

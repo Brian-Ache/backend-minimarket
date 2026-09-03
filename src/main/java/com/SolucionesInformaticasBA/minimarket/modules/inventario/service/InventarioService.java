@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
@@ -54,6 +55,13 @@ public class InventarioService implements InventarioApi{
         return stockRepository.findByIdProductoAndDeletedAtIsNull(idProducto)
             .map(this::toStockResponse)
             .orElseGet(() -> StockResponse.builder().idProducto(idProducto).cantidad(0).build());
+    }
+
+    public List<StockResponse> getByIdProductos(List<UUID> idProductos){
+        return stockRepository.findByIdProductoInAndDeletedAtIsNull(idProductos)
+            .stream()
+            .map(this::toStockResponse)
+            .toList();
     }
 
     @Transactional
@@ -189,6 +197,11 @@ public class InventarioService implements InventarioApi{
 
     public List<LoteResponse> getAll(){
         Map<UUID, String> nombresProductos = productosApi.getAll().stream()
+        List<Lote> lotes = loteRepository.findAllByDeletedAtIsNull().stream()
+            .map(this::actualizarEstado)
+            .toList();
+
+        Map<UUID, String> nombresProductos = productosApi.getAll(PageRequest.of(0, Integer.MAX_VALUE)).getContent().stream()
             .collect(Collectors.toMap(ProductoResponse::getId, ProductoResponse::getNombre));
 
         return loteRepository.findAllByDeletedAtIsNull().stream()

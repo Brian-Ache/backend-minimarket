@@ -20,6 +20,9 @@ public class DetalleCompraRequest {
     @Positive
     private int cantidad;
 
+    private Float margen;
+    private Float precioVenta;
+
     // opcional para lotes, pueden ser null
     private LocalDate fechaVencimiento;
     private String numeroLote;

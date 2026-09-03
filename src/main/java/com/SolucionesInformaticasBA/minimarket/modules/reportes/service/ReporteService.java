@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.CompraApi;
@@ -140,7 +141,7 @@ public class ReporteService implements ReportesApi {
 
     @Override
     public List<ReporteInventarioItem> getReporteInventario() {
-        List<ProductoResponse> productos = productosApi.getAll();
+        List<ProductoResponse> productos = productosApi.getAll(PageRequest.of(0, Integer.MAX_VALUE)).getContent();
 
         // Dos consultas agregadas en total: la tabla stock para los productos comunes y la
         // suma de lotes para los que manejan lotes, que antes salían siempre en 0.
