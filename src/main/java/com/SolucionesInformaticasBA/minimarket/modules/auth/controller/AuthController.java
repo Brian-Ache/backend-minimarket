@@ -16,7 +16,6 @@ import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.LoginRequest
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetConfirmRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.RefreshTokenRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.VerifyEmailRequest;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -44,12 +43,6 @@ public class AuthController {
     public ResponseEntity<Void> logout(@Valid @RequestBody RefreshTokenRequest request) {
         authApi.logout(request.getRefreshToken());
         return ResponseEntity.noContent().build();
-    }
-
-    @PostMapping("/v1/verify-email")
-    public ResponseEntity<Void> verifyEmail(@Valid @RequestBody VerifyEmailRequest request) {
-        authApi.verifyEmail(request);
-        return ResponseEntity.ok().build();
     }
 
     /**

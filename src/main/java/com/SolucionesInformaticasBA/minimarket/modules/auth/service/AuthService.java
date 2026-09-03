@@ -13,7 +13,6 @@ import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.LoginRequest
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetConfirmRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.RefreshTokenRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.VerifyEmailRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.AuthToken;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.RefreshToken;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.enums.TokenType;
@@ -89,15 +88,6 @@ public class AuthService implements AuthApi {
     public void revokeAllSessions(UUID userId) {
         int revocadas = tokenService.revokeAllUserRefreshTokens(userId);
         log.info("Se revocaron {} sesiones del usuario {}", revocadas, userId);
-    }
-
-    @Override
-    @Transactional
-    public void verifyEmail(VerifyEmailRequest request) {
-        AuthToken authToken = tokenService.validateAuthToken(request.getToken(), TokenType.VERIFICATION);
-
-        usuarioApi.activarCuenta(authToken.getUserId());
-        tokenService.markAuthTokenAsUsed(authToken.getId());
     }
 
     @Override

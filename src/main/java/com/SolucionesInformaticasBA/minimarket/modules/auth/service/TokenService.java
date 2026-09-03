@@ -24,7 +24,6 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class TokenService {
 
-    private static final long VERIFICATION_TOKEN_DURATION_HOURS = 24;
     private static final long REFRESH_TOKEN_DURATION_HOURS = 720;
 
     // Públicas porque el texto del mail avisa cuánto dura el enlace, y ese dato tiene que salir
@@ -40,10 +39,6 @@ public class TokenService {
 
     private final AuthTokensRepository authTokensRepository;
     private final RefreshTokenRepository refreshTokenRepository;
-
-    public String generateVerificationToken(UUID userId) {
-        return createAuthToken(userId, TokenType.VERIFICATION, VERIFICATION_TOKEN_DURATION_HOURS);
-    }
 
     public String generatePasswordResetToken(UUID userId) {
         return createAuthToken(userId, TokenType.PASSWORD_RESET, PASSWORD_RESET_TOKEN_DURATION_HOURS);

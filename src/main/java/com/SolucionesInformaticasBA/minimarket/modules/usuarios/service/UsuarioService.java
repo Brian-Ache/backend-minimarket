@@ -339,15 +339,6 @@ public class UsuarioService implements UsuarioApi {
     }
 
     @Override
-    @Transactional
-    public void activarCuenta(UUID id) {
-        Usuario u = findActiveUser(id);
-
-        u.setEstado(EstadoUsuario.ACTIVO);
-        userRepository.save(u);
-    }
-
-    @Override
     public UsuarioResponse getCuentaInvitada(UUID id) {
         return toUserResponse(invitacionVigente(id));
     }

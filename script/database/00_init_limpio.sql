@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
 
 CREATE TABLE IF NOT EXISTS auth_tokens (
     id              BINARY(16)  NOT NULL,
-    token_type      ENUM('PASSWORD_RESET','VERIFICATION','INVITATION') NOT NULL,
+    token_type      ENUM('PASSWORD_RESET','INVITATION') NOT NULL,
     token_hash      VARCHAR(64) NOT NULL,
     user_id         BINARY(16)  NOT NULL,
     expires_at      DATETIME(6) NOT NULL,
