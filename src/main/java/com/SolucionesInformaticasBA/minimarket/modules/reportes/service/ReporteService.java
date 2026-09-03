@@ -12,6 +12,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.CompraApi;
@@ -82,7 +83,11 @@ public class ReporteService implements ReportesApi {
 
         // Solo ventas cobradas: una venta abierta todavía no es plata ganada.
         List<VentaResponse> ventas = ventasApi.getByFechaCobradas(desdeDt, hastaDt);
-        List<CompraResponse> compras = compraApi.getByFecha(desdeDt, hastaDt);
+        // getByFecha se retiró de CompraApi en favor de getAllFiltered: acá no se filtra
+        // por proveedor ni comprobante, y el reporte necesita el rango entero de una.
+        List<CompraResponse> compras = compraApi
+            .getAllFiltered(null, null, desdeDt, hastaDt, Pageable.unpaged())
+            .getContent();
 
         float totalVentas = 0;
         float costoTotal = 0;

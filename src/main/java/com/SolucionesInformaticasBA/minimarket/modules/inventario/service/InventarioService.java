@@ -196,11 +196,6 @@ public class InventarioService implements InventarioApi{
     }
 
     public List<LoteResponse> getAll(){
-        Map<UUID, String> nombresProductos = productosApi.getAll().stream()
-        List<Lote> lotes = loteRepository.findAllByDeletedAtIsNull().stream()
-            .map(this::actualizarEstado)
-            .toList();
-
         Map<UUID, String> nombresProductos = productosApi.getAll(PageRequest.of(0, Integer.MAX_VALUE)).getContent().stream()
             .collect(Collectors.toMap(ProductoResponse::getId, ProductoResponse::getNombre));
 

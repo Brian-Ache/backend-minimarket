@@ -24,4 +24,11 @@ public class UsuarioResponse {
     private EstadoUsuario estado;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+
+    /**
+     * Null salvo que la cuenta esté dada de baja. Solo puede venir con valor desde
+     * {@code GET /api/users/v1?incluirBajas=true}, que es el único que las devuelve: sin este
+     * campo el listado no dejaría distinguir una baja de una cuenta en pie.
+     */
+    private LocalDateTime deletedAt;
 }

@@ -116,10 +116,22 @@ Logout -> revoca el refresh token (idempotente)
 - **Baja y bloqueo:** ambos revocan las sesiones del usuario y su JWT deja de servir en la
   request siguiente, porque el filtro consulta el estado en cada llamada. La diferencia es que
   el bloqueo es reversible y conserva la cuenta.
-- **Alta por invitación:** el administrador carga los datos, la cuenta nace `PENDIENTE` con una
-  contraseña aleatoria que nadie conoce, y la persona define la suya desde el enlace que le
-  llega por mail (token `INVITATION`, 72 h, de un solo uso). Si el mail no sale, el alta se
-  revierte: no queda una cuenta muerta ocupando ese email.
+- **Restauración:** una baja también se revierte, con una invitación nueva. Siempre sobre la
+  fila original: el id del usuario es permanente —lo referencian ventas, compras, movimientos
+  de caja y de stock con `ON DELETE RESTRICT`—, así que un alta nueva con el mismo email
+  partiría su historial en dos. El email y el username siguen reservados durante la baja,
+  porque las unique keys no miran `deleted_at`; de ahí que restaurar nunca pueda colisionar, y
+  que reusar el email de alguien dado de baja no sea posible sin restaurarlo.
+- **Alta por invitación, la única que hay:** el administrador carga los datos, la cuenta nace
+  `PENDIENTE` con una contraseña aleatoria que nadie conoce, y la persona define la suya desde
+  el enlace que le llega por mail (token `INVITATION`, 72 h, de un solo uso). No hay
+  autorregistro ni alta directa: quien invita nunca conoce la credencial del invitado. Si el
+  mail no sale, el alta se revierte: no queda una cuenta muerta ocupando ese email.
+- **Reseteo de contraseña sobre una cuenta pendiente:** además de cambiar la contraseña, la
+  activa. El token del reseteo llega al email de la cuenta, que es la misma prueba de identidad
+  que pide la invitación; si no la activara, quien lo usa en vez de aceptar la invitación
+  quedaría con una contraseña válida y sin poder entrar. Por lo mismo, la invitación deja de
+  valer apenas la cuenta sale de `PENDIENTE`.
 - **Configuración obligatoria:** `JWT_SECRET`. Sin él la app no arranca.
 - **Mails** (`shared/mail/EmailService`): invitaciones y reseteo de contraseña. **Sin
   `MAIL_HOST` no se manda nada** — el mail queda en el log con el enlace incluido, que es como
@@ -150,7 +162,7 @@ Logout -> revoca el refresh token (idempotente)
 | Tabla | Propósito |
 |---|---|
 | `usuarios` | Usuarios del sistema (SUPERADMIN / ADMIN / EMPLEADO), con estado de cuenta |
-| `auth_tokens` | Tokens de un solo uso: invitación, verificación y reseteo de contraseña |
+| `auth_tokens` | Tokens de un solo uso: invitación y reseteo de contraseña |
 | `refresh_tokens` | Sesiones activas (hash del refresh token) |
 | `categorias` | Categorías de producto |
 | `proveedores` | Proveedores |

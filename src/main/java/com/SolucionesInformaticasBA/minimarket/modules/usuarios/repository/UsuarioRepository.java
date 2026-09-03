@@ -23,11 +23,13 @@ public interface UsuarioRepository extends JpaRepository<Usuario, UUID> {
 
     boolean existsByEmailAndDeletedAtIsNull(String email);
 
-    boolean existsByUsernameAndDeletedAtIsNull(String username);
-
+    // Los dos que siguen ignoran a propósito el borrado lógico: las unique keys uk_usuarios_email
+    // y uk_usuarios_username no incluyen deleted_at, así que una cuenta dada de baja sigue
+    // ocupando su email y su username. El alta los usa para rechazar el duplicado con un mensaje
+    // claro, en vez de chocar contra la restricción en el INSERT.
     Optional<Usuario> findByEmail(String email);
 
-    boolean existsByEmail(String email);
+    boolean existsByUsername(String username);
 
     boolean existsByIdAndDeletedAtIsNull(UUID id);
 

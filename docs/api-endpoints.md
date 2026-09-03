@@ -71,10 +71,10 @@ Errores de validación (`400`):
 | Corte de caja | ✅ | ✅ | ❌ |
 | Reportes | ✅ | ✅ | ❌ |
 | Listar y ver usuarios | ✅ | ✅ | ❌ |
-| Invitar, dar de alta, bloquear y dar de baja a un EMPLEADO | ✅ | ✅ | ❌ |
-| Invitar, dar de alta, bloquear y dar de baja a un ADMIN | ✅ | ❌ | ❌ |
+| Invitar, bloquear, dar de baja y restaurar a un EMPLEADO | ✅ | ✅ | ❌ |
+| Invitar, bloquear, dar de baja y restaurar a un ADMIN | ✅ | ❌ | ❌ |
 | Promover o degradar entre ADMIN y EMPLEADO | ✅ | ❌ | ❌ |
-| Alta, bloqueo, baja o asignación del rol SUPERADMIN | ❌ | ❌ | ❌ |
+| Invitación, bloqueo, baja o asignación del rol SUPERADMIN | ❌ | ❌ | ❌ |
 
 Nadie gestiona a un usuario de su mismo nivel ni de uno superior, y **nadie se bloquea ni se
 borra a sí mismo**. De ahí que no exista alta de SUPERADMIN por API: la llave maestra sale del
@@ -90,11 +90,10 @@ hacerlo por otro usuario**: para eso está el flujo de reseteo.
 
 Todas públicas (no requieren token).
 
-> **`POST /api/auth/v1/register` fue dado de baja.** El alta la hace un administrador,
-> invitando ([`POST /api/users/v1/invitaciones`](#post-apiusersv1invitaciones)) o directamente
-> ([`POST /api/users/v1`](#post-apiusersv1)). La lógica de autorregistro sigue implementada en
-> `AuthApi.register` pero sin endpoint: no hay caso de uso para que alguien se dé de alta solo
-> en el sistema de un comercio.
+> **No hay autorregistro ni alta directa.** La única forma de entrar al sistema es que un
+> administrador invite ([`POST /api/users/v1/invitaciones`](#post-apiusersv1invitaciones)) y que
+> la persona cierre el alta desde el mail. Nadie se da de alta solo en el sistema de un
+> comercio, y quien invita nunca conoce la contraseña de quien invitó.
 
 ### `POST /api/auth/v1/login`
 
@@ -165,8 +164,8 @@ para distinguir un enlace vencido antes de hacer llenar el formulario.
 }
 ```
 
-`400` si el token es inválido, expirado o ya usado, o si la cuenta se bloqueó o se dio de baja
-desde que se envió la invitación.
+`400` si el token es inválido, expirado o ya usado, o si la cuenta dejó de estar `PENDIENTE`:
+se bloqueó, se dio de baja o **ya se activó** desde que se envió la invitación.
 
 ---
 
@@ -190,9 +189,9 @@ arriba como `usernameSugerido`.
 
 **Response `200`** — después hay que loguearse normalmente.
 
-**Errores `400`:** token inválido, vencido o ya usado · token de otro tipo · la cuenta fue
-bloqueada o dada de baja entre la invitación y la aceptación · el `username` elegido ya está
-tomado por otra cuenta
+**Errores `400`:** token inválido, vencido o ya usado · token de otro tipo · la cuenta dejó de
+estar `PENDIENTE` entre la invitación y la aceptación —bloqueada, dada de baja o ya activada por
+el reseteo de contraseña— · el `username` elegido ya está tomado por otra cuenta
 
 ---
 
@@ -228,6 +227,14 @@ Confirma el reseteo con el token generado.
 
 **Response `200`**
 
+> Si la cuenta todavía estaba `PENDIENTE`, este endpoint además **la activa**: el token viajó al
+> email de la cuenta, la misma prueba de identidad que pide la invitación. Sin eso, quien
+> resetea en vez de aceptar la invitación se quedaría con una contraseña válida y sin poder
+> entrar nunca. Una cuenta **bloqueada** no se destraba por acá.
+
+**Errores:** `400` token inválido, vencido, ya usado o de otro tipo · `404` el usuario ya no
+existe
+
 ---
 
 ## 2. Usuarios — `/api/users/v1`
@@ -238,8 +245,8 @@ Confirma el reseteo con el token generado.
 un mail a la persona con un enlace para que **defina su propia contraseña**. Quien invita nunca
 conoce la contraseña del invitado.
 
-**ADMIN o SUPERADMIN**, con las mismas reglas de jerarquía que el alta directa: solo se invita
-por debajo del propio nivel.
+**ADMIN o SUPERADMIN**. Es la **única** alta del sistema. Solo se invita por debajo del propio
+nivel: el SUPERADMIN invita ADMIN y EMPLEADO, el ADMIN solo EMPLEADO.
 
 **Request:**
 ```json
@@ -258,8 +265,28 @@ cambio, da `400`: ahí sí hubo una elección que respetar.
 
 **Response `201`:** `{ ...UsuarioResponse }` con `estado: "PENDIENTE"`
 
-**Errores:** `400` email ya registrado o username explícito en uso · `403` sin rol ADMIN o rol
-pedido no permitido · `502` el mail no se pudo enviar
+**Errores:** `400` email ocupado (ver abajo) o username explícito en uso · `403` sin rol ADMIN o
+rol pedido no permitido · `502` el mail no se pudo enviar
+
+Un email ya tomado devuelve `400` con un mensaje que dice **qué pasa con ese email y qué hacer
+al respecto**:
+
+| Estado de la cuenta que lo ocupa | Mensaje | Salida |
+|---|---|---|
+| Dada de baja | `"El email pertenece a una cuenta dada de baja: restaurala para volver a darle acceso"` | [`POST /{id}/restaurar`](#post-apiusersv1idrestaurar) |
+| `PENDIENTE` | `"Ese email ya tiene una invitación pendiente: reenviásela en lugar de invitarlo de nuevo"` | [`POST /{id}/invitaciones/reenviar`](#post-apiusersv1idinvitacionesreenviar) |
+| `ACTIVO` o `BLOQUEADO` | `"El email ya está registrado"` | ninguna: la persona ya está en el sistema |
+
+Las dos primeras existen porque el email y el username de una cuenta dada de baja **siguen
+ocupados** —la baja es lógica y las unique keys no miran `deleted_at`—, y porque reinvitar a
+alguien que ya tiene una invitación en curso es reenviar, no dar de alta otra vez. El id para
+esos dos endpoints sale de `GET /api/users/v1?incluirBajas=true`.
+
+> **La salida se ofrece solo si la cuenta está por debajo del nivel de quien invita**, porque
+> restaurar y reenviar exigen esa misma jerarquía. Un ADMIN que tropieza con la cuenta de otro
+> ADMIN lee el mensaje cortado —`"El email pertenece a una cuenta dada de baja"`, sin el
+> `": restaurala…"`—: el hecho le sirve para entender por qué el email está tomado, pero la
+> instrucción lo mandaría a un `403`.
 
 > Si el envío falla, **el alta se revierte**: no queda una cuenta muerta ocupando ese email y
 > ese username que nadie puede activar. El `502` distingue "reintentá" de "corregí los datos".
@@ -282,37 +309,6 @@ Solo sobre cuentas en estado `PENDIENTE`, y con las mismas reglas de jerarquía 
 
 ---
 
-### `POST /api/users/v1`
-
-Alta **directa**, con una contraseña elegida por quien la crea. Sigue disponible para altas sin
-mail de por medio (importar usuarios, entornos sin SMTP); para el día a día está la
-[invitación](#post-apiusersv1invitaciones), donde la contraseña la elige su dueño.
-
-**ADMIN o SUPERADMIN** (`403` para EMPLEADO). El usuario se crea en estado `ACTIVO`, listo para
-loguearse.
-
-Solo se puede dar de alta **por debajo del propio nivel**: el SUPERADMIN crea ADMIN y EMPLEADO,
-el ADMIN solo EMPLEADO. `rol` es opcional y por defecto es `EMPLEADO`.
-
-**Request:**
-```json
-{
-  "nombre": "string (max 50)",
-  "apellido": "string (max 50)",
-  "email": "email (max 100)",
-  "username": "string (max 50)",
-  "password": "string (min 8, max 72)",
-  "rol": "ADMIN | EMPLEADO (opcional, default EMPLEADO)"
-}
-```
-
-**Response `201`:** `{ ...UsuarioResponse }`
-
-**Errores:** `400` email o username ya en uso · `403` sin rol ADMIN, o el rol pedido no está por
-debajo del propio (`"Un ADMIN no puede dar de alta a un ADMIN"`)
-
----
-
 ### `GET /api/users/v1/me`
 
 Perfil del usuario autenticado.
@@ -329,9 +325,13 @@ Perfil del usuario autenticado.
 
 ---
 
-### `GET /api/users/v1`
+### `GET /api/users/v1?incluirBajas=false`
 
-Lista todos los usuarios activos.
+Lista los usuarios. Por defecto solo los que están en pie; con `incluirBajas=true` suma las
+cuentas dadas de baja, que vienen con `deletedAt` cargado.
+
+Es cómo el front encuentra una cuenta para
+[restaurarla](#post-apiusersv1idrestaurar): en el listado normal no aparecen.
 
 **Response `200`:** `[ ...UsuarioResponse ]`
 
@@ -423,6 +423,33 @@ sí mismo.
 
 ---
 
+### `POST /api/users/v1/{id}/restaurar`
+
+**Reactiva una cuenta dada de baja.** Vuelve como `PENDIENTE`, con la contraseña anterior
+invalidada, y le llega una **invitación nueva** para que defina otra. Es la contracara del
+`DELETE`.
+
+Restaura la fila original en vez de crear una cuenta nueva: el id del usuario lo referencian
+`ventas`, `compras`, `movimientos_caja`, `movimientos_stock` y `sesiones_caja` con `ON DELETE
+RESTRICT`, así que un alta nueva con el mismo email partiría su historial en dos. Conserva
+además su rol: la restauración devuelve el acceso, no lo redefine.
+
+No puede chocar con nada: el email y el username siguieron reservados durante toda la baja,
+porque las unique keys de la tabla no miran `deleted_at`.
+
+**Mismas reglas de jerarquía que `bloquear` y el `DELETE`**: se restaura por debajo del propio
+nivel. El id sale de `GET /api/users/v1?incluirBajas=true`.
+
+**Response `200`:** `{ ...UsuarioResponse }` con `estado: "PENDIENTE"` y `deletedAt: null`
+
+**Errores:** `400` la cuenta no está dada de baja · `403` el objetivo no está por debajo tuyo ·
+`404` no existe · `502` el mail no se pudo enviar
+
+> Si el envío falla, **la restauración se revierte** y la cuenta sigue dada de baja: revivirla
+> sin que nadie pueda entrar es peor que dejarla como estaba.
+
+---
+
 ### `POST /api/users/v1/{id}/change-password`
 
 **Request:**
@@ -451,9 +478,13 @@ sí mismo.
   "rol": "SUPERADMIN | ADMIN | EMPLEADO",
   "estado": "PENDIENTE | ACTIVO | BLOQUEADO",
   "createdAt": "datetime",
-  "updatedAt": "datetime"
+  "updatedAt": "datetime",
+  "deletedAt": "datetime | null"
 }
 ```
+
+`deletedAt` viene con valor **solo** en `GET /api/users/v1?incluirBajas=true`, que es el único
+endpoint que devuelve cuentas dadas de baja.
 
 ---
 

@@ -6,6 +6,14 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
 
 ### Cambios que rompen compatibilidad
 
+- **`GET /api/users/v1` cambió de forma.** Acepta `?incluirBajas=` y `UsuarioResponse` trae un
+  campo nuevo, `deletedAt`. El comportamiento por defecto no cambia: sin el parámetro devuelve
+  solo las cuentas en pie, igual que antes.
+- **Se eliminó `POST /api/users/v1`, el alta directa.** La invitación queda como **única**
+  forma de dar de alta a alguien: el front tiene que llamar a
+  `POST /api/users/v1/invitaciones`, que no lleva contraseña. El alta directa contradecía el
+  modelo —quien invita nunca conoce la credencial del invitado— y dejaba dos caminos para lo
+  mismo. Se fueron con él `UsuarioApi.crear` y el DTO `CrearUsuarioRequest`.
 - **Se eliminó `POST /api/auth/v1/verify-email`.** El circuito de verificación de email había
   quedado sin emisor cuando se sacó el autorregistro: nadie llamaba a
   `generateVerificationToken`, así que el endpoint validaba tokens que el sistema nunca creaba.
@@ -13,6 +21,23 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
 
 ### Agregado
 
+- **`POST /api/users/v1/{id}/restaurar` — reactivación de una cuenta dada de baja.** Vuelve
+  como `PENDIENTE`, con la contraseña anterior invalidada y una invitación nueva, así la persona
+  define otra credencial y de paso confirma que sigue teniendo ese mail. Restaura la fila
+  original en lugar de crear una cuenta nueva: el id lo referencian `ventas`, `compras`,
+  `movimientos_caja`, `movimientos_stock` y `sesiones_caja` con `ON DELETE RESTRICT`, así que un
+  alta nueva con el mismo email partiría el historial de esa persona en dos. Conserva su rol y
+  rige la jerarquía de siempre. Si el mail no sale, la restauración se revierte.
+- **`GET /api/users/v1?incluirBajas=true`** para listar también las cuentas dadas de baja, que
+  en el listado normal son invisibles: sin esto el administrador no tiene de dónde sacar el id
+  para restaurarlas. **`UsuarioResponse` suma `deletedAt`**, null salvo en ese listado.
+- **El `400` de un email ya tomado ahora dice qué hacer**, según el estado de la cuenta que lo
+  ocupa: dada de baja → restaurala; `PENDIENTE` → reenviale la invitación en vez de invitarla de
+  nuevo; en pie → la persona ya está en el sistema. Antes los tres casos compartían
+  `"El email ya está registrado"`, y el administrador quedaba sin salida en los dos primeros.
+  La acción sugerida aparece **solo si la cuenta está por debajo del nivel de quien invita**,
+  que es lo que exigen restaurar y reenviar: a un ADMIN que tropieza con la cuenta de otro
+  ADMIN se le informa el hecho, pero no se le propone algo que le daría `403`.
 - **El invitado elige su nombre de usuario.** `POST /api/auth/v1/invitacion/aceptar` acepta un
   campo `username` opcional (1-50 caracteres, sin `@`). Si no viene, queda el que se derivó del
   email al invitarlo, como hasta ahora. Un nombre ya tomado responde `400` y no se desambigua
@@ -47,9 +72,29 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
   `UsuarioApi.activarCuenta` y los DTO `VerifyEmailRequest` y `RegisterRequest` —este último ya
   no lo referenciaba nadie desde que el alta pasó al módulo de usuarios.
 - `AuthApi.crear`, que solo delegaba en `UsuarioApi.crear` y ningún controller exponía.
+- `UsuarioApi.crear`, `UsuarioService.crear` y `CrearUsuarioRequest`, con el endpoint de alta
+  directa que los exponía.
 
 ### Correcciones
 
+- **Un invitado que reseteaba la contraseña en vez de aceptar la invitación quedaba afuera para
+  siempre.** `POST /api/auth/v1/password-reset` alcanza a las cuentas `PENDIENTE`, pero
+  confirmar el reseteo cambiaba el hash sin tocar el estado, y el login exige una cuenta activa:
+  la persona terminaba con una contraseña válida y un `401` inexplicable. Ahora el reseteo
+  **activa la cuenta pendiente** —el token viajó al email de la cuenta, la misma prueba de
+  identidad que pide la invitación—. Una cuenta bloqueada no se destraba por ese camino.
+- **La invitación deja de valer cuando la cuenta ya se activó.** Es la contracara del punto
+  anterior: si no, el enlace del mail seguiría sirviendo por las horas que le quedaran para
+  cambiarle la contraseña a una cuenta activa sin conocer la actual. `getCuentaInvitada` y
+  `establecerPasswordInicial` ahora exigen estado `PENDIENTE`, no solo que la cuenta no esté
+  bloqueada ni dada de baja.
+- **Invitar con el email de una cuenta dada de baja devolvía un `409` incomprensible.** La
+  validación del alta miraba `deleted_at` y las unique keys `uk_usuarios_email` /
+  `uk_usuarios_username` no: el alta pasaba la validación y reventaba en el INSERT con
+  `"La operación choca con una restricción de datos existente"`. Ahora se rechaza antes, con
+  `400` y un mensaje que lo explica (`"El email pertenece a una cuenta dada de baja"`). El
+  username derivado del email también cuenta las bajas lógicas al desambiguar con sufijo, así
+  que ya no puede proponer uno ocupado por una cuenta borrada.
 - **La aplicación no arrancaba.** `AuthService` y `UsuarioService` quedaron dependiendo uno del
   otro al pasar auth a consumir `UsuarioApi`, y Spring rechaza las referencias circulares desde
   Boot 2.6: el contexto moría con `BeanCurrentlyInCreationException`. Se corta con `@Lazy` sobre

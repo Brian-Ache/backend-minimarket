@@ -47,7 +47,8 @@ public class AuthController {
 
     private final AuthApi authApi;
 
-    // El alta de usuarios es exclusiva del ADMIN: POST /api/users/v1
+    // El alta de usuarios es exclusiva del ADMIN, y siempre por invitación:
+    // POST /api/users/v1/invitaciones
 
     @Operation(summary = "Iniciar sesión",
                description = """
