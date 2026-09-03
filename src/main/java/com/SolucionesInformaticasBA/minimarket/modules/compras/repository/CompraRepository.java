@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.compras.repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 

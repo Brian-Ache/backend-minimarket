@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -202,6 +203,126 @@ class UsuarioServiceInvitacionTest {
         verify(authApi, never()).enviarInvitacion(any(), anyString(), anyString());
     }
 
+    // --- Aceptación: establecerPasswordInicial -----------------------------------------------
+    // La regla vive acá desde que auth dejó de tocar la entidad; auth solo delega.
+
+    @Test
+    @DisplayName("establecer la contraseña inicial activa la cuenta")
+    void passwordInicialActivaLaCuenta() {
+        Usuario invitado = registrar(pendiente());
+        when(passwordEncoder.encode("MiPassword1!")).thenReturn("hash-nuevo");
+
+        service.establecerPasswordInicial(invitado.getId(), "MiPassword1!", null);
+
+        assertThat(invitado.getEstado()).isEqualTo(EstadoUsuario.ACTIVO);
+        assertThat(invitado.getHashPassword()).isEqualTo("hash-nuevo");
+        verify(userRepository).save(invitado);
+    }
+
+    @Test
+    @DisplayName("una invitación de alguien bloqueado entre medio ya no vale")
+    void invitacionDeBloqueadoNoVale() {
+        Usuario invitado = pendiente();
+        invitado.setEstado(EstadoUsuario.BLOQUEADO);
+        registrar(invitado);
+
+        assertThatThrownBy(() -> service.establecerPasswordInicial(invitado.getId(), "MiPassword1!", null))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("ya no es válida");
+
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("una invitación de alguien dado de baja tampoco, y no se delata como 404")
+    void invitacionDeEliminadoNoVale() {
+        Usuario invitado = pendiente();
+        invitado.setDeletedAt(LocalDateTime.now());
+        registrar(invitado);
+
+        assertThatThrownBy(() -> service.establecerPasswordInicial(invitado.getId(), "MiPassword1!", null))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("ya no es válida");
+
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("el invitado puede elegir su propio nombre de usuario")
+    void invitadoEligeSuUsername() {
+        Usuario invitado = registrar(pendiente());
+        when(userRepository.existsByUsernameAndDeletedAtIsNull("ana.perez")).thenReturn(false);
+        when(passwordEncoder.encode("MiPassword1!")).thenReturn("hash-nuevo");
+
+        service.establecerPasswordInicial(invitado.getId(), "MiPassword1!", "ana.perez");
+
+        assertThat(invitado.getUsername()).isEqualTo("ana.perez");
+        assertThat(invitado.getEstado()).isEqualTo(EstadoUsuario.ACTIVO);
+    }
+
+    @Test
+    @DisplayName("confirmar el username derivado no choca contra el propio registro")
+    void confirmarElUsernameDerivado() {
+        Usuario invitado = registrar(pendiente());
+        String derivado = invitado.getUsername();
+        // Su propia fila ya ocupa ese nombre: sin la comparación previa, esto sería un 400.
+        when(userRepository.existsByUsernameAndDeletedAtIsNull(derivado)).thenReturn(true);
+        when(passwordEncoder.encode("MiPassword1!")).thenReturn("hash-nuevo");
+
+        service.establecerPasswordInicial(invitado.getId(), "MiPassword1!", derivado);
+
+        assertThat(invitado.getUsername()).isEqualTo(derivado);
+        assertThat(invitado.getEstado()).isEqualTo(EstadoUsuario.ACTIVO);
+    }
+
+    @Test
+    @DisplayName("un username tomado por otro es 400, y acá no se desambigua con sufijo")
+    void usernameElegidoDuplicado() {
+        Usuario invitado = registrar(pendiente());
+        when(userRepository.existsByUsernameAndDeletedAtIsNull("tomado")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.establecerPasswordInicial(invitado.getId(), "MiPassword1!", "tomado"))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("ya está en uso");
+
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("sin username elegido queda el que se derivó del email")
+    void sinUsernameQuedaElDerivado() {
+        Usuario invitado = registrar(pendiente());
+        String derivado = invitado.getUsername();
+        when(passwordEncoder.encode("MiPassword1!")).thenReturn("hash-nuevo");
+
+        service.establecerPasswordInicial(invitado.getId(), "MiPassword1!", "   ");
+
+        assertThat(invitado.getUsername()).isEqualTo(derivado);
+    }
+
+    @Test
+    @DisplayName("getCuentaInvitada trae los datos si la invitación sigue en pie")
+    void cuentaInvitadaVigente() {
+        Usuario invitado = registrar(pendiente());
+
+        var response = service.getCuentaInvitada(invitado.getId());
+
+        assertThat(response.getUsername()).isEqualTo(invitado.getUsername());
+        assertThat(response.getEmail()).isEqualTo(invitado.getEmail());
+    }
+
+    @Test
+    @DisplayName("getCuentaInvitada aplica la misma regla de vigencia que la aceptación")
+    void cuentaInvitadaBloqueada() {
+        Usuario invitado = pendiente();
+        invitado.setEstado(EstadoUsuario.BLOQUEADO);
+        registrar(invitado);
+
+        assertThatThrownBy(() -> service.getCuentaInvitada(invitado.getId()))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("ya no es válida");
+    }
+
     // --- Helpers ----------------------------------------------------------------------------
 
     private void sinDuplicados() {
@@ -238,6 +359,13 @@ class UsuarioServiceInvitacionTest {
                 .rol(rol)
                 .estado(EstadoUsuario.ACTIVO)
                 .build();
+    }
+
+    private Usuario pendiente() {
+        Usuario u = usuario(Rol.EMPLEADO);
+        u.setEstado(EstadoUsuario.PENDIENTE);
+        u.setHashPassword("hash-inutilizable");
+        return u;
     }
 
     private Usuario registrar(Usuario u) {

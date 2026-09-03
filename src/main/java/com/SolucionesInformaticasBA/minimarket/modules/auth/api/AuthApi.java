@@ -1,28 +1,16 @@
 package com.SolucionesInformaticasBA.minimarket.modules.auth.api;
 
+import java.util.UUID;
+
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AceptarInvitacionRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AuthResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.InvitacionResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.LoginRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetConfirmRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.RefreshTokenRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.RegisterRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.VerifyEmailRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 
 public interface AuthApi {
-
-    /**
-     * Alta autogestionada: crea el usuario deshabilitado y emite el token de verificación.
-     *
-     * <p><b>Sin endpoint a propósito.</b> Hoy el alta es exclusiva del ADMIN
-     * (POST /api/users/v1). Para habilitar el autorregistro hace falta: (1) exponerla en
-     * {@code AuthController}, (2) agregar el envío de mail con el token de verificación, y
-     * (3) permitir la ruta en {@code SecurityConfig}. El usuario queda con
-     * estado {@code PENDIENTE} hasta que confirme con {@link #verifyEmail}.
-     */
-    UsuarioResponse register(RegisterRequest request);
-
     AuthResponse login(LoginRequest request);
 
     AuthResponse refreshToken(RefreshTokenRequest request);
@@ -30,9 +18,7 @@ public interface AuthApi {
     void logout(String refreshToken);
 
     /** Cierra todas las sesiones abiertas de un usuario (baja, bloqueo, cambio de rol). */
-    void revokeAllSessions(java.util.UUID userId);
-
-    void verifyEmail(VerifyEmailRequest request);
+    void revokeAllSessions(UUID userId);
 
     /**
      * Emite el token de invitación y manda el mail. Invalida cualquier invitación anterior sin
@@ -44,9 +30,15 @@ public interface AuthApi {
      * @throws com.SolucionesInformaticasBA.minimarket.shared.mail.EmailException si el envío
      *         falla, para que el alta que lo disparó no quede confirmada sin haber avisado.
      */
-    void enviarInvitacion(java.util.UUID userId, String email, String nombre);
+    void enviarInvitacion(UUID userId, String email, String nombre);
 
-    /** Define la contraseña del invitado y activa la cuenta. */
+    /**
+     * Datos de la invitación detrás de un token, sin consumirlo. Lo llama el formulario de
+     * aceptación al abrirse, para no pedirle los datos a alguien cuyo enlace ya venció.
+     */
+    InvitacionResponse consultarInvitacion(String token);
+
+    /** Define la contraseña y el nombre de usuario del invitado, y activa la cuenta. */
     void aceptarInvitacion(AceptarInvitacionRequest request);
 
     void requestPasswordReset(PasswordResetRequest request);

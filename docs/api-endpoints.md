@@ -149,34 +149,50 @@ también devuelve `204`.
 
 ---
 
-### `POST /api/auth/v1/verify-email`
+### `GET /api/auth/v1/invitacion?token=…`
 
-**Request:**
-```json
-{ "token": "string" }
-```
+Datos de la invitación, para saludar a la persona y precargarle el nombre de usuario sugerido.
+**Público**, por la misma razón que el `POST` de abajo. **No consume el token**: sirve además
+para distinguir un enlace vencido antes de hacer llenar el formulario.
 
 **Response `200`**
+```json
+{
+  "nombre": "string",
+  "apellido": "string",
+  "email": "string",
+  "usernameSugerido": "string"
+}
+```
+
+`400` si el token es inválido, expirado o ya usado, o si la cuenta se bloqueó o se dio de baja
+desde que se envió la invitación.
 
 ---
 
 ### `POST /api/auth/v1/invitacion/aceptar`
 
-Cierre del alta por invitación: define la contraseña y pasa la cuenta a `ACTIVO`. **Público** —
-quien la acepta todavía no tiene contraseña, su credencial es el token del mail.
+Cierre del alta por invitación: define la contraseña —y opcionalmente el nombre de usuario— y
+pasa la cuenta a `ACTIVO`. **Público** — quien la acepta todavía no tiene contraseña, su
+credencial es el token del mail.
 
 **Request:**
 ```json
 {
   "token": "string (el del enlace del mail)",
-  "password": "string (min 8, max 72)"
+  "password": "string (min 8, max 72)",
+  "username": "string (opcional, min 1, max 50, sin @)"
 }
 ```
+
+Sin `username` queda el que se derivó del email al invitar — el mismo que devuelve el `GET` de
+arriba como `usernameSugerido`.
 
 **Response `200`** — después hay que loguearse normalmente.
 
 **Errores `400`:** token inválido, vencido o ya usado · token de otro tipo · la cuenta fue
-bloqueada o dada de baja entre la invitación y la aceptación
+bloqueada o dada de baja entre la invitación y la aceptación · el `username` elegido ya está
+tomado por otra cuenta
 
 ---
 

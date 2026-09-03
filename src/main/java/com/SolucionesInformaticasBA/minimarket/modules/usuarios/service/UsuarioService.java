@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.context.annotation.Lazy;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,16 @@ public class UsuarioService implements UsuarioApi {
 
     private final UsuarioRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    /**
+     * Los dos módulos se necesitan mutuamente —auth resuelve credenciales contra usuarios, y
+     * usuarios le pide a auth los tokens y los mails—, y Spring rechaza el ciclo al arrancar.
+     *
+     * <p>Se corta acá y no del otro lado a propósito: auth usa a usuarios en su camino
+     * principal (validar un login), mientras que usuarios llama a auth solo para efectos
+     * posteriores al alta o a la baja. Diferir este lado es el que menos cambia el orden real
+     * de la inicialización.
+     */
+    @Lazy
     private final AuthApi authApi;
 
     /**
@@ -175,11 +186,6 @@ public class UsuarioService implements UsuarioApi {
     }
 
     @Override
-    public Usuario getUsuarioById(UUID id){
-        return findActiveUser(id);
-    }
-
-    @Override
     public UsuarioResponse getById(UUID id) {
         Usuario u = findActiveUser(id);
         return toUserResponse(u);
@@ -312,8 +318,110 @@ public class UsuarioService implements UsuarioApi {
         userRepository.save(u);
     }
 
+    /**
+     * Se busca primero por email y solo después por username, en dos consultas separadas en
+     * lugar de un OR. Es a propósito: si alguien tuviera como username el email de otra
+     * persona, un OR devolvería dos filas y la consulta reventaría. Así la precedencia queda
+     * explícita —gana el email, que es la credencial principal— y el resultado nunca es
+     * ambiguo.
+     *
+     * <p>El estado se exige en la consulta: una cuenta pendiente o bloqueada no llega siquiera
+     * a que se le compare la contraseña, y el vacío que devuelve es indistinguible del de una
+     * cuenta inexistente o una contraseña mala.
+     */
+    @Override
+    public Optional<UsuarioResponse> verificarCredenciales(String identificador, String password) {
+        String id = identificador == null ? "" : identificador.trim();
+
+        return userRepository.findByEmailAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO)
+                .or(() -> userRepository.findByUsernameAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO))
+                .filter(u -> passwordEncoder.matches(password, u.getHashPassword()))
+                .map(this::toUserResponse);
+    }
+
+    /** Misma precedencia email→username que {@link #verificarCredenciales}, sin filtrar estado. */
+    @Override
+    public Optional<UsuarioResponse> buscarPorIdentificador(String identificador) {
+        String id = identificador == null ? "" : identificador.trim();
+
+        return userRepository.findByEmailAndDeletedAtIsNull(id)
+                .or(() -> userRepository.findByUsernameAndDeletedAtIsNull(id))
+                .map(this::toUserResponse);
+    }
+
+    @Override
+    public UsuarioResponse getCuentaInvitada(UUID id) {
+        return toUserResponse(invitacionVigente(id));
+    }
+
+    @Override
+    @Transactional
+    public void establecerPasswordInicial(UUID id, String password, String username) {
+        Usuario u = invitacionVigente(id);
+
+        if (username != null && !username.isBlank()) {
+            u.setUsername(usernameElegido(u, username.trim()));
+        }
+
+        u.setHashPassword(passwordEncoder.encode(password));
+        u.setEstado(EstadoUsuario.ACTIVO);
+        userRepository.save(u);
+    }
+
+    /**
+     * La cuenta detrás de una invitación que todavía sirve.
+     *
+     * <p>No se apoya en {@link #findActiveUser} porque la cuenta borrada no es acá un 404 sino
+     * una invitación vencida: quien llega con el enlace no tiene por qué enterarse de si la
+     * cuenta existió alguna vez.
+     */
+    private Usuario invitacionVigente(UUID id) {
+        Usuario u = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
+
+        if (u.getDeletedAt() != null || u.getEstado() == EstadoUsuario.BLOQUEADO) {
+            // Lo dieron de baja o lo bloquearon entre la invitación y la aceptación.
+            throw new BadRequestException("La invitación ya no es válida");
+        }
+
+        return u;
+    }
+
+    /**
+     * Valida el nombre de usuario que eligió el invitado.
+     *
+     * <p>Confirmar el que ya tiene —el derivado del email, que el formulario le muestra
+     * precargado— es el caso normal y tiene que pasar: por eso se compara antes de consultar,
+     * si no la cuenta se chocaría contra su propio registro y devolvería un 400 absurdo.
+     *
+     * <p>A diferencia del alta por invitación, acá una colisión no se desambigua con un sufijo:
+     * el invitado lo está eligiendo a mano y tiene que enterarse de que ese no le quedó.
+     */
+    private String usernameElegido(Usuario u, String username) {
+        if (username.equals(u.getUsername())) {
+            return username;
+        }
+        if (userRepository.existsByUsernameAndDeletedAtIsNull(username)) {
+            throw new BadRequestException("El nombre de usuario ya está en uso");
+        }
+        return username;
+    }
+
+    @Override
+    @Transactional
+    public void restablecerPassword(UUID id, String password) {
+        Usuario u = findActiveUser(id);
+
+        u.setHashPassword(passwordEncoder.encode(password));
+        userRepository.save(u);
+    }
+
     public boolean existById(UUID id){
         return userRepository.existsByIdAndDeletedAtIsNull(id);
+    }
+
+    public boolean existsByEmail(String email){
+        return userRepository.existsByEmailAndDeletedAtIsNull(email);
     }
 
     @Override

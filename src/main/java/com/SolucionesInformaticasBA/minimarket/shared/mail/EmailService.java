@@ -91,6 +91,7 @@ public class EmailService {
      *                        enterarse: un alta cuyo mail nunca salió deja a la persona sin forma
      *                        de entrar y al administrador creyendo que ya está.
      */
+    @SuppressWarnings("null")
     private void enviar(String destinatario, String asunto, String cuerpo) {
         JavaMailSender sender = smtpHost.isBlank() ? null : javaMailSender.getIfAvailable();
 

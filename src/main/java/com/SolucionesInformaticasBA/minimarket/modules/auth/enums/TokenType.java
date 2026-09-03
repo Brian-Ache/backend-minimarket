@@ -2,14 +2,12 @@ package com.SolucionesInformaticasBA.minimarket.modules.auth.enums;
 
 public enum TokenType {
 
-    /** Autorregistro: confirma que el email existe. La contraseña ya la eligió el usuario. */
-    VERIFICATION,
-
+    /** Reseteo de contraseña olvidada. Vive una hora: el usuario lo pidió y lo está esperando. */
     PASSWORD_RESET,
 
     /**
-     * Invitación de un administrador. A diferencia de VERIFICATION, con este token el invitado
-     * además <b>define su contraseña</b>: hasta ese momento la cuenta no tiene una que sirva.
+     * Invitación de un administrador. Con este token el invitado <b>define su contraseña</b> y
+     * su nombre de usuario: hasta ese momento la cuenta no tiene una contraseña que sirva.
      */
     INVITATION
 }
