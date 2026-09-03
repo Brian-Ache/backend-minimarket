@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -202,6 +203,50 @@ class UsuarioServiceInvitacionTest {
         verify(authApi, never()).enviarInvitacion(any(), anyString(), anyString());
     }
 
+    // --- Aceptación: establecerPasswordInicial -----------------------------------------------
+    // La regla vive acá desde que auth dejó de tocar la entidad; auth solo delega.
+
+    @Test
+    @DisplayName("establecer la contraseña inicial activa la cuenta")
+    void passwordInicialActivaLaCuenta() {
+        Usuario invitado = registrar(pendiente());
+        when(passwordEncoder.encode("MiPassword1!")).thenReturn("hash-nuevo");
+
+        service.establecerPasswordInicial(invitado.getId(), "MiPassword1!");
+
+        assertThat(invitado.getEstado()).isEqualTo(EstadoUsuario.ACTIVO);
+        assertThat(invitado.getHashPassword()).isEqualTo("hash-nuevo");
+        verify(userRepository).save(invitado);
+    }
+
+    @Test
+    @DisplayName("una invitación de alguien bloqueado entre medio ya no vale")
+    void invitacionDeBloqueadoNoVale() {
+        Usuario invitado = pendiente();
+        invitado.setEstado(EstadoUsuario.BLOQUEADO);
+        registrar(invitado);
+
+        assertThatThrownBy(() -> service.establecerPasswordInicial(invitado.getId(), "MiPassword1!"))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("ya no es válida");
+
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("una invitación de alguien dado de baja tampoco, y no se delata como 404")
+    void invitacionDeEliminadoNoVale() {
+        Usuario invitado = pendiente();
+        invitado.setDeletedAt(LocalDateTime.now());
+        registrar(invitado);
+
+        assertThatThrownBy(() -> service.establecerPasswordInicial(invitado.getId(), "MiPassword1!"))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("ya no es válida");
+
+        verify(userRepository, never()).save(any());
+    }
+
     // --- Helpers ----------------------------------------------------------------------------
 
     private void sinDuplicados() {
@@ -238,6 +283,13 @@ class UsuarioServiceInvitacionTest {
                 .rol(rol)
                 .estado(EstadoUsuario.ACTIVO)
                 .build();
+    }
+
+    private Usuario pendiente() {
+        Usuario u = usuario(Rol.EMPLEADO);
+        u.setEstado(EstadoUsuario.PENDIENTE);
+        u.setHashPassword("hash-inutilizable");
+        return u;
     }
 
     private Usuario registrar(Usuario u) {

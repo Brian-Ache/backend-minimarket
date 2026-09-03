@@ -1,14 +1,14 @@
 package com.SolucionesInformaticasBA.minimarket.modules.auth.api;
 
+import java.util.UUID;
+
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AceptarInvitacionRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AuthResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.LoginRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetConfirmRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.RefreshTokenRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.RegisterRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.VerifyEmailRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 
 public interface AuthApi {
 
@@ -30,7 +30,7 @@ public interface AuthApi {
     void logout(String refreshToken);
 
     /** Cierra todas las sesiones abiertas de un usuario (baja, bloqueo, cambio de rol). */
-    void revokeAllSessions(java.util.UUID userId);
+    void revokeAllSessions(UUID userId);
 
     void verifyEmail(VerifyEmailRequest request);
 
@@ -44,7 +44,7 @@ public interface AuthApi {
      * @throws com.SolucionesInformaticasBA.minimarket.shared.mail.EmailException si el envío
      *         falla, para que el alta que lo disparó no quede confirmada sin haber avisado.
      */
-    void enviarInvitacion(java.util.UUID userId, String email, String nombre);
+    void enviarInvitacion(UUID userId, String email, String nombre);
 
     /** Define la contraseña del invitado y activa la cuenta. */
     void aceptarInvitacion(AceptarInvitacionRequest request);

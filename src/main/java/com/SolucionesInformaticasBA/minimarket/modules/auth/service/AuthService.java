@@ -1,31 +1,17 @@
 package com.SolucionesInformaticasBA.minimarket.modules.auth.service;
 
-import java.util.Optional;
+import java.util.UUID;
 
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.AuthApi;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AceptarInvitacionRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AuthResponse;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.LoginRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetConfirmRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.RefreshTokenRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.RegisterRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.VerifyEmailRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.AuthToken;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.RefreshToken;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.*;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.*;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.enums.TokenType;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.EstadoUsuario;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.repository.UsuarioRepository;
 import com.SolucionesInformaticasBA.minimarket.security.JwtProvider;
-import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
-import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.UnauthorizedException;
 import com.SolucionesInformaticasBA.minimarket.shared.mail.EmailException;
 import com.SolucionesInformaticasBA.minimarket.shared.mail.EmailService;
@@ -33,64 +19,42 @@ import com.SolucionesInformaticasBA.minimarket.shared.mail.EmailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+/**
+ * Sesiones, tokens y los mails que los transportan.
+ *
+ * <p>De usuarios no conoce nada más que {@link UsuarioApi} y su {@link UsuarioResponse}: quién
+ * puede entrar, cómo se guarda una contraseña y cuándo una cuenta queda habilitada son
+ * decisiones de aquel módulo, y acá solo se piden. Por eso este servicio no tiene un
+ * {@code PasswordEncoder} ni toca la entidad {@code Usuario}.
+ */
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class AuthService implements AuthApi {
 
-    private final UsuarioRepository userRepository;
+    private final UsuarioApi usuarioApi;
     private final TokenService tokenService;
     private final JwtProvider jwtProvider;
-    private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
 
-    @Override
-    @Transactional
-    public UsuarioResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmailAndDeletedAtIsNull(request.getEmail())) {
-            throw new BadRequestException("El email ya está registrado");
-        }
-
-        var user = Usuario.builder()
-                .nombre(request.getNombre())
-                .apellido(request.getApellido())
-                .email(request.getEmail())
-                .username(request.getUsername())
-                .hashPassword(passwordEncoder.encode(request.getPassword()))
-                .rol(Rol.EMPLEADO)
-                .estado(EstadoUsuario.PENDIENTE) // pasa a ACTIVO al confirmar la cuenta
-                .build();
-
-        user = userRepository.saveAndFlush(user);
-
-        // El token en claro solo se puede entregar acá: en la base queda hasheado.
-        String tokenVerificacion = tokenService.generateVerificationToken(user.getId());
-        log.info("Usuario {} creado por autorregistro. Token de verificación pendiente de envío por email.",
-                user.getEmail());
-        log.debug("Token de verificación de {}: {}", user.getEmail(), tokenVerificacion);
-
-        return toUserResponse(user);
-    }
-
+    /**
+     * Acepta email o nombre de usuario, indistinto.
+     *
+     * <p>Un solo mensaje para todos los rechazos: cuenta inexistente, cuenta sin acceso y
+     * contraseña equivocada responden igual, para no filtrar qué cuentas existen ni en qué
+     * estado están. La distinción tampoco llega hasta acá — {@code verificarCredenciales}
+     * devuelve vacío en los tres casos.
+     */
     @Override
     public AuthResponse login(LoginRequest request) {
-        // El estado se exige en la consulta: una cuenta pendiente o bloqueada no distingue su
-        // mensaje del de credenciales inválidas, para no filtrar qué cuentas existen.
-        Usuario u = buscarParaLogin(request.getUsername())
-                .orElseThrow(() -> new UnauthorizedException("Credenciales inválidas o cuenta sin acceso"));
+        UsuarioResponse u = usuarioApi
+                .verificarCredenciales(request.getUsername(), request.getPassword())
+                .orElseThrow(() -> new UnauthorizedException("Credenciales inválidas"));
 
-        if (!passwordEncoder.matches(request.getPassword(), u.getHashPassword())) {
-            throw new UnauthorizedException("Credenciales inválidas");
-        }
+        String accessToken = jwtProvider.generateAccessToken(u.getId(), u.getRol());
+        String refreshToken = tokenService.generateRefreshToken(u.getId());
 
-        var accessToken = jwtProvider.generateAccessToken(u.getId(), u.getRol());
-        var refreshToken = tokenService.generateRefreshToken(u.getId());
-
-        return AuthResponse.builder()
-                .accessToken(accessToken)
-                .refreshToken(refreshToken)
-                .usuario(toUserResponse(u))
-                .build();
+        return toResponse(accessToken, refreshToken, u);
     }
 
     @Override
@@ -100,17 +64,12 @@ public class AuthService implements AuthApi {
 
         tokenService.revokeRefreshToken(request.getRefreshToken());
 
-        Usuario u = userRepository.findById(refreshToken.getUserId())
-                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
+        UsuarioResponse u = usuarioApi.getById(refreshToken.getUserId());
 
-        var accessToken = jwtProvider.generateAccessToken(u.getId(), u.getRol());
-        var newRefreshToken = tokenService.generateRefreshToken(u.getId());
+        String accessToken = jwtProvider.generateAccessToken(u.getId(), u.getRol());
+        String newRefreshToken = tokenService.generateRefreshToken(u.getId());
 
-        return AuthResponse.builder()
-                .accessToken(accessToken)
-                .refreshToken(newRefreshToken)
-                .usuario(toUserResponse(u))
-                .build();
+        return toResponse(accessToken, newRefreshToken, u);
     }
 
     @Override
@@ -119,7 +78,7 @@ public class AuthService implements AuthApi {
     }
 
     @Override
-    public void revokeAllSessions(java.util.UUID userId) {
+    public void revokeAllSessions(UUID userId) {
         int revocadas = tokenService.revokeAllUserRefreshTokens(userId);
         log.info("Se revocaron {} sesiones del usuario {}", revocadas, userId);
     }
@@ -129,17 +88,13 @@ public class AuthService implements AuthApi {
     public void verifyEmail(VerifyEmailRequest request) {
         AuthToken authToken = tokenService.validateAuthToken(request.getToken(), TokenType.VERIFICATION);
 
-        Usuario u = userRepository.findById(authToken.getUserId())
-                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
-
-        u.setEstado(EstadoUsuario.ACTIVO);
-        userRepository.save(u);
+        usuarioApi.activarCuenta(authToken.getUserId());
         tokenService.markAuthTokenAsUsed(authToken.getId());
     }
 
     @Override
     @Transactional
-    public void enviarInvitacion(java.util.UUID userId, String email, String nombre) {
+    public void enviarInvitacion(UUID userId, String email, String nombre) {
         // Un reenvío no puede dejar viva la invitación anterior: sería otra puerta abierta
         // hasta que expire.
         tokenService.invalidateAuthTokens(userId, TokenType.INVITATION);
@@ -154,40 +109,20 @@ public class AuthService implements AuthApi {
         log.info("Invitación enviada a {}", email);
     }
 
+    /**
+     * El token prueba quién es; definir la contraseña y habilitar la cuenta es de usuarios, que
+     * además decide si la invitación sigue en pie —la cuenta pudo darse de baja o bloquearse
+     * entre el envío y la aceptación—.
+     */
     @Override
     @Transactional
     public void aceptarInvitacion(AceptarInvitacionRequest request) {
         AuthToken authToken = tokenService.validateAuthToken(request.getToken(), TokenType.INVITATION);
 
-        Usuario u = userRepository.findById(authToken.getUserId())
-                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
-
-        if (u.getDeletedAt() != null || u.getEstado() == EstadoUsuario.BLOQUEADO) {
-            // Lo dieron de baja o lo bloquearon entre la invitación y la aceptación.
-            throw new BadRequestException("La invitación ya no es válida");
-        }
-
-        u.setHashPassword(passwordEncoder.encode(request.getPassword()));
-        u.setEstado(EstadoUsuario.ACTIVO);
-        userRepository.save(u);
+        usuarioApi.establecerPasswordInicial(authToken.getUserId(), request.getPassword());
         tokenService.markAuthTokenAsUsed(authToken.getId());
 
-        log.info("Invitación aceptada por {}", u.getEmail());
-    }
-
-    /**
-     * Resuelve al usuario por email o por nombre de usuario, indistinto.
-     *
-     * <p>Se busca primero por email y solo después por username, en dos consultas separadas en
-     * lugar de un OR. Es a propósito: si alguien tuviera como username el email de otra persona,
-     * un OR devolvería dos filas y la consulta reventaría. Así la precedencia queda explícita
-     * —gana el email, que es la credencial principal— y el resultado nunca es ambiguo.
-     */
-    private Optional<Usuario> buscarParaLogin(String identificador) {
-        String id = identificador == null ? "" : identificador.trim();
-
-        return userRepository.findByEmailAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO)
-                .or(() -> userRepository.findByUsernameAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO));
+        log.info("Invitación aceptada por el usuario {}", authToken.getUserId());
     }
 
     /**
@@ -201,10 +136,7 @@ public class AuthService implements AuthApi {
     @Override
     @Transactional
     public void requestPasswordReset(PasswordResetRequest request) {
-        String id = request.getUsername() == null ? "" : request.getUsername().trim();
-
-        userRepository.findByEmailAndDeletedAtIsNull(id)
-                .or(() -> userRepository.findByUsernameAndDeletedAtIsNull(id))
+        usuarioApi.buscarPorIdentificador(request.getUsername())
                 .ifPresent(u -> {
                     String token = tokenService.generatePasswordResetToken(u.getId());
                     try {
@@ -221,26 +153,18 @@ public class AuthService implements AuthApi {
     public void confirmPasswordReset(PasswordResetConfirmRequest request) {
         AuthToken authToken = tokenService.validateAuthToken(request.getToken(), TokenType.PASSWORD_RESET);
 
-        Usuario u = userRepository.findById(authToken.getUserId())
-                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
-
-        u.setHashPassword(passwordEncoder.encode(request.getNewPassword()));
-        userRepository.save(u);
+        usuarioApi.restablecerPassword(authToken.getUserId(), request.getNewPassword());
         tokenService.markAuthTokenAsUsed(authToken.getId());
-        tokenService.revokeAllUserRefreshTokens(u.getId());
+
+        // La contraseña cambió, así que las sesiones abiertas con la anterior dejan de valer.
+        tokenService.revokeAllUserRefreshTokens(authToken.getUserId());
     }
 
-    private UsuarioResponse toUserResponse(Usuario u) {
-        return UsuarioResponse.builder()
-                .id(u.getId())
-                .nombre(u.getNombre())
-                .apellido(u.getApellido())
-                .email(u.getEmail())
-                .username(u.getUsername())
-                .rol(u.getRol())
-                .estado(u.getEstado())
-                .createdAt(u.getCreatedAt())
-                .updatedAt(u.getUpdatedAt())
+    private AuthResponse toResponse(String accessToken, String newRefreshToken, UsuarioResponse usuario) {
+        return AuthResponse.builder()
+                .accessToken(accessToken)
+                .refreshToken(newRefreshToken)
+                .usuario(usuario)
                 .build();
     }
 }

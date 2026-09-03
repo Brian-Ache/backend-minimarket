@@ -1,6 +1,5 @@
 package com.SolucionesInformaticasBA.minimarket.modules.auth.service;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -9,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
@@ -23,36 +23,37 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AceptarInvitacionRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.AuthToken;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.enums.TokenType;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.EstadoUsuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.repository.UsuarioRepository;
 import com.SolucionesInformaticasBA.minimarket.security.JwtProvider;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.mail.EmailException;
 import com.SolucionesInformaticasBA.minimarket.shared.mail.EmailService;
 
+/**
+ * Lo que auth aporta al alta por invitación: emitir y quemar tokens, y mandar los mails. Que la
+ * cuenta quede activa y con la contraseña puesta es asunto del módulo usuarios, y se prueba en
+ * {@code UsuarioServiceInvitacionTest}; acá solo se verifica que se le delegue.
+ */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class AuthServiceInvitacionTest {
 
     @Mock
-    private UsuarioRepository userRepository;
+    private UsuarioApi usuarioApi;
 
     @Mock
     private TokenService tokenService;
 
     @Mock
     private JwtProvider jwtProvider;
-
-    @Mock
-    private PasswordEncoder passwordEncoder;
 
     @Mock
     private EmailService emailService;
@@ -90,23 +91,20 @@ class AuthServiceInvitacionTest {
     // --- Aceptación -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("aceptar la invitación define la contraseña, activa la cuenta y quema el token")
-    void aceptarActivaLaCuenta() {
-        Usuario invitado = usuarioPendiente();
-        AuthToken token = tokenDeInvitacion(invitado.getId());
+    @DisplayName("aceptar delega la contraseña al módulo usuarios y quema el token")
+    void aceptarDelegaYQuemaElToken() {
+        var userId = UUID.randomUUID();
+        AuthToken token = tokenDeInvitacion(userId);
         when(tokenService.validateAuthToken("tok", TokenType.INVITATION)).thenReturn(token);
-        when(userRepository.findById(invitado.getId())).thenReturn(Optional.of(invitado));
-        when(passwordEncoder.encode("MiPassword1!")).thenReturn("hash-nuevo");
 
         service.aceptarInvitacion(request("tok", "MiPassword1!"));
 
-        assertThat(invitado.getEstado()).isEqualTo(EstadoUsuario.ACTIVO);
-        assertThat(invitado.getHashPassword()).isEqualTo("hash-nuevo");
+        verify(usuarioApi).establecerPasswordInicial(userId, "MiPassword1!");
         verify(tokenService).markAuthTokenAsUsed(token.getId());
     }
 
     @Test
-    @DisplayName("un token que no es de invitación no sirve para definir la contraseña")
+    @DisplayName("un token que no es de invitación no llega a tocar al usuario")
     void tokenDeOtroTipoNoSirve() {
         when(tokenService.validateAuthToken("tok", TokenType.INVITATION))
                 .thenThrow(new BadRequestException("Tipo de token incorrecto"));
@@ -114,17 +112,17 @@ class AuthServiceInvitacionTest {
         assertThatThrownBy(() -> service.aceptarInvitacion(request("tok", "MiPassword1!")))
                 .isInstanceOf(BadRequestException.class);
 
-        verify(userRepository, never()).save(any());
+        verifyNoInteractions(usuarioApi);
     }
 
     @Test
-    @DisplayName("una invitación de alguien bloqueado entre medio ya no vale")
-    void invitacionDeBloqueadoNoVale() {
-        Usuario invitado = usuarioPendiente();
-        invitado.setEstado(EstadoUsuario.BLOQUEADO);
-        AuthToken token = tokenDeInvitacion(invitado.getId());
+    @DisplayName("si usuarios rechaza la invitación, el token no se quema y sigue sirviendo")
+    void invitacionRechazadaNoQuemaElToken() {
+        var userId = UUID.randomUUID();
+        AuthToken token = tokenDeInvitacion(userId);
         when(tokenService.validateAuthToken("tok", TokenType.INVITATION)).thenReturn(token);
-        when(userRepository.findById(invitado.getId())).thenReturn(Optional.of(invitado));
+        doThrow(new BadRequestException("La invitación ya no es válida"))
+                .when(usuarioApi).establecerPasswordInicial(any(), anyString());
 
         assertThatThrownBy(() -> service.aceptarInvitacion(request("tok", "MiPassword1!")))
                 .isInstanceOf(BadRequestException.class)
@@ -133,27 +131,13 @@ class AuthServiceInvitacionTest {
         verify(tokenService, never()).markAuthTokenAsUsed(any());
     }
 
-    @Test
-    @DisplayName("una invitación de alguien dado de baja tampoco")
-    void invitacionDeEliminadoNoVale() {
-        Usuario invitado = usuarioPendiente();
-        invitado.setDeletedAt(LocalDateTime.now());
-        AuthToken token = tokenDeInvitacion(invitado.getId());
-        when(tokenService.validateAuthToken("tok", TokenType.INVITATION)).thenReturn(token);
-        when(userRepository.findById(invitado.getId())).thenReturn(Optional.of(invitado));
-
-        assertThatThrownBy(() -> service.aceptarInvitacion(request("tok", "MiPassword1!")))
-                .isInstanceOf(BadRequestException.class);
-    }
-
     // --- Reseteo de contraseña --------------------------------------------------------------
 
     @Test
     @DisplayName("el pedido de reseteo manda el mail al email de la cuenta")
     void resetMandaElMail() {
-        Usuario u = usuarioPendiente();
-        u.setEstado(EstadoUsuario.ACTIVO);
-        when(userRepository.findByEmailAndDeletedAtIsNull("ana@ejemplo.com")).thenReturn(Optional.of(u));
+        UsuarioResponse u = usuario();
+        when(usuarioApi.buscarPorIdentificador("ana@ejemplo.com")).thenReturn(Optional.of(u));
         when(tokenService.generatePasswordResetToken(u.getId())).thenReturn("tok-reset");
 
         service.requestPasswordReset(passwordResetRequest("ana@ejemplo.com"));
@@ -165,8 +149,7 @@ class AuthServiceInvitacionTest {
     @Test
     @DisplayName("si el SMTP falla, el reseteo responde igual: un 502 delataría qué cuentas existen")
     void falloDeMailEnResetNoPropaga() {
-        Usuario u = usuarioPendiente();
-        when(userRepository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(u));
+        when(usuarioApi.buscarPorIdentificador(anyString())).thenReturn(Optional.of(usuario()));
         when(tokenService.generatePasswordResetToken(any())).thenReturn("tok");
         doThrow(new EmailException("smtp caído", null))
                 .when(emailService).enviarResetPassword(anyString(), anyString(), anyString(), anyLong());
@@ -178,8 +161,7 @@ class AuthServiceInvitacionTest {
     @Test
     @DisplayName("una cuenta inexistente no manda mail y tampoco falla")
     void cuentaInexistenteNoMandaNada() {
-        when(userRepository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.empty());
-        when(userRepository.findByUsernameAndDeletedAtIsNull(anyString())).thenReturn(Optional.empty());
+        when(usuarioApi.buscarPorIdentificador(anyString())).thenReturn(Optional.empty());
 
         assertThatCode(() -> service.requestPasswordReset(passwordResetRequest("nadie@ejemplo.com")))
                 .doesNotThrowAnyException();
@@ -189,16 +171,15 @@ class AuthServiceInvitacionTest {
 
     // --- Helpers ----------------------------------------------------------------------------
 
-    private Usuario usuarioPendiente() {
-        return Usuario.builder()
+    private UsuarioResponse usuario() {
+        return UsuarioResponse.builder()
                 .id(UUID.randomUUID())
                 .nombre("Ana")
                 .apellido("Pérez")
                 .username("ana")
                 .email("ana@ejemplo.com")
-                .hashPassword("hash-inutilizable")
                 .rol(Rol.EMPLEADO)
-                .estado(EstadoUsuario.PENDIENTE)
+                .estado(EstadoUsuario.ACTIVO)
                 .build();
     }
 

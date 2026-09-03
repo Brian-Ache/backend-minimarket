@@ -10,7 +10,6 @@ import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarR
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CrearUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.InvitarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 
 public interface UsuarioApi {
@@ -21,8 +20,6 @@ public interface UsuarioApi {
     UsuarioResponse invitar(InvitarUsuarioRequest request);
 
     void reenviarInvitacion(UUID id);
-
-    Usuario getUsuarioById(UUID id);
 
     UsuarioResponse getById(UUID id);
 
@@ -43,6 +40,47 @@ public interface UsuarioApi {
     void changePassword(UUID id, CambiarPasswordRequest request);
 
     boolean existById(UUID id);
+
+    boolean existsByEmail(String email);
+
+    /**
+     * Resuelve al usuario habilitado que corresponde a un identificador —email o nombre de
+     * usuario, indistinto— y valida su contraseña. Vacío si no existe, si no puede operar
+     * (dado de baja, pendiente o bloqueado) o si la contraseña no coincide.
+     *
+     * <p>Los tres casos se colapsan en un vacío a propósito: distinguirlos le diría a quien
+     * prueba credenciales qué cuentas existen y en qué estado están.
+     *
+     * <p>La comparación vive acá y no en auth porque el formato del hash es de este módulo:
+     * quien guarda la credencial es quien sabe cómo verificarla.
+     */
+    Optional<UsuarioResponse> verificarCredenciales(String identificador, String password);
+
+    /**
+     * Resuelve al usuario por email o por nombre de usuario, sin exigir que pueda operar. Lo
+     * usa el reseteo de contraseña, que tiene que alcanzar también a una cuenta pendiente o
+     * bloqueada. Para el login va {@link #verificarCredenciales}.
+     */
+    Optional<UsuarioResponse> buscarPorIdentificador(String identificador);
+
+    /** Marca la cuenta como ACTIVO. La usa la verificación de email. */
+    void activarCuenta(UUID id);
+
+    /**
+     * Define la contraseña de una cuenta que todavía no tiene una propia y la habilita, en un
+     * solo paso. Es la contracara de {@link #invitar}.
+     *
+     * @throws com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException si la
+     *         cuenta se dio de baja o se bloqueó entre la invitación y la aceptación.
+     */
+    void establecerPasswordInicial(UUID id, String password);
+
+    /**
+     * Reemplaza la contraseña sin pedir la anterior. Es para el reseteo por email, donde la
+     * prueba de identidad es el token; el cambio hecho por el propio usuario va por
+     * {@link #changePassword}, que sí exige la actual.
+     */
+    void restablecerPassword(UUID id, String password);
 
     /**
      * Rol con el que el usuario opera hoy, o vacío si no puede operar (dado de baja, pendiente

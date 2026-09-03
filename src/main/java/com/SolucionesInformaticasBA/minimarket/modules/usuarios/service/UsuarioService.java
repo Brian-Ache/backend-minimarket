@@ -175,11 +175,6 @@ public class UsuarioService implements UsuarioApi {
     }
 
     @Override
-    public Usuario getUsuarioById(UUID id){
-        return findActiveUser(id);
-    }
-
-    @Override
     public UsuarioResponse getById(UUID id) {
         Usuario u = findActiveUser(id);
         return toUserResponse(u);
@@ -312,8 +307,82 @@ public class UsuarioService implements UsuarioApi {
         userRepository.save(u);
     }
 
+    /**
+     * Se busca primero por email y solo después por username, en dos consultas separadas en
+     * lugar de un OR. Es a propósito: si alguien tuviera como username el email de otra
+     * persona, un OR devolvería dos filas y la consulta reventaría. Así la precedencia queda
+     * explícita —gana el email, que es la credencial principal— y el resultado nunca es
+     * ambiguo.
+     *
+     * <p>El estado se exige en la consulta: una cuenta pendiente o bloqueada no llega siquiera
+     * a que se le compare la contraseña, y el vacío que devuelve es indistinguible del de una
+     * cuenta inexistente o una contraseña mala.
+     */
+    @Override
+    public Optional<UsuarioResponse> verificarCredenciales(String identificador, String password) {
+        String id = identificador == null ? "" : identificador.trim();
+
+        return userRepository.findByEmailAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO)
+                .or(() -> userRepository.findByUsernameAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO))
+                .filter(u -> passwordEncoder.matches(password, u.getHashPassword()))
+                .map(this::toUserResponse);
+    }
+
+    /** Misma precedencia email→username que {@link #verificarCredenciales}, sin filtrar estado. */
+    @Override
+    public Optional<UsuarioResponse> buscarPorIdentificador(String identificador) {
+        String id = identificador == null ? "" : identificador.trim();
+
+        return userRepository.findByEmailAndDeletedAtIsNull(id)
+                .or(() -> userRepository.findByUsernameAndDeletedAtIsNull(id))
+                .map(this::toUserResponse);
+    }
+
+    @Override
+    @Transactional
+    public void activarCuenta(UUID id) {
+        Usuario u = findActiveUser(id);
+
+        u.setEstado(EstadoUsuario.ACTIVO);
+        userRepository.save(u);
+    }
+
+    /**
+     * No se apoya en {@link #findActiveUser} porque la cuenta borrada no es acá un 404 sino una
+     * invitación vencida: quien llega con el enlace no tiene por qué enterarse de si la cuenta
+     * existió alguna vez.
+     */
+    @Override
+    @Transactional
+    public void establecerPasswordInicial(UUID id, String password) {
+        Usuario u = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
+
+        if (u.getDeletedAt() != null || u.getEstado() == EstadoUsuario.BLOQUEADO) {
+            // Lo dieron de baja o lo bloquearon entre la invitación y la aceptación.
+            throw new BadRequestException("La invitación ya no es válida");
+        }
+
+        u.setHashPassword(passwordEncoder.encode(password));
+        u.setEstado(EstadoUsuario.ACTIVO);
+        userRepository.save(u);
+    }
+
+    @Override
+    @Transactional
+    public void restablecerPassword(UUID id, String password) {
+        Usuario u = findActiveUser(id);
+
+        u.setHashPassword(passwordEncoder.encode(password));
+        userRepository.save(u);
+    }
+
     public boolean existById(UUID id){
         return userRepository.existsByIdAndDeletedAtIsNull(id);
+    }
+
+    public boolean existsByEmail(String email){
+        return userRepository.existsByEmailAndDeletedAtIsNull(email);
     }
 
     @Override
