@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.auth.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -25,6 +26,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AceptarInvitacionRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.InvitacionResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.AuthToken;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.enums.TokenType;
@@ -99,7 +101,7 @@ class AuthServiceInvitacionTest {
 
         service.aceptarInvitacion(request("tok", "MiPassword1!"));
 
-        verify(usuarioApi).establecerPasswordInicial(userId, "MiPassword1!");
+        verify(usuarioApi).establecerPasswordInicial(userId, "MiPassword1!", "ana.nueva");
         verify(tokenService).markAuthTokenAsUsed(token.getId());
     }
 
@@ -122,13 +124,55 @@ class AuthServiceInvitacionTest {
         AuthToken token = tokenDeInvitacion(userId);
         when(tokenService.validateAuthToken("tok", TokenType.INVITATION)).thenReturn(token);
         doThrow(new BadRequestException("La invitación ya no es válida"))
-                .when(usuarioApi).establecerPasswordInicial(any(), anyString());
+                .when(usuarioApi).establecerPasswordInicial(any(), anyString(), any());
 
         assertThatThrownBy(() -> service.aceptarInvitacion(request("tok", "MiPassword1!")))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessageContaining("ya no es válida");
 
         verify(tokenService, never()).markAuthTokenAsUsed(any());
+    }
+
+    @Test
+    @DisplayName("sin username elegido se delega null, y usuarios deja el derivado del email")
+    void aceptarSinUsernameDelegaNull() {
+        var userId = UUID.randomUUID();
+        when(tokenService.validateAuthToken("tok", TokenType.INVITATION))
+                .thenReturn(tokenDeInvitacion(userId));
+
+        service.aceptarInvitacion(request("tok", "MiPassword1!", null));
+
+        verify(usuarioApi).establecerPasswordInicial(userId, "MiPassword1!", null);
+    }
+
+    // --- Consulta de la invitación ------------------------------------------------------------
+
+    @Test
+    @DisplayName("consultar la invitación trae los datos del formulario sin quemar el token")
+    void consultarNoQuemaElToken() {
+        var userId = UUID.randomUUID();
+        when(tokenService.validateAuthToken("tok", TokenType.INVITATION))
+                .thenReturn(tokenDeInvitacion(userId));
+        when(usuarioApi.getCuentaInvitada(userId)).thenReturn(usuario());
+
+        InvitacionResponse invitacion = service.consultarInvitacion("tok");
+
+        assertThat(invitacion.getNombre()).isEqualTo("Ana");
+        assertThat(invitacion.getEmail()).isEqualTo("ana@ejemplo.com");
+        assertThat(invitacion.getUsernameSugerido()).isEqualTo("ana");
+        verify(tokenService, never()).markAuthTokenAsUsed(any());
+    }
+
+    @Test
+    @DisplayName("un enlace vencido se detecta en la consulta, antes de llenar el formulario")
+    void consultarConTokenVencido() {
+        when(tokenService.validateAuthToken("tok", TokenType.INVITATION))
+                .thenThrow(new BadRequestException("Token expirado"));
+
+        assertThatThrownBy(() -> service.consultarInvitacion("tok"))
+                .isInstanceOf(BadRequestException.class);
+
+        verifyNoInteractions(usuarioApi);
     }
 
     // --- Reseteo de contraseña --------------------------------------------------------------
@@ -195,9 +239,14 @@ class AuthServiceInvitacionTest {
     }
 
     private AceptarInvitacionRequest request(String token, String password) {
+        return request(token, password, "ana.nueva");
+    }
+
+    private AceptarInvitacionRequest request(String token, String password, String username) {
         var request = new AceptarInvitacionRequest();
         request.setToken(token);
         request.setPassword(password);
+        request.setUsername(username);
         return request;
     }
 

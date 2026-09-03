@@ -63,17 +63,30 @@ public interface UsuarioApi {
      */
     Optional<UsuarioResponse> buscarPorIdentificador(String identificador);
 
-    /** Marca la cuenta como ACTIVO. La usa la verificación de email. */
-    void activarCuenta(UUID id);
+    /**
+     * Datos de una cuenta invitada cuya invitación sigue en pie. Los usa el formulario de
+     * aceptación para saludar a la persona y precargarle el nombre de usuario que se le
+     * derivó del email.
+     *
+     * <p>Aplica la misma regla de vigencia que {@link #establecerPasswordInicial}, para que el
+     * formulario no se muestre si al confirmar va a ser rechazado igual.
+     *
+     * @throws com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException si la
+     *         cuenta se dio de baja o se bloqueó desde que se envió la invitación.
+     */
+    UsuarioResponse getCuentaInvitada(UUID id);
 
     /**
      * Define la contraseña de una cuenta que todavía no tiene una propia y la habilita, en un
      * solo paso. Es la contracara de {@link #invitar}.
      *
+     * @param username nombre de usuario elegido por el invitado, o {@code null} para dejar el
+     *        que se derivó del email al invitarlo.
      * @throws com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException si la
-     *         cuenta se dio de baja o se bloqueó entre la invitación y la aceptación.
+     *         cuenta se dio de baja o se bloqueó entre la invitación y la aceptación, o si el
+     *         nombre de usuario elegido ya está tomado por otra cuenta.
      */
-    void establecerPasswordInicial(UUID id, String password);
+    void establecerPasswordInicial(UUID id, String password, String username);
 
     /**
      * Reemplaza la contraseña sin pedir la anterior. Es para el reseteo por email, donde la

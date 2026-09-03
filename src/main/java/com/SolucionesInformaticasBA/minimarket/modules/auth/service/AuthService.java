@@ -110,16 +110,35 @@ public class AuthService implements AuthApi {
     }
 
     /**
-     * El token prueba quién es; definir la contraseña y habilitar la cuenta es de usuarios, que
-     * además decide si la invitación sigue en pie —la cuenta pudo darse de baja o bloquearse
-     * entre el envío y la aceptación—.
+     * Valida el token sin quemarlo: es una consulta, y la persona todavía no completó nada. El
+     * token se marca usado recién en {@link #aceptarInvitacion}.
+     */
+    @Override
+    public InvitacionResponse consultarInvitacion(String token) {
+        AuthToken authToken = tokenService.validateAuthToken(token, TokenType.INVITATION);
+
+        UsuarioResponse u = usuarioApi.getCuentaInvitada(authToken.getUserId());
+
+        return InvitacionResponse.builder()
+                .nombre(u.getNombre())
+                .apellido(u.getApellido())
+                .email(u.getEmail())
+                .usernameSugerido(u.getUsername())
+                .build();
+    }
+
+    /**
+     * El token prueba quién es; definir la contraseña y el nombre de usuario, y habilitar la
+     * cuenta, es de usuarios, que además decide si la invitación sigue en pie —la cuenta pudo
+     * darse de baja o bloquearse entre el envío y la aceptación—.
      */
     @Override
     @Transactional
     public void aceptarInvitacion(AceptarInvitacionRequest request) {
         AuthToken authToken = tokenService.validateAuthToken(request.getToken(), TokenType.INVITATION);
 
-        usuarioApi.establecerPasswordInicial(authToken.getUserId(), request.getPassword());
+        usuarioApi.establecerPasswordInicial(
+                authToken.getUserId(), request.getPassword(), request.getUsername());
         tokenService.markAuthTokenAsUsed(authToken.getId());
 
         log.info("Invitación aceptada por el usuario {}", authToken.getUserId());

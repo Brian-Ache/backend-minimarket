@@ -1,9 +1,11 @@
 package com.SolucionesInformaticasBA.minimarket.modules.auth.controller;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.AuthApi;
@@ -41,6 +43,18 @@ public class AuthController {
     public ResponseEntity<Void> verifyEmail(@Valid @RequestBody VerifyEmailRequest request) {
         authApi.verifyEmail(request);
         return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Datos de la invitación, para que el formulario salude a la persona y le precargue el
+     * nombre de usuario sugerido. Público por la misma razón que el POST de abajo.
+     *
+     * <p>No consume el token: sirve además para que el front distinga un enlace vencido antes
+     * de hacerle llenar el formulario.
+     */
+    @GetMapping("/v1/invitacion")
+    public ResponseEntity<InvitacionResponse> consultarInvitacion(@RequestParam String token) {
+        return ResponseEntity.ok(authApi.consultarInvitacion(token));
     }
 
     /**

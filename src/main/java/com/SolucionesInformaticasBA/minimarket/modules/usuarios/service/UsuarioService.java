@@ -347,14 +347,33 @@ public class UsuarioService implements UsuarioApi {
         userRepository.save(u);
     }
 
-    /**
-     * No se apoya en {@link #findActiveUser} porque la cuenta borrada no es acá un 404 sino una
-     * invitación vencida: quien llega con el enlace no tiene por qué enterarse de si la cuenta
-     * existió alguna vez.
-     */
+    @Override
+    public UsuarioResponse getCuentaInvitada(UUID id) {
+        return toUserResponse(invitacionVigente(id));
+    }
+
     @Override
     @Transactional
-    public void establecerPasswordInicial(UUID id, String password) {
+    public void establecerPasswordInicial(UUID id, String password, String username) {
+        Usuario u = invitacionVigente(id);
+
+        if (username != null && !username.isBlank()) {
+            u.setUsername(usernameElegido(u, username.trim()));
+        }
+
+        u.setHashPassword(passwordEncoder.encode(password));
+        u.setEstado(EstadoUsuario.ACTIVO);
+        userRepository.save(u);
+    }
+
+    /**
+     * La cuenta detrás de una invitación que todavía sirve.
+     *
+     * <p>No se apoya en {@link #findActiveUser} porque la cuenta borrada no es acá un 404 sino
+     * una invitación vencida: quien llega con el enlace no tiene por qué enterarse de si la
+     * cuenta existió alguna vez.
+     */
+    private Usuario invitacionVigente(UUID id) {
         Usuario u = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
 
@@ -363,9 +382,27 @@ public class UsuarioService implements UsuarioApi {
             throw new BadRequestException("La invitación ya no es válida");
         }
 
-        u.setHashPassword(passwordEncoder.encode(password));
-        u.setEstado(EstadoUsuario.ACTIVO);
-        userRepository.save(u);
+        return u;
+    }
+
+    /**
+     * Valida el nombre de usuario que eligió el invitado.
+     *
+     * <p>Confirmar el que ya tiene —el derivado del email, que el formulario le muestra
+     * precargado— es el caso normal y tiene que pasar: por eso se compara antes de consultar,
+     * si no la cuenta se chocaría contra su propio registro y devolvería un 400 absurdo.
+     *
+     * <p>A diferencia del alta por invitación, acá una colisión no se desambigua con un sufijo:
+     * el invitado lo está eligiendo a mano y tiene que enterarse de que ese no le quedó.
+     */
+    private String usernameElegido(Usuario u, String username) {
+        if (username.equals(u.getUsername())) {
+            return username;
+        }
+        if (userRepository.existsByUsernameAndDeletedAtIsNull(username)) {
+            throw new BadRequestException("El nombre de usuario ya está en uso");
+        }
+        return username;
     }
 
     @Override
