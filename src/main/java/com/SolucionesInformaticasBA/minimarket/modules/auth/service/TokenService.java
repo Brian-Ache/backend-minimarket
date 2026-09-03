@@ -5,16 +5,15 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.AuthToken;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.RefreshToken;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.*;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.enums.TokenType;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.repository.AuthTokensRepository;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.repository.RefreshTokenRepository;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.repository.*;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
@@ -55,17 +54,17 @@ public class TokenService {
      */
     @Transactional
     public void invalidateAuthTokens(UUID userId, TokenType tokenType) {
-        var tokens = authTokensRepository.findByUserIdAndTokenTypeAndUsedFalse(userId, tokenType);
+        List<AuthToken> tokens = authTokensRepository.findByUserIdAndTokenTypeAndUsedFalse(userId, tokenType);
         tokens.forEach(token -> token.setUsed(true));
         authTokensRepository.saveAll(tokens);
     }
 
     public String generateRefreshToken(UUID userId) {
-        var rawToken = generateRandomString();
-        var hashedToken = hashToken(rawToken);
-        var expiresAt = LocalDateTime.now().plusHours(REFRESH_TOKEN_DURATION_HOURS);
+        String rawToken = generateRandomString();
+        String hashedToken = hashToken(rawToken);
+        LocalDateTime expiresAt = LocalDateTime.now().plusHours(REFRESH_TOKEN_DURATION_HOURS);
 
-        var refreshToken = RefreshToken.builder()
+        RefreshToken refreshToken = RefreshToken.builder()
                 .tokenHash(hashedToken)
                 .userId(userId)
                 .expiresAt(expiresAt)
@@ -77,9 +76,9 @@ public class TokenService {
     }
 
     public AuthToken validateAuthToken(String rawToken, TokenType expectedType) {
-        var hashedToken = hashToken(rawToken);
+        String hashedToken = hashToken(rawToken);
 
-        var authToken = authTokensRepository.findByTokenHashAndUsedFalse(hashedToken)
+        AuthToken authToken = authTokensRepository.findByTokenHashAndUsedFalse(hashedToken)
                 .orElseThrow(() -> new BadRequestException("Token inválido o ya utilizado"));
 
         if (authToken.getTokenType() != expectedType) {
@@ -94,9 +93,9 @@ public class TokenService {
     }
 
     public RefreshToken validateRefreshToken(String rawToken) {
-        var hashedToken = hashToken(rawToken);
+        String hashedToken = hashToken(rawToken);
 
-        var refreshToken = refreshTokenRepository.findByTokenHashAndIsActiveTrue(hashedToken)
+        RefreshToken refreshToken = refreshTokenRepository.findByTokenHashAndIsActiveTrue(hashedToken)
                 .orElseThrow(() -> new BadRequestException("Refresh token inválido o revocado"));
 
         if (refreshToken.getExpiresAt().isBefore(LocalDateTime.now())) {
@@ -108,7 +107,7 @@ public class TokenService {
 
     @Transactional
     public void markAuthTokenAsUsed(UUID tokenId) {
-        var token = authTokensRepository.findById(tokenId)
+        AuthToken token = authTokensRepository.findById(tokenId)
                 .orElseThrow(() -> new ResourceNotFoundException("Token no encontrado"));
         token.setUsed(true);
         authTokensRepository.save(token);
@@ -135,11 +134,11 @@ public class TokenService {
     }
 
     private String createAuthToken(UUID userId, TokenType tokenType, long durationHours) {
-        var rawToken = generateRandomString();
-        var hashedToken = hashToken(rawToken);
-        var expiresAt = LocalDateTime.now().plusHours(durationHours);
+        String rawToken = generateRandomString();
+        String hashedToken = hashToken(rawToken);
+        LocalDateTime expiresAt = LocalDateTime.now().plusHours(durationHours);
 
-        var authToken = AuthToken.builder()
+        AuthToken authToken = AuthToken.builder()
                 .tokenType(tokenType)
                 .tokenHash(hashedToken)
                 .userId(userId)
@@ -152,15 +151,15 @@ public class TokenService {
     }
 
     private String generateRandomString() {
-        var randomBytes = new byte[32];
+        byte[] randomBytes = new byte[32];
         new SecureRandom().nextBytes(randomBytes);
         return HexFormat.of().formatHex(randomBytes);
     }
 
     public String hashToken(String rawToken) {
         try {
-            var digest = MessageDigest.getInstance("SHA-256");
-            var hashBytes = digest.digest(rawToken.getBytes());
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = digest.digest(rawToken.getBytes());
             return HexFormat.of().formatHex(hashBytes);
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("SHA-256 no disponible", e);
