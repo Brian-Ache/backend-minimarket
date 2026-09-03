@@ -11,6 +11,7 @@ import jakarta.validation.constraints.NotNull;
 import lombok.*;
 
 @Entity
+@Table(name = "refresh_tokens")
 @Getter
 @Setter
 @Builder

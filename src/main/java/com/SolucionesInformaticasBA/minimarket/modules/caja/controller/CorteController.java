@@ -8,13 +8,13 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.CorteRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.CorteResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
@@ -27,9 +27,8 @@ public class CorteController {
 
     @PostMapping("/v1/corte")
     public ResponseEntity<CorteResponse> realizarCorte(
-            @RequestHeader UUID idUsuario,
             @Valid @RequestBody CorteRequest request) {
-        return ResponseEntity.ok(cajaApi.realizarCorte(idUsuario, request));
+        return ResponseEntity.ok(cajaApi.realizarCorte(SecurityUtils.getCurrentUserId(), request));
     }
 
     @GetMapping("/v1/corte/ultimo")

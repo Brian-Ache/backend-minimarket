@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.auth.api;
 
+import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AceptarInvitacionRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.AuthResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.LoginRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto.PasswordResetConfirmRequest;
@@ -18,7 +19,7 @@ public interface AuthApi {
      * (POST /api/users/v1). Para habilitar el autorregistro hace falta: (1) exponerla en
      * {@code AuthController}, (2) agregar el envío de mail con el token de verificación, y
      * (3) permitir la ruta en {@code SecurityConfig}. El usuario queda con
-     * {@code enabled=false} hasta que confirme con {@link #verifyEmail}.
+     * estado {@code PENDIENTE} hasta que confirme con {@link #verifyEmail}.
      */
     UsuarioResponse register(RegisterRequest request);
 
@@ -28,7 +29,25 @@ public interface AuthApi {
 
     void logout(String refreshToken);
 
+    /** Cierra todas las sesiones abiertas de un usuario (baja, bloqueo, cambio de rol). */
+    void revokeAllSessions(java.util.UUID userId);
+
     void verifyEmail(VerifyEmailRequest request);
+
+    /**
+     * Emite el token de invitación y manda el mail. Invalida cualquier invitación anterior sin
+     * usar, así que sirve igual para el primer envío y para el reenvío.
+     *
+     * <p>Lo llama el módulo de usuarios después de crear la cuenta en estado PENDIENTE: el alta
+     * es asunto suyo, los tokens y el mail son de acá.
+     *
+     * @throws com.SolucionesInformaticasBA.minimarket.shared.mail.EmailException si el envío
+     *         falla, para que el alta que lo disparó no quede confirmada sin haber avisado.
+     */
+    void enviarInvitacion(java.util.UUID userId, String email, String nombre);
+
+    /** Define la contraseña del invitado y activa la cuenta. */
+    void aceptarInvitacion(AceptarInvitacionRequest request);
 
     void requestPasswordReset(PasswordResetRequest request);
 

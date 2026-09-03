@@ -18,7 +18,9 @@ import org.springframework.web.bind.annotation.RestController;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.ActualizarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarPasswordRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarRolRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CrearUsuarioRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.InvitarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
@@ -32,10 +34,31 @@ public class UsuarioController {
 
     private final UsuarioApi usuarioApi;
 
+    // hasRole('ADMIN') alcanza también al SUPERADMIN: el filtro JWT le da las authorities de
+    // todos los roles por debajo del suyo. Qué rol puede crear cada uno, y sobre quién puede
+    // operar, lo decide UsuarioService, que es donde se conoce el rol del objetivo.
     @PostMapping("/v1")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UsuarioResponse> crear(@Valid @RequestBody CrearUsuarioRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(usuarioApi.crear(request));
+    }
+
+    /**
+     * Alta por invitación: la persona recibe un mail y define ahí su contraseña. Es el flujo
+     * previsto para el día a día; {@code POST /v1} queda para el alta directa.
+     */
+    @PostMapping("/v1/invitaciones")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UsuarioResponse> invitar(@Valid @RequestBody InvitarUsuarioRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(usuarioApi.invitar(request));
+    }
+
+    /** Manda de nuevo la invitación, con token nuevo. Solo si la cuenta sigue PENDIENTE. */
+    @PostMapping("/v1/{id}/invitaciones/reenviar")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> reenviarInvitacion(@PathVariable UUID id) {
+        usuarioApi.reenviarInvitacion(id);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/v1/me")
@@ -45,28 +68,59 @@ public class UsuarioController {
     }
 
     @GetMapping("/v1/{id}")
+    @PreAuthorize("hasRole('ADMIN') or #id.toString() == authentication.principal")
     public ResponseEntity<UsuarioResponse> getById(@PathVariable UUID id) {
         return ResponseEntity.ok(usuarioApi.getById(id));
     }
 
     @GetMapping("/v1")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<UsuarioResponse>> getAll() {
         return ResponseEntity.ok(usuarioApi.getAll());
     }
 
     @PatchMapping("/v1/{id}")
+    @PreAuthorize("hasRole('ADMIN') or #id.toString() == authentication.principal")
     public ResponseEntity<UsuarioResponse> update(@PathVariable UUID id,
             @Valid @RequestBody ActualizarUsuarioRequest request) {
         return ResponseEntity.ok(usuarioApi.update(id, request));
     }
 
+    /**
+     * Promueve o degrada a un usuario. Va aparte del PATCH general porque ese lo puede llamar
+     * el dueño del recurso sobre sí mismo, y nadie se cambia el rol solo.
+     */
+    @PatchMapping("/v1/{id}/rol")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UsuarioResponse> cambiarRol(@PathVariable UUID id,
+            @Valid @RequestBody CambiarRolRequest request) {
+        return ResponseEntity.ok(usuarioApi.cambiarRol(id, request));
+    }
+
+    /** Suspende el acceso sin borrar la cuenta. Corta las sesiones abiertas del usuario. */
+    @PostMapping("/v1/{id}/bloquear")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UsuarioResponse> bloquear(@PathVariable UUID id) {
+        return ResponseEntity.ok(usuarioApi.bloquear(id));
+    }
+
+    @PostMapping("/v1/{id}/desbloquear")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UsuarioResponse> desbloquear(@PathVariable UUID id) {
+        return ResponseEntity.ok(usuarioApi.desbloquear(id));
+    }
+
     @DeleteMapping("/v1/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         usuarioApi.delete(id);
         return ResponseEntity.noContent().build();
     }
 
+    // Solo el dueño: cambiar la contraseña exige conocer la actual, así que ni el ADMIN
+    // puede hacerlo por otro (para eso está el flujo de reseteo).
     @PostMapping("/v1/{id}/change-password")
+    @PreAuthorize("#id.toString() == authentication.principal")
     public ResponseEntity<Void> changePassword(@PathVariable UUID id,
             @Valid @RequestBody CambiarPasswordRequest request) {
         usuarioApi.changePassword(id, request);

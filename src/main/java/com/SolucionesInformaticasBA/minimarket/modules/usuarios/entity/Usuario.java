@@ -6,6 +6,7 @@ import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.EstadoUsuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 
 import jakarta.persistence.*;
@@ -35,7 +36,7 @@ public class Usuario {
     private String apellido;
 
     @NotBlank
-    @Column(name = "username", nullable = false, length = 50)
+    @Column(name = "username", nullable = false, unique = true, length = 50)
     private String username;
 
     @NotBlank
@@ -52,10 +53,11 @@ public class Usuario {
     @Column(name = "rol", nullable = false)
     private Rol rol;
 
-    // bloqueo o activacion logica (segun uso)
-    @Column(name = "enabled", nullable = false)
+    @NotNull
+    @Enumerated(EnumType.STRING)
+    @Column(name = "estado", nullable = false, length = 20)
     @Builder.Default
-    private boolean enabled = false;
+    private EstadoUsuario estado = EstadoUsuario.PENDIENTE;
 
     // timestamps en ingles por convecion
     @CreationTimestamp

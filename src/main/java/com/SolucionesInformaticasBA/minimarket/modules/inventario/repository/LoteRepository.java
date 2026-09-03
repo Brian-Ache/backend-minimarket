@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.Lote;
 
@@ -29,4 +30,13 @@ public interface LoteRepository extends JpaRepository<Lote,UUID>{
     List<Lote> findAllByDeletedAtIsNull();
 
     List<Lote> findByIdProductoAndDeletedAtIsNullOrderByFechaVencimientoAsc(UUID idProducto);
+
+    // Existencias por producto en una sola consulta: evita un query por producto en el
+    // reporte de inventario.
+    @Query("""
+            SELECT l.idProducto, SUM(l.cantidad) FROM Lote l
+             WHERE l.deletedAt IS NULL
+             GROUP BY l.idProducto
+            """)
+    List<Object[]> sumCantidadAgrupadaPorProducto();
 }

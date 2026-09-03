@@ -3,6 +3,7 @@ package com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.EstadoUsuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 
 import lombok.AllArgsConstructor;
@@ -20,7 +21,7 @@ public class UsuarioResponse {
     private String username;
     private String email;
     private Rol rol;
-    private boolean enabled;
+    private EstadoUsuario estado;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

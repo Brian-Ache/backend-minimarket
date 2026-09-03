@@ -17,7 +17,11 @@ public interface VentasApi {
     List<VentaResponse> getAll();
     List<VentaResponse> getByUsuario(UUID idUsuario);
     List<VentaResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta);
+
+    /** Solo ventas cobradas, filtradas por fecha de cobro. Es la fuente de todo reporte de dinero. */
+    List<VentaResponse> getByFechaCobradas(LocalDateTime desde, LocalDateTime hasta);
     void delete(UUID id);
     CobrarVentaResponse cobrar(UUID idVenta, UUID idUsuario, CobrarVentaRequest request);
     ResumenDiarioResponse getResumenDiario(LocalDate fecha);
+    ResumenDiarioResponse getResumenPorSesion(UUID idSesion);
 }

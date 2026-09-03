@@ -3,6 +3,7 @@ package com.SolucionesInformaticasBA.minimarket.modules.caja.service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -36,7 +37,7 @@ public class CajaService implements CajaApi {
     @Override
     @Transactional
     public SesionCajaResponse abrirSesion(UUID idUsuario, AbrirSesionRequest request) {
-        if (sesionCajaRepository.findByEstadoAndDeletedAtIsNull(EstadoSesion.ABIERTA).isPresent()) {
+        if (sesionCajaRepository.findTopByEstadoAndDeletedAtIsNullOrderByCreatedAtDesc(EstadoSesion.ABIERTA).isPresent()) {
             throw new BadRequestException("Ya existe una sesión de caja abierta. Debe cerrarla antes de abrir una nueva.");
         }
 
@@ -52,9 +53,19 @@ public class CajaService implements CajaApi {
 
     @Override
     public SesionCajaResponse getSesionActiva() {
-        SesionCaja sesion = sesionCajaRepository.findByEstadoAndDeletedAtIsNull(EstadoSesion.ABIERTA)
-            .orElseThrow(() -> new BadRequestException("No hay una sesión de caja abierta"));
-        return toSesionResponse(sesion);
+        return toSesionResponse(obtenerSesionActiva());
+    }
+
+    @Override
+    public UUID getIdSesionActiva() {
+        return obtenerSesionActiva().getId();
+    }
+
+    @Override
+    public Optional<UUID> buscarSesionActiva() {
+        return sesionCajaRepository
+            .findTopByEstadoAndDeletedAtIsNullOrderByCreatedAtDesc(EstadoSesion.ABIERTA)
+            .map(SesionCaja::getId);
     }
 
     @Override
@@ -69,7 +80,7 @@ public class CajaService implements CajaApi {
             .idUsuario(idUsuario)
             .origen("MANUAL")
             .build();
-        return toMovimientoResponse(movimientoCajaRepository.save(movimiento));
+        return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
 
     @Override
@@ -84,7 +95,7 @@ public class CajaService implements CajaApi {
             .idUsuario(idUsuario)
             .origen("MANUAL")
             .build();
-        return toMovimientoResponse(movimientoCajaRepository.save(movimiento));
+        return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
 
     @Override
@@ -99,7 +110,7 @@ public class CajaService implements CajaApi {
             .origen(origen)
             .idReferencia(idReferencia)
             .build();
-        return toMovimientoResponse(movimientoCajaRepository.save(movimiento));
+        return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
 
     @Override
@@ -114,28 +125,55 @@ public class CajaService implements CajaApi {
             .origen(origen)
             .idReferencia(idReferencia)
             .build();
-        return toMovimientoResponse(movimientoCajaRepository.save(movimiento));
+        return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
 
     @Override
     public List<MovimientoCajaResponse> getMovimientos(LocalDateTime desde, LocalDateTime hasta) {
         if (desde == null && hasta == null) {
-            SesionCaja sesion = sesionCajaRepository.findByEstadoAndDeletedAtIsNull(EstadoSesion.ABIERTA)
+            SesionCaja sesion = sesionCajaRepository.findTopByEstadoAndDeletedAtIsNullOrderByCreatedAtDesc(EstadoSesion.ABIERTA)
                 .orElseThrow(() -> new BadRequestException("No hay sesión activa. Especifique un rango de fechas."));
             return movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId())
                 .stream().map(this::toMovimientoResponse).toList();
         }
         if (desde == null) desde = LocalDateTime.of(2000, 1, 1, 0, 0);
         if (hasta == null) hasta = LocalDateTime.now();
-        return movimientoCajaRepository.findByCreatedAtBetweenAndDeletedAtIsNull(desde, hasta)
+        return movimientoCajaRepository.findEnRango(desde, hasta)
             .stream().map(this::toMovimientoResponse).toList();
     }
 
+    /** Estado del turno abierto: es lo que el cajero mira antes de cerrar. */
+    @Override
+    public ResumenCajaResponse getResumenSesion() {
+        SesionCaja sesion = obtenerSesionActiva();
+        return calcularResumen(
+            LocalDate.now(),
+            sesion.getSaldoInicial(),
+            movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId()));
+    }
+
+    /**
+     * Resumen de un día cualquiera, calculado sobre los movimientos de esa fecha.
+     *
+     * <p>No exige que haya una sesión abierta: antes devolvía siempre los datos del turno
+     * activo e ignoraba la fecha pedida, así que era imposible consultar un día ya cerrado.
+     * El saldo inicial es el de las sesiones abiertas ese día.
+     */
     @Override
     public ResumenCajaResponse getResumenDiario(LocalDate fecha) {
-        SesionCaja sesion = obtenerSesionActiva();
+        LocalDateTime desde = fecha.atStartOfDay();
+        LocalDateTime hasta = fecha.plusDays(1).atStartOfDay();
 
-        List<MovimientoCaja> movimientos = movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId());
+        float saldoInicial = (float) sesionCajaRepository
+            .findByFechaAperturaGreaterThanEqualAndFechaAperturaLessThanAndDeletedAtIsNull(desde, hasta)
+            .stream().mapToDouble(SesionCaja::getSaldoInicial).sum();
+
+        return calcularResumen(fecha, saldoInicial,
+            movimientoCajaRepository.findEnRango(desde, hasta));
+    }
+
+    private ResumenCajaResponse calcularResumen(
+            LocalDate fecha, float saldoInicial, List<MovimientoCaja> movimientos) {
         List<MovimientoCaja> ventas = movimientos.stream()
             .filter(m -> "VENTA".equals(m.getOrigen()) && m.getTipo() == TipoMovimientoCaja.ENTRADA)
             .toList();
@@ -154,12 +192,20 @@ public class CajaService implements CajaApi {
         float totalEntradasManuales = (float) entradasManuales.stream().mapToDouble(MovimientoCaja::getMonto).sum();
         float totalSalidasManuales = (float) salidasManuales.stream().mapToDouble(MovimientoCaja::getMonto).sum();
 
-        float saldoEsperado = sesion.getSaldoInicial() + totalVentas - totalCompras
-            + totalEntradasManuales - totalSalidasManuales;
+        // Se calcula sobre todos los movimientos, no sumando las categorías de arriba:
+        // así cualquier origen nuevo (por ejemplo REVERSA) queda contemplado en el arqueo.
+        float totalEntradas = (float) movimientos.stream()
+            .filter(m -> m.getTipo() == TipoMovimientoCaja.ENTRADA)
+            .mapToDouble(MovimientoCaja::getMonto).sum();
+        float totalSalidas = (float) movimientos.stream()
+            .filter(m -> m.getTipo() == TipoMovimientoCaja.SALIDA)
+            .mapToDouble(MovimientoCaja::getMonto).sum();
+
+        float saldoEsperado = saldoInicial + totalEntradas - totalSalidas;
 
         return ResumenCajaResponse.builder()
             .fecha(fecha)
-            .saldoInicial(sesion.getSaldoInicial())
+            .saldoInicial(saldoInicial)
             .totalVentas(totalVentas)
             .cantidadVentas(ventas.size())
             .totalCompras(totalCompras)
@@ -175,7 +221,10 @@ public class CajaService implements CajaApi {
     public CorteResponse realizarCorte(UUID idUsuario, CorteRequest request) {
         SesionCaja sesion = obtenerSesionActiva();
 
-        ResumenCajaResponse resumen = getResumenDiario(LocalDate.now());
+        ResumenCajaResponse resumen = calcularResumen(
+            LocalDate.now(),
+            sesion.getSaldoInicial(),
+            movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId()));
 
         sesion.setSaldoEsperado(resumen.getSaldoEsperado());
         sesion.setSaldoFinal(request.getSaldoReal());
@@ -184,6 +233,15 @@ public class CajaService implements CajaApi {
         sesion.setFechaCierre(LocalDateTime.now());
         sesion.setIdUsuarioCierre(idUsuario);
         sesion.setEstado(EstadoSesion.CERRADA);
+
+        // El desglose se congela con el cierre: el historial lo devuelve tal cual quedó,
+        // sin recalcularlo sobre movimientos que podrían cambiar después.
+        sesion.setTotalVentas(resumen.getTotalVentas());
+        sesion.setCantidadVentas(resumen.getCantidadVentas());
+        sesion.setTotalCompras(resumen.getTotalCompras());
+        sesion.setCantidadCompras(resumen.getCantidadCompras());
+        sesion.setTotalEntradasManuales(resumen.getTotalEntradasManuales());
+        sesion.setTotalSalidasManuales(resumen.getTotalSalidasManuales());
 
         SesionCaja cerrada = sesionCajaRepository.save(sesion);
 
@@ -209,14 +267,17 @@ public class CajaService implements CajaApi {
 
     @Override
     public List<CorteResponse> getHistorialCortes() {
-        return sesionCajaRepository.findAll().stream()
-            .filter(s -> s.getDeletedAt() == null && s.getEstado() == EstadoSesion.CERRADA)
+        return sesionCajaRepository
+            .findByEstadoAndDeletedAtIsNullOrderByFechaCierreDesc(EstadoSesion.CERRADA)
+            .stream()
             .map(s -> toCorteResponse(s, null, s.getSaldoFinal()))
             .toList();
     }
 
+    // findTop en lugar de findBy: si por una carrera quedaran dos sesiones abiertas,
+    // esto degrada tomando la más reciente en vez de romper con NonUniqueResultException.
     private SesionCaja obtenerSesionActiva() {
-        return sesionCajaRepository.findByEstadoAndDeletedAtIsNull(EstadoSesion.ABIERTA)
+        return sesionCajaRepository.findTopByEstadoAndDeletedAtIsNullOrderByCreatedAtDesc(EstadoSesion.ABIERTA)
             .orElseThrow(() -> new BadRequestException("No hay una sesión de caja abierta"));
     }
 
@@ -245,10 +306,19 @@ public class CajaService implements CajaApi {
 
     private CorteResponse toCorteResponse(SesionCaja s, ResumenCajaResponse resumen, Float saldoReal) {
         if (resumen == null) {
+            // Se reconstruye desde lo que guardó el cierre. Los cortes anteriores a esta
+            // versión no lo tienen: van con null, que es "dato desconocido", y no con 0,
+            // que se leería como "no hubo ventas".
             resumen = ResumenCajaResponse.builder()
                 .fecha(s.getFechaCierre() != null ? s.getFechaCierre().toLocalDate() : LocalDate.now())
                 .saldoInicial(s.getSaldoInicial())
                 .saldoEsperado(s.getSaldoEsperado() != null ? s.getSaldoEsperado() : 0)
+                .totalVentas(s.getTotalVentas())
+                .cantidadVentas(s.getCantidadVentas())
+                .totalCompras(s.getTotalCompras())
+                .cantidadCompras(s.getCantidadCompras())
+                .totalEntradasManuales(s.getTotalEntradasManuales())
+                .totalSalidasManuales(s.getTotalSalidasManuales())
                 .build();
         }
         return CorteResponse.builder()

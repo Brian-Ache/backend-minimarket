@@ -43,6 +43,16 @@ public class AuthController {
         return ResponseEntity.ok().build();
     }
 
+    /**
+     * Cierre del alta por invitación. Es público: quien la acepta todavía no tiene contraseña,
+     * su credencial es el token que le llegó por mail.
+     */
+    @PostMapping("/v1/invitacion/aceptar")
+    public ResponseEntity<Void> aceptarInvitacion(@Valid @RequestBody AceptarInvitacionRequest request) {
+        authApi.aceptarInvitacion(request);
+        return ResponseEntity.ok().build();
+    }
+
     @PostMapping("/v1/password-reset")
     public ResponseEntity<Void> requestPasswordReset(@Valid @RequestBody PasswordResetRequest request) {
         authApi.requestPasswordReset(request);

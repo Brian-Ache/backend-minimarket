@@ -4,7 +4,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 
@@ -31,6 +33,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.DetalleVent
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.Venta;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.repository.DetalleVentaRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.repository.VentaRepository;
+import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
@@ -40,6 +43,8 @@ import lombok.AllArgsConstructor;
 @Service
 @AllArgsConstructor
 public class VentaService implements VentasApi {
+
+    private static final String ES_EFECTIVO = "EFECTIVO";
 
     private final VentaRepository ventaRepository;
     private final DetalleVentaRepository detalleVentaRepository;
@@ -61,10 +66,12 @@ public class VentaService implements VentasApi {
             throw new BadRequestException("La venta debe tener al menos un detalle");
         }
 
-        Venta venta = Venta.builder()
+        // Se guarda primero para tener el id: cada movimiento de stock lo referencia y así
+        // la anulación puede revertir exactamente lo que esta venta descontó.
+        Venta venta = ventaRepository.save(Venta.builder()
             .idUsuario(idUsuario)
-            .idSesion(request.getIdSesion())
-            .build();
+            .total(0)
+            .build());
 
         List<DetalleVenta> detalles = new ArrayList<>();
         float total = 0;
@@ -88,6 +95,9 @@ public class VentaService implements VentasApi {
 
                 detalle.setIdProducto(producto.getId());
                 detalle.setNombreProducto(producto.getNombre());
+                // Se congela el costo de hoy: si mañana cambia, la ganancia histórica no se
+                // reescribe. Los ítems MANUAL quedan sin costo (null), no en 0.
+                detalle.setCostoUnitario(producto.getCosto());
 
                 if (producto.isManejaLotes()) {
                     int cantidadRestante = d.getCantidad();
@@ -108,6 +118,7 @@ public class VentaService implements VentasApi {
                             .tipo(TipoMovimiento.VENTA)
                             .motivo("Venta realizada (FIFO)")
                             .idUsuario(idUsuario)
+                            .idReferencia(venta.getId())
                             .build();
                         movimientoStockRepository.save(m);
                     }
@@ -121,6 +132,7 @@ public class VentaService implements VentasApi {
                         .tipo("VENTA")
                         .motivo("Venta realizada")
                         .idUsuario(idUsuario)
+                        .idReferencia(venta.getId())
                         .build());
                 }
 
@@ -151,7 +163,7 @@ public class VentaService implements VentasApi {
         }
 
         venta.setTotal(total);
-        venta = ventaRepository.save(venta);
+        venta = ventaRepository.saveAndFlush(venta);
 
         for (DetalleVenta d : detalles) {
             d.setIdVenta(venta.getId());
@@ -173,49 +185,102 @@ public class VentaService implements VentasApi {
 
     @Override
     public List<VentaResponse> getAll() {
-        return ventaRepository.findAll().stream()
-            .filter(v -> v.getDeletedAt() == null)
-            .map(v -> {
-                List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(v.getId());
-                return toVentaResponse(v, toDetalleVentaResponseList(detalles));
-            })
-            .toList();
+        return toVentaResponseList(
+            ventaRepository.findAll().stream().filter(v -> v.getDeletedAt() == null).toList());
     }
 
     @Override
     public List<VentaResponse> getByUsuario(UUID idUsuario) {
-        return ventaRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario).stream()
-            .map(v -> {
-                List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(v.getId());
-                return toVentaResponse(v, toDetalleVentaResponseList(detalles));
-            })
-            .toList();
+        return toVentaResponseList(ventaRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario));
+    }
+
+    @Override
+    public List<VentaResponse> getByFechaCobradas(LocalDateTime desde, LocalDateTime hasta) {
+        return toVentaResponseList(ventaRepository.findCobradasEnRango(desde, hasta));
     }
 
     @Override
     public List<VentaResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta) {
-        return ventaRepository.findByCreatedAtBetweenAndDeletedAtIsNull(desde, hasta).stream()
-            .map(v -> {
-                List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(v.getId());
-                return toVentaResponse(v, toDetalleVentaResponseList(detalles));
-            })
-            .toList();
+        return toVentaResponseList(ventaRepository.findEnRango(desde, hasta));
     }
 
+    /**
+     * Anula una venta no cobrada y devuelve la mercadería al stock.
+     *
+     * <p>Una venta ya cobrada no se anula: movió plata y puede estar dentro de un corte
+     * cerrado. Para eso corresponde un flujo de devolución, que hoy no existe.
+     */
     @Override
     @Transactional
     public void delete(UUID id) {
         Venta venta = ventaRepository.findByIdAndDeletedAtIsNull(id)
             .orElseThrow(() -> new ResourceNotFoundException("Venta no encontrada"));
 
-        venta.setDeletedAt(LocalDateTime.now());
+        if (Boolean.TRUE.equals(venta.getCobrada())) {
+            throw new BadRequestException(
+                "No se puede anular una venta ya cobrada. Registrá una devolución.");
+        }
+
+        UUID idUsuario = SecurityUtils.getCurrentUserId();
+        LocalDateTime ahora = LocalDateTime.now();
+
+        revertirStock(venta, idUsuario);
+
+        venta.setDeletedAt(ahora);
         ventaRepository.save(venta);
 
         List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(id);
         for (DetalleVenta d : detalles) {
-            d.setDeletedAt(LocalDateTime.now());
+            d.setDeletedAt(ahora);
         }
         detalleVentaRepository.saveAll(detalles);
+    }
+
+    /**
+     * Devuelve al stock lo que descontó la venta, apoyándose en los movimientos que la
+     * referencian. Trabajar sobre los movimientos —y no sobre los detalles— es lo que permite
+     * reponer cada lote exactamente en la cantidad de la que se sacó cuando el FIFO repartió
+     * una línea entre varios lotes.
+     *
+     * <p>Los movimientos originales no se borran: la reversa se registra como un movimiento
+     * nuevo, para no perder la trazabilidad de lo que pasó.
+     */
+    private void revertirStock(Venta venta, UUID idUsuario) {
+        List<MovimientoStock> movimientos =
+            movimientoStockRepository.findByIdReferenciaAndTipoAndDeletedAtIsNull(
+                venta.getId(), TipoMovimiento.VENTA);
+
+        for (MovimientoStock m : movimientos) {
+            int aReponer = Math.abs(m.getCantidad());
+            if (aReponer == 0) continue;
+
+            if (m.getIdLote() != null) {
+                Lote lote = loteRepository.findById(m.getIdLote())
+                    .orElseThrow(() -> new BadRequestException(
+                        "No se puede revertir la venta: falta el lote " + m.getIdLote()));
+                lote.setCantidad(lote.getCantidad() + aReponer);
+                loteRepository.save(lote);
+
+                movimientoStockRepository.save(MovimientoStock.builder()
+                    .idProducto(m.getIdProducto())
+                    .idLote(lote.getId())
+                    .cantidad(aReponer)
+                    .tipo(TipoMovimiento.AJUSTE)
+                    .motivo("Reversa por anulación de venta " + venta.getId())
+                    .idUsuario(idUsuario)
+                    .idReferencia(venta.getId())
+                    .build());
+            } else {
+                inventarioApi.aumentar(MovimientoStockRequest.builder()
+                    .idProducto(m.getIdProducto())
+                    .cantidad(aReponer)
+                    .tipo("AJUSTE")
+                    .motivo("Reversa por anulación de venta " + venta.getId())
+                    .idUsuario(idUsuario)
+                    .idReferencia(venta.getId())
+                    .build());
+            }
+        }
     }
 
     @Override
@@ -224,23 +289,38 @@ public class VentaService implements VentasApi {
         Venta venta = ventaRepository.findByIdAndCobradaFalseAndDeletedAtIsNull(idVenta)
             .orElseThrow(() -> new BadRequestException("Venta no encontrada o ya está cobrada"));
 
+        String metodoPago = normalizarMetodoPago(request.getMetodoPago());
+
         if (request.getMontoRecibido() < venta.getTotal()) {
             throw new BadRequestException("El monto recibido es menor al total de la venta");
         }
 
-        float cambio = request.getMontoRecibido() - venta.getTotal();
+        // Solo hay vuelto si se paga en efectivo.
+        float cambio = ES_EFECTIVO.equals(metodoPago)
+            ? request.getMontoRecibido() - venta.getTotal()
+            : 0;
 
         venta.setCobrada(true);
         venta.setFechaCobro(LocalDateTime.now());
-        venta.setMetodoPago(request.getMetodoPago());
+        venta.setMetodoPago(metodoPago);
         venta.setMontoRecibido(request.getMontoRecibido());
 
-        venta = ventaRepository.save(venta);
-
-        if (venta.getIdSesion() != null) {
+        // Solo el efectivo entra a la caja: la tarjeta y la transferencia quedan registradas
+        // en la venta (metodo_pago) pero no forman parte del arqueo, que cuenta billetes.
+        // La sesión se resuelve acá, al cobrar, y nunca se acepta del cliente: así no se
+        // puede imputar plata a un turno que ya cerró su corte.
+        if (ES_EFECTIVO.equals(metodoPago)) {
+            UUID idSesion = cajaApi.getIdSesionActiva();
+            venta.setIdSesion(idSesion);
             cajaApi.registrarEntradaAutomatica(
-                venta.getIdSesion(), idUsuario, venta.getTotal(), "VENTA", venta.getId());
+                idSesion, idUsuario, venta.getTotal(), "VENTA", venta.getId());
+        } else {
+            // La venta con tarjeta o transferencia igual pertenece al turno: se la asocia
+            // para poder reportarla en el cierre, pero sin generar movimiento de caja.
+            cajaApi.buscarSesionActiva().ifPresent(venta::setIdSesion);
         }
+
+        venta = ventaRepository.saveAndFlush(venta);
 
         List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(venta.getId());
         VentaResponse ventaResponse = toVentaResponse(venta, toDetalleVentaResponseList(detalles));
@@ -251,13 +331,22 @@ public class VentaService implements VentasApi {
             .build();
     }
 
+    /** Resumen de lo cobrado en el día, por fecha de cobro (no de creación de la venta). */
     @Override
     public ResumenDiarioResponse getResumenDiario(LocalDate fecha) {
-        LocalDateTime desde = fecha.atStartOfDay();
-        LocalDateTime hasta = fecha.plusDays(1).atStartOfDay();
+        List<Venta> ventas = ventaRepository.findCobradasEnRango(
+            fecha.atStartOfDay(), fecha.plusDays(1).atStartOfDay());
+        return toResumen(fecha, ventas);
+    }
 
-        List<Venta> ventas = ventaRepository.findByCreatedAtBetweenAndCobradaTrueAndDeletedAtIsNull(desde, hasta);
+    /** Mismo desglose, acotado a un turno de caja: es lo que se mira al cerrar. */
+    @Override
+    public ResumenDiarioResponse getResumenPorSesion(UUID idSesion) {
+        return toResumen(LocalDate.now(),
+            ventaRepository.findByIdSesionAndCobradaTrueAndDeletedAtIsNull(idSesion));
+    }
 
+    private ResumenDiarioResponse toResumen(LocalDate fecha, List<Venta> ventas) {
         int cantidadVentas = ventas.size();
         float totalVentas = 0;
         float totalEfectivo = 0;
@@ -287,6 +376,35 @@ public class VentaService implements VentasApi {
 
     // Helpers
 
+    /**
+     * Arma las respuestas de varias ventas con <b>dos</b> consultas en total, en vez de una por
+     * venta: trae todos los detalles juntos y los agrupa en memoria.
+     */
+    private List<VentaResponse> toVentaResponseList(List<Venta> ventas) {
+        if (ventas.isEmpty()) {
+            return List.of();
+        }
+
+        Map<UUID, List<DetalleVenta>> porVenta = detalleVentaRepository
+            .findByIdVentaInAndDeletedAtIsNull(ventas.stream().map(Venta::getId).toList())
+            .stream()
+            .collect(Collectors.groupingBy(DetalleVenta::getIdVenta));
+
+        return ventas.stream()
+            .map(v -> toVentaResponse(v,
+                toDetalleVentaResponseList(porVenta.getOrDefault(v.getId(), List.of()))))
+            .toList();
+    }
+
+    private String normalizarMetodoPago(String metodoPago) {
+        String m = metodoPago == null ? "" : metodoPago.trim().toUpperCase();
+        if (!List.of("EFECTIVO", "TARJETA", "TRANSFERENCIA").contains(m)) {
+            throw new BadRequestException(
+                "Método de pago inválido: " + metodoPago + ". Válidos: EFECTIVO, TARJETA, TRANSFERENCIA");
+        }
+        return m;
+    }
+
     private VentaResponse toVentaResponse(Venta venta, List<DetalleVentaResponse> detalles) {
         VentaResponse response = new VentaResponse();
         response.setId(venta.getId());
@@ -314,6 +432,7 @@ public class VentaService implements VentasApi {
         response.setCantidad(detalle.getCantidad());
         response.setPrecioUnitario(detalle.getPrecioUnitario());
         response.setSubtotal(detalle.getPrecioUnitario() * detalle.getCantidad());
+        response.setCostoUnitario(detalle.getCostoUnitario());
 
         return response;
     }

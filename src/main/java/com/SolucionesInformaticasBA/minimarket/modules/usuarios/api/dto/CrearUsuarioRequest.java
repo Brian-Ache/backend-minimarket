@@ -4,6 +4,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -23,8 +24,13 @@ public class CrearUsuarioRequest {
     @Size(max = 100)
     private String email;
 
+    /**
+     * Sin arroba: como el login acepta email o username, permitir un username con forma de
+     * email crearía cuentas imposibles de distinguir al iniciar sesión.
+     */
     @NotBlank
     @Size(min = 1, max = 50)
+    @Pattern(regexp = "[^@]+", message = "El nombre de usuario no puede contener @")
     private String username;
 
     @NotBlank

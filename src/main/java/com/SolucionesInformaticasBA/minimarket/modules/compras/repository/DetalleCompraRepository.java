@@ -13,6 +13,9 @@ public interface DetalleCompraRepository extends JpaRepository<DetalleCompra, UU
 
     List<DetalleCompra> findByIdProductoAndDeletedAtIsNull(UUID idProducto);
 
+    // Detalles de varias compras en una sola consulta: evita un query por compra al listar.
+    List<DetalleCompra> findByIdCompraInAndDeletedAtIsNull(List<UUID> idsCompra);
+
     List<DetalleCompra> findByIdAndDeletedAtIsNull(UUID id);
 
     List<DetalleCompra> findByNombreProductoAndDeletedAtIsNull(String nombreProducto);

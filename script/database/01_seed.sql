@@ -1,25 +1,43 @@
 -- =====================================================================
 -- backend-minimarket — Datos iniciales (opcional, para desarrollo)
 -- =====================================================================
--- Requiere haber ejecutado 00_init.sql.
+-- Requiere haber ejecutado 00_init.sql o 00_init_limpio.sql.
 -- Uso:  mysql -u root -p < 01_seed.sql
 -- =====================================================================
 
 USE minimarket;
 
 -- ---------------------------------------------------------------------
+-- Superadministrador — llave maestra del sistema
+-- email:    superadmin@minimarket.local
+-- password: Super123!
+--
+-- Es el único camino para tener un SUPERADMIN: no hay endpoint que lo cree, porque ningún rol
+-- manda sobre su propio nivel. **Cambiar esta contraseña antes de exponer el sistema.**
+-- ---------------------------------------------------------------------
+SET @id_superadmin = UUID_TO_BIN('11111111-1111-4111-8111-111111111100', 0);
+
+INSERT INTO usuarios (id, nombre, apellido, username, email, hash_password, rol, estado, created_at, updated_at)
+VALUES (
+    @id_superadmin, 'Super', 'Admin', 'superadmin', 'superadmin@minimarket.local',
+    '$2a$10$th8pTK4hJAP0kr9Dzh/Jh.RyVhLMd4SkmREGeImqB3F/lYOuEw6ky',
+    'SUPERADMIN', 'ACTIVO', NOW(6), NOW(6)
+)
+ON DUPLICATE KEY UPDATE updated_at = NOW(6);
+
+-- ---------------------------------------------------------------------
 -- Usuario administrador
 -- email:    admin@minimarket.local
 -- password: Admin123!
--- enabled = 1 porque el login exige la cuenta verificada.
+-- estado = ACTIVO porque el login exige una cuenta con acceso.
 -- ---------------------------------------------------------------------
 SET @id_admin = UUID_TO_BIN('11111111-1111-4111-8111-111111111111', 0);
 
-INSERT INTO usuarios (id, nombre, apellido, username, email, hash_password, rol, enabled, created_at, updated_at)
+INSERT INTO usuarios (id, nombre, apellido, username, email, hash_password, rol, estado, created_at, updated_at)
 VALUES (
     @id_admin, 'Admin', 'Principal', 'admin', 'admin@minimarket.local',
     '$2a$10$VJX/uuHg2XAXjoSo7yg9qeSaYnJBh3lwZeIWOhltr8RIBVmPPqRaK',
-    'ADMIN', b'1', NOW(6), NOW(6)
+    'ADMIN', 'ACTIVO', NOW(6), NOW(6)
 )
 ON DUPLICATE KEY UPDATE updated_at = NOW(6);
 
