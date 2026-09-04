@@ -39,6 +39,16 @@ inventario.
   *Seguridad*.
 - **`POST /api/inventario/v1/controlar` y `DELETE /api/inventario/v1/stock/{idProducto}` pasaron
   a ser solo de ADMIN.** Un `EMPLEADO` que los use recibe `403`.
+- **Una compra con productos que manejan lotes exige la fecha de vencimiento de cada línea.**
+  El alta del lote pasó a hacerse por el módulo de inventario, que ya la exigía; la compra lo
+  creaba a mano y se salteaba esa validación, así que podía dejar lotes en `SIN_FECHA`, invisibles
+  para el control de vencimientos.
+- **Un proveedor no puede repetir número de comprobante.** Cargar dos veces el mismo remito
+  duplicaba el ingreso de stock y la salida de caja sin dejar señal. La regla es por proveedor:
+  dos proveedores distintos pueden emitir el mismo número. Ver *Base de datos*.
+- **`DELETE /api/compras/v1/{id}` ya no lleva el header `idUsuario`.** Era el último endpoint que
+  lo exigía, contra lo que la documentación viene diciendo desde hace dos versiones. Si el front
+  lo sigue mandando, se ignora; si antes lo omitía, dejaba de responder `500`.
 
 ### Agregado
 
@@ -172,6 +182,22 @@ inventario.
   descartar en memoria; ahora cada estado es un rango de fechas resuelto en una consulta.
 - **La fila de stock se podía borrar con existencias**, que era además la forma de saltearse la
   validación equivalente de la baja de producto.
+- **El listado de compras contaba de más en el borde del rango.** El filtro por fechas era
+  inclusivo en `hasta`, pero el reporte de ganancias le pasa el día siguiente a medianoche
+  esperando un rango semiabierto —que es como está escrito el otro query del mismo repositorio y
+  como funciona ventas—. Una compra registrada exactamente a las `00:00:00.000000` del día
+  siguiente entraba en el reporte del día anterior.
+- **`tipoComprobante` se guardaba tal cual venía y el filtro comparaba por igualdad exacta**, así
+  que `"factura"`, `"Factura"` y `"FACTURA "` eran tres tipos distintos: una compra cargada con
+  uno no aparecía al filtrar por otro. Ahora se recorta y se guarda en mayúsculas, y la búsqueda
+  usa el mismo criterio.
+- **Anular una compra cuya mercadería ya se vendió explicaba mal el problema** cuando el producto
+  no manejaba lotes: salía "Stock insuficiente. Disponible: 3, solicitado: 10", correcto pero
+  desorientador. Ahora dice que ya se vendió parte de lo que ingresó esa compra y nombra el
+  producto, igual que la rama de lotes.
+- **La paginación de compras repetía y salteaba filas**, y un `page` o un `size` fuera de rango
+  salían `500`. Ordenaba solo por fecha o solo por importe, sin desempate: las compras cargadas
+  en el mismo lote comparten `createdAt` y por importe la colisión es todavía más probable.
 
 ### Seguridad
 
@@ -180,6 +206,11 @@ inventario.
   stock —las dos operaciones que pueden tapar un faltante sin dejar rastro operativo— pasaron a
   ADMIN, junto con el resto de lo sensible. Aumentar y disminuir siguen abiertos: son el
   movimiento normal del día.
+- **Quien anulaba una compra elegía con qué identidad quedaba registrado.** El `idUsuario` de
+  `DELETE /api/compras/v1/{id}` salía de un header que mandaba el cliente, así que se podía
+  firmar la reversa de stock y la entrada de caja con el id de otro usuario: justo las dos
+  tablas con las que después se audita quién tocó qué. Ahora sale del JWT, como en la anulación
+  de ventas y como el resto del sistema.
 - **Un movimiento cargado a mano podía hacerse pasar por el de una venta.** El endpoint aceptaba
   `tipo` e `idReferencia` del cliente, y son justo los dos campos que lee la reversa de una
   anulación para saber qué reponer. Ahora el tipo se limita a `AJUSTE` o `MERMA`, la referencia
@@ -215,9 +246,13 @@ inventario.
   filtrando por `deleted_at`: daba el nombre por libre y el `INSERT` chocaba con un `409`
   inentendible, sin forma de recrear la categoría nunca más. Se reemplaza por el mismo patrón de
   columna generada.
-- Las dos migraciones abren con una consulta informativa de los datos que podrían frenar el
+- **`07_unicidad_comprobante_por_proveedor.sql` — un proveedor no repite comprobante.** Índice
+  único sobre `(id_proveedor, nro_comprobante)` entre las compras activas, con el mismo patrón de
+  columna generada. Quedan fuera, a propósito, las compras sin proveedor, las que no traen número
+  y las anuladas: anular libera el número para volver a cargar la compra bien.
+- Las tres migraciones abren con una consulta informativa de los datos que podrían frenar el
   `ALTER`. Aplicar en orden y con la aplicación detenida. `00_init.sql` y `00_init_limpio.sql` ya
-  traen ambos índices: una instalación nueva no necesita las migraciones.
+  traen los tres índices: una instalación nueva no necesita las migraciones.
 
 ## 0.3.0 (2026-08-21)
 
