@@ -2,7 +2,9 @@
 
 ## Sin publicar
 
-Cierre del alta por invitación y limpieza de los límites entre los módulos `auth` y `usuarios`.
+Cierre del alta por invitación y limpieza de los límites entre los módulos `auth` y `usuarios`,
+más la auditoría de los módulos de catálogo —productos, categorías y proveedores— y de
+inventario.
 
 ### Cambios que rompen compatibilidad
 
@@ -18,6 +20,25 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
   quedado sin emisor cuando se sacó el autorregistro: nadie llamaba a
   `generateVerificationToken`, así que el endpoint validaba tokens que el sistema nunca creaba.
   Si el front todavía lo invoca, ahora recibe `404`.
+- **`PUT /api/productos/v1/{id}` pasa a ser un reemplazo total.** Los campos opcionales que se
+  omitan o vengan en `null` ahora **se borran**. Antes se salteaban, y eso hacía imposible
+  desasignar la categoría, el proveedor, el costo o el margen: el pedido se aceptaba con `200` y
+  el valor viejo quedaba intacto. Un formulario que hoy manda solo lo que cambió tiene que pasar
+  a mandar la representación completa.
+- **`DELETE /api/productos/v1/{id}` y `DELETE /api/categorias/v1/{id}` pueden responder `400`.**
+  El producto se rechaza si todavía tiene existencias —stock o lotes con unidades— y la
+  categoría si tiene productos asignados. Antes las dos bajas se llevaban puesto ese dato en
+  silencio.
+- **`GET /api/proveedores/v1` cambió de forma.** Acepta `?incluirBajas=` y `ProveedorResponse`
+  trae `deletedAt`. Sin el parámetro devuelve solo los proveedores en pie, igual que antes.
+- **`GET /api/inventario/v1/movimientos/{idProducto}` devuelve un `Page`.** Era una lista sin
+  techo sobre la única tabla del módulo que crece con cada venta y cada compra. Acepta
+  `?page=` y `?size=` (1 a 100) y ordena del movimiento más reciente al más viejo.
+- **`PUT /api/inventario/v1/stock/aumentar` y `/disminuir` solo aceptan `tipo` `AJUSTE` o
+  `MERMA`.** `COMPRA` y `VENTA` los escribe el sistema al registrar el comprobante. Ver
+  *Seguridad*.
+- **`POST /api/inventario/v1/controlar` y `DELETE /api/inventario/v1/stock/{idProducto}` pasaron
+  a ser solo de ADMIN.** Un `EMPLEADO` que los use recibe `403`.
 
 ### Agregado
 
@@ -48,6 +69,17 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
 - **Documentación OpenAPI del módulo `auth`**: los siete endpoints de `/api/auth` salen en
   `/swagger-ui.html` con resumen, descripción y los códigos de error que devuelve cada uno. El
   resto de los controllers sigue con la documentación autogenerada, sin anotar.
+- **`POST /api/proveedores/v1/{id}/restaurar` — reactivación de un proveedor dado de baja.**
+  Vuelve sobre la fila original, no sobre un alta nueva: las compras la referencian por id, así
+  que un proveedor nuevo con los mismos datos partiría el historial en dos. Los dados de baja se
+  listan con `GET /api/proveedores/v1?incluirBajas=true`. Se rechaza si el proveedor está en pie
+  o si mientras tanto se dio de alta otro activo con el mismo nombre.
+- **`409` para los cruces de concurrencia sobre el inventario.** Espera de lock agotada o
+  deadlock resuelto por la base dejan de salir como `500`: el pedido estaba bien y se puede
+  reintentar tal cual.
+- **El historial de movimientos de stock expone `idLote`, `idReferencia` e `idUsuario`.** Sin
+  esos tres no alcanzaba para auditar: no se podía saber de qué lote salió cada unidad, qué
+  comprobante lo originó ni quién lo cargó.
 
 ### Cambiado
 
@@ -64,6 +96,26 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
 - **El login responde con un único mensaje de error.** Antes distinguía "credenciales inválidas
   o cuenta sin acceso" de "credenciales inválidas"; esa diferencia dejaba deducir qué cuentas
   existen y en qué estado están.
+- **El inventario se escribe con la fila bloqueada.** Aumentar, disminuir, el ajuste manual, el
+  descuento FIFO de una venta y las reversas de anulación leen la fila de stock o de lote con
+  `SELECT ... FOR UPDATE`. Antes leían y reescribían sin bloqueo: dos ventas simultáneas del
+  mismo producto partían de la misma cantidad y una pisaba a la otra, con lo que se vendía de
+  más y el faltante no quedaba registrado en ningún lado. Los locks se toman siempre en el mismo
+  orden —productos por id ascendente y, dentro de cada uno, sus lotes por vencimiento—, así que
+  dos operaciones no pueden trabarse cruzadas. El detalle de una venta o una compra se sigue
+  guardando y devolviendo en el orden en que se cargó.
+- **Dar de baja un producto limpia su stock y sus lotes.** Quedaban activos y seguían sumando en
+  los reportes de existencias, que leen esas tablas sin pasar por el catálogo.
+- **Dar de baja un proveedor ya no lo borra del historial.** Deja de poder usarse en compras
+  nuevas y de asignarse a un producto, pero las compras ya registradas y los productos que lo
+  tenían lo siguen mostrando, con `deletedAt` cargado. Antes el historial pasaba a mostrar
+  `proveedor: null`, o sea que una baja borraba a quién se le había comprado.
+- **El nombre de una categoría dada de baja vuelve a estar disponible.** Ver *Base de datos*.
+- **El ajuste manual de stock crea la fila si falta y rechaza los productos con lotes.** Un
+  producto sin fila de stock es stock 0 y no un error, igual que en la lectura; antes el
+  operador veía 0 y el ajuste sobre ese mismo producto respondía `404`. Y ajustar por stock un
+  producto que lleva lotes escribía una fila que el cálculo de existencias después ignora: el
+  ajuste quedaba registrado y no cambiaba nada de lo que ve el usuario.
 
 ### Eliminado
 
@@ -104,6 +156,45 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
 - **Swagger no levantaba.** `springdoc-openapi` estaba en `2.5.0`, de la serie que acompaña a
   Spring Boot 3.2, contra el `3.5.13` del proyecto: el arranque cortaba con `NoSuchMethodError`
   en `ControllerAdviceBean`. Actualizado a `2.8.9`.
+- **Un producto dado de baja seguía siendo editable.** El `update` lo buscaba sin mirar
+  `deleted_at`: respondía `200` y hasta dejaba moverle el código de barras encima del de un
+  producto activo. Ahora es `404`.
+- **Varios errores del cliente salían como `500`.** Un `page` negativo o un `size` fuera de rango
+  reventaban dentro de `PageRequest.of`; el alta de producto con un usuario inexistente lanzaba
+  un `RuntimeException` pelado; y la validación de los parámetros de consulta no tenía handler,
+  así que caía en el catch-all. Todos responden `400` con su mensaje.
+- **La paginación del catálogo repetía y salteaba filas.** Ordenaba solo por `updatedAt`, que se
+  mueve solo porque cada compra reescribe el costo y el precio del producto, y que no desempata
+  entre productos cargados juntos. Se agregó el `id` como segundo criterio.
+- **Un producto sin nombre tiraba abajo los cinco endpoints de lotes.** El mapa de nombres se
+  armaba con `Collectors.toMap`, que no admite valores nulos, y la columna sí los admite.
+- **El listado de lotes por estado barría todo.** Traía el catálogo entero y todos los lotes para
+  descartar en memoria; ahora cada estado es un rango de fechas resuelto en una consulta.
+- **La fila de stock se podía borrar con existencias**, que era además la forma de saltearse la
+  validación equivalente de la baja de producto.
+
+### Seguridad
+
+- **El módulo de inventario estaba entero abierto a cualquier usuario autenticado.** No tenía
+  ninguna regla propia en `SecurityConfig`. El ajuste manual de stock y la baja de la fila de
+  stock —las dos operaciones que pueden tapar un faltante sin dejar rastro operativo— pasaron a
+  ADMIN, junto con el resto de lo sensible. Aumentar y disminuir siguen abiertos: son el
+  movimiento normal del día.
+- **Un movimiento cargado a mano podía hacerse pasar por el de una venta.** El endpoint aceptaba
+  `tipo` e `idReferencia` del cliente, y son justo los dos campos que lee la reversa de una
+  anulación para saber qué reponer. Ahora el tipo se limita a `AJUSTE` o `MERMA`, la referencia
+  del body se descarta y el usuario sale siempre del JWT.
+
+### Rendimiento
+
+- **El catálogo resolvía la categoría y el proveedor de cada producto fila por fila.** Una página
+  de 20 eran 41 consultas, y el reporte de inventario —que pide el catálogo entero— más de 200,
+  lo que anulaba el trabajo de las consultas agregadas de existencias. Ahora se resuelve una vez
+  por id distinto.
+- **Los listados de categorías y proveedores traían la tabla entera y filtraban en memoria**,
+  incluidas las filas dadas de baja, ignorando el índice de `deleted_at`.
+- **El tamaño de página del catálogo tiene techo** (100). Sin límite, un solo pedido podía exigir
+  un trabajo arbitrariamente grande.
 
 ### Base de datos
 
@@ -113,6 +204,20 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
   arranca antes de la migración, cualquier consulta que toque una de esas filas revienta.
 - `00_init_limpio.sql` ya crea `token_type` como `ENUM('PASSWORD_RESET','INVITATION')`: una
   instalación nueva no necesita la migración.
+- **`05_unicidad_barcode.sql` — unicidad de `barcode` entre los productos activos.** El chequeo
+  vivía solo en el servicio, entre un `SELECT` y un `INSERT`: dos altas simultáneas con el mismo
+  código pasaban las dos, y desde ahí la consulta por código devolvía más de un resultado y
+  respondía `500` de forma permanente. El índice va sobre una columna generada que vale el código
+  mientras la fila está activa y `NULL` cuando está borrada, así que los productos dados de baja
+  no reservan el código.
+- **`06_nombre_categoria_reutilizable.sql` — el nombre de una categoría borrada se libera.**
+  `uk_categorias_nombre` abarcaba también las filas borradas, mientras que el servicio validaba
+  filtrando por `deleted_at`: daba el nombre por libre y el `INSERT` chocaba con un `409`
+  inentendible, sin forma de recrear la categoría nunca más. Se reemplaza por el mismo patrón de
+  columna generada.
+- Las dos migraciones abren con una consulta informativa de los datos que podrían frenar el
+  `ALTER`. Aplicar en orden y con la aplicación detenida. `00_init.sql` y `00_init_limpio.sql` ya
+  traen ambos índices: una instalación nueva no necesita las migraciones.
 
 ## 0.3.0 (2026-08-21)
 
