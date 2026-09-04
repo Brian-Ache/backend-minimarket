@@ -43,9 +43,11 @@ inventario.
   El alta del lote pasó a hacerse por el módulo de inventario, que ya la exigía; la compra lo
   creaba a mano y se salteaba esa validación, así que podía dejar lotes en `SIN_FECHA`, invisibles
   para el control de vencimientos.
-- **Un proveedor no puede repetir número de comprobante.** Cargar dos veces el mismo remito
-  duplicaba el ingreso de stock y la salida de caja sin dejar señal. La regla es por proveedor:
-  dos proveedores distintos pueden emitir el mismo número. Ver *Base de datos*.
+- **Un proveedor no puede repetir número dentro del mismo tipo de comprobante.** Cargar dos
+  veces el mismo remito duplicaba el ingreso de stock y la salida de caja sin dejar señal. La
+  regla es por proveedor y por tipo: dos proveedores distintos pueden emitir el mismo número, y
+  un mismo proveedor puede tener un remito y una factura con el mismo número porque cada tipo
+  lleva su propia numeración. Ver *Base de datos*.
 - **`DELETE /api/compras/v1/{id}` ya no lleva el header `idUsuario`.** Era el último endpoint que
   lo exigía, contra lo que la documentación viene diciendo desde hace dos versiones. Si el front
   lo sigue mandando, se ignora; si antes lo omitía, dejaba de responder `500`.
@@ -247,9 +249,11 @@ inventario.
   inentendible, sin forma de recrear la categoría nunca más. Se reemplaza por el mismo patrón de
   columna generada.
 - **`07_unicidad_comprobante_por_proveedor.sql` — un proveedor no repite comprobante.** Índice
-  único sobre `(id_proveedor, nro_comprobante)` entre las compras activas, con el mismo patrón de
-  columna generada. Quedan fuera, a propósito, las compras sin proveedor, las que no traen número
-  y las anuladas: anular libera el número para volver a cargar la compra bien.
+  único sobre `(id_proveedor, tipo_comprobante, nro_comprobante)` entre las compras activas, con
+  el mismo patrón de columna generada. Quedan fuera, a propósito, las compras sin proveedor, las
+  que no traen número y las anuladas: anular libera el número para volver a cargar la compra
+  bien. El tipo sin cargar cuenta como un valor más, así que no abre un agujero por el que se
+  cuelen duplicados.
 - Las tres migraciones abren con una consulta informativa de los datos que podrían frenar el
   `ALTER`. Aplicar en orden y con la aplicación detenida. `00_init.sql` y `00_init_limpio.sql` ya
   traen los tres índices: una instalación nueva no necesita las migraciones.

@@ -941,7 +941,7 @@ abierta (falla con `400` si no hay ninguna). Reemplaza al `idSesion` que antes m
   ],
   "idProveedor": "UUID (opcional)",
   "tipoComprobante": "REMITO | FACTURA (opcional, se guarda en mayúsculas)",
-  "nroComprobante": "string (opcional, único por proveedor)",
+  "nroComprobante": "string (opcional, único por proveedor y tipo)",
   "observaciones": "string (opcional)",
   "pagoEnEfectivo": "boolean (default false)"
 }
@@ -969,13 +969,14 @@ mismo criterio: cargar `"factura"` y filtrar por `"FACTURA"` encuentra la compra
 ```
 
 **Errores `400`:** el proveedor no existe o está dado de baja · algún producto no existe · **ese
-proveedor ya tiene una compra con ese número de comprobante** · falta la fecha de vencimiento en
+proveedor ya tiene una compra con ese número dentro del mismo tipo de comprobante** · falta la fecha de vencimiento en
 una línea de un producto que maneja lotes · no hay turno de caja abierto y se marcó
 `pagoEnEfectivo`
 
-> El número de comprobante es único **por proveedor**: dos proveedores distintos pueden emitir
-> el mismo número y son comprobantes distintos. Las compras sin proveedor o sin número quedan
-> fuera de la regla, y anular una compra libera su número para volver a cargarla.
+> El número de comprobante es único **por proveedor y por tipo**: dos proveedores distintos
+> pueden emitir el mismo número, y un mismo proveedor puede tener un remito y una factura con el
+> mismo número, porque cada tipo lleva su propia numeración. Las compras sin proveedor o sin
+> número quedan fuera de la regla, y anular una compra libera su número para volver a cargarla.
 
 ---
 

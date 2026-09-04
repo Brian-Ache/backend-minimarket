@@ -364,14 +364,19 @@ CREATE TABLE IF NOT EXISTS compras (
     created_at          DATETIME(6)  NOT NULL,
     updated_at          DATETIME(6)  NOT NULL,
     deleted_at          DATETIME(6)  NULL,
-    -- Un proveedor no puede repetir numero de comprobante, pero dos proveedores
-    -- distintos si pueden: son comprobantes distintos que coinciden. Las compras
-    -- anuladas, las que no tienen proveedor y las que no traen numero quedan
-    -- fuera, porque los NULL no chocan entre si en un indice unico.
-    nro_comprobante_activo VARCHAR(50)
-        GENERATED ALWAYS AS (IF(deleted_at IS NULL, nro_comprobante, NULL)) VIRTUAL,
+    -- Un proveedor no repite numero dentro del mismo tipo de comprobante: su
+    -- factura 0001-00001234 y su remito 0001-00001234 son dos documentos, y dos
+    -- proveedores distintos pueden coincidir sin problema. CONCAT devuelve NULL
+    -- si falta el numero y el IF deja fuera a las anuladas; como los NULL no
+    -- chocan entre si en un indice unico, las dos exenciones salen solas.
+    comprobante_activo VARCHAR(72)
+        GENERATED ALWAYS AS (
+            IF(deleted_at IS NULL,
+               CONCAT(IFNULL(tipo_comprobante, ''), '|', nro_comprobante),
+               NULL)
+        ) VIRTUAL,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_compras_proveedor_comprobante (id_proveedor, nro_comprobante_activo),
+    UNIQUE KEY uk_compras_proveedor_comprobante (id_proveedor, comprobante_activo),
     KEY ix_compras_fecha (created_at, deleted_at),
     KEY ix_compras_usuario (id_usuario, deleted_at),
     KEY ix_compras_proveedor (id_proveedor, deleted_at),

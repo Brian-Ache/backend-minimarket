@@ -112,22 +112,40 @@ class CompraServiceAltaTest {
     }
 
     @Test
-    @DisplayName("el mismo proveedor no puede repetir número de comprobante")
+    @DisplayName("el mismo proveedor no puede repetir número dentro del mismo tipo")
     void comprobanteRepetidoDelMismoProveedorEsBadRequest() {
         when(usuarioApi.existById(ID_USUARIO)).thenReturn(true);
         when(proveedoresApi.existsById(ID_PROVEEDOR)).thenReturn(true);
-        when(compraRepository.existsByIdProveedorAndNroComprobanteAndDeletedAtIsNull(ID_PROVEEDOR, "A-0001"))
-                .thenReturn(true);
+        when(compraRepository.existeComprobante(ID_PROVEEDOR, "FACTURA", "A-0001")).thenReturn(true);
 
         CompraRequest request = compraCon(linea());
+        request.setTipoComprobante("factura");
         request.setNroComprobante("A-0001");
 
         BadRequestException ex = assertThrows(BadRequestException.class,
                 () -> compraService.crear(ID_USUARIO, request));
 
-        assertEquals("Ese proveedor ya tiene una compra registrada con el comprobante A-0001",
+        assertEquals("Ese proveedor ya tiene una compra registrada con el comprobante FACTURA A-0001",
                 ex.getMessage());
         verify(compraRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("un remito y una factura del mismo proveedor pueden llevar el mismo número")
+    void mismoNumeroEnDistintoTipoSeAdmite() {
+        // Cada tipo de comprobante lleva su propia numeración, así que no son el mismo
+        // documento: la unicidad se chequea por proveedor y tipo, no solo por número.
+        prepararAlta(productoConLotes(false));
+        when(proveedoresApi.existsById(ID_PROVEEDOR)).thenReturn(true);
+        when(compraRepository.existeComprobante(ID_PROVEEDOR, "REMITO", "A-0001")).thenReturn(false);
+
+        CompraRequest request = compraCon(linea());
+        request.setTipoComprobante("remito");
+        request.setNroComprobante("A-0001");
+
+        compraService.crear(ID_USUARIO, request);
+
+        verify(compraRepository).existeComprobante(ID_PROVEEDOR, "REMITO", "A-0001");
     }
 
     @Test
@@ -141,8 +159,7 @@ class CompraServiceAltaTest {
 
         compraService.crear(ID_USUARIO, sinProveedor);
 
-        verify(compraRepository, never())
-                .existsByIdProveedorAndNroComprobanteAndDeletedAtIsNull(any(), any());
+        verify(compraRepository, never()).existeComprobante(any(), any(), any());
     }
 
     private void prepararAlta(Producto producto) {

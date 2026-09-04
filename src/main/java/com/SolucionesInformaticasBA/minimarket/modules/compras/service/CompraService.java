@@ -66,7 +66,9 @@ public class CompraService implements CompraApi {
             throw new BadRequestException("El proveedor especificado no existe");
         }
 
-        exigirComprobanteLibre(request.getIdProveedor(), recortar(request.getNroComprobante()));
+        exigirComprobanteLibre(request.getIdProveedor(),
+            normalizarTipoComprobante(request.getTipoComprobante()),
+            recortar(request.getNroComprobante()));
 
         // Igual que en ventas: se guarda primero para poder referenciar la compra en cada
         // movimiento de stock y hacer reversible la anulación.
@@ -310,21 +312,27 @@ public class CompraService implements CompraApi {
 
     /**
      * Cargar dos veces el mismo remito duplica el ingreso de stock y la salida de caja, y no
-     * quedaba señal de nada: el número era texto libre sin control. Se valida solo dentro del
-     * mismo proveedor, porque dos proveedores distintos pueden emitir el mismo número sin que
-     * sea el mismo comprobante. Una compra sin proveedor o sin número no tiene con qué
-     * compararse y queda fuera.
+     * quedaba señal de nada: el número era texto libre sin control.
+     *
+     * <p>La unicidad es por proveedor <b>y tipo de comprobante</b>: dos proveedores distintos
+     * pueden emitir el mismo número, y un mismo proveedor numera por separado sus facturas y
+     * sus remitos, así que su factura 0001-00001234 y su remito 0001-00001234 son documentos
+     * distintos. Una compra sin proveedor o sin número no tiene con qué compararse y queda
+     * fuera.
      *
      * <p>La base sostiene lo mismo con un índice único, así que dos altas simultáneas tampoco
      * pasan; acá el chequeo existe para dar un mensaje que se entienda en vez de un 409.
      */
-    private void exigirComprobanteLibre(UUID idProveedor, String nroComprobante) {
+    private void exigirComprobanteLibre(UUID idProveedor, String tipoComprobante, String nroComprobante) {
         if (idProveedor == null || nroComprobante == null || nroComprobante.isBlank()) {
             return;
         }
-        if (compraRepository.existsByIdProveedorAndNroComprobanteAndDeletedAtIsNull(idProveedor, nroComprobante)) {
+        if (compraRepository.existeComprobante(idProveedor, tipoComprobante, nroComprobante)) {
+            String comprobante = tipoComprobante == null || tipoComprobante.isBlank()
+                ? nroComprobante
+                : tipoComprobante + " " + nroComprobante;
             throw new BadRequestException(
-                "Ese proveedor ya tiene una compra registrada con el comprobante " + nroComprobante);
+                "Ese proveedor ya tiene una compra registrada con el comprobante " + comprobante);
         }
     }
 

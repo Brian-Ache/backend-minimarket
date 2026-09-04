@@ -18,10 +18,24 @@ public interface CompraRepository extends JpaRepository<Compra, UUID> {
     Optional<Compra> findByIdAndDeletedAtIsNull(UUID id);
 
     /**
-     * Un mismo proveedor no puede tener dos comprobantes con el mismo número. Dos proveedores
-     * distintos sí pueden repetirlo: son comprobantes distintos que casualmente coinciden.
+     * Un mismo proveedor no puede repetir el número dentro del mismo tipo de comprobante. Dos
+     * proveedores distintos sí pueden coincidir, y un mismo proveedor puede tener un remito y
+     * una factura con el mismo número: cada tipo lleva su propia numeración.
+     *
+     * <p>El COALESCE sobre el tipo replica exactamente lo que hace el índice único de la base:
+     * sin él, un tipo nulo compararía con {@code = NULL}, no encontraría nada, y el alta
+     * terminaría rebotando contra la base con un 409 en vez de un mensaje entendible.
      */
-    boolean existsByIdProveedorAndNroComprobanteAndDeletedAtIsNull(UUID idProveedor, String nroComprobante);
+    @Query("""
+            SELECT COUNT(c) > 0 FROM Compra c
+             WHERE c.deletedAt IS NULL
+               AND c.idProveedor = :idProveedor
+               AND c.nroComprobante = :nroComprobante
+               AND COALESCE(c.tipoComprobante, '') = COALESCE(:tipoComprobante, '')
+            """)
+    boolean existeComprobante(@Param("idProveedor") UUID idProveedor,
+                              @Param("tipoComprobante") String tipoComprobante,
+                              @Param("nroComprobante") String nroComprobante);
 
     /**
      * Query unificado de compras con filtros opcionales.
