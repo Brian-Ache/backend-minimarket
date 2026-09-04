@@ -995,12 +995,17 @@ Anula la compra: saca del stock lo que había ingresado y, si se pagó por caja,
 plata al turno con un movimiento de origen `REVERSA`. Los lotes que quedan en cero se dan de
 baja.
 
+**No revierte el costo, el margen, el precio ni el proveedor que el alta le escribió al
+producto.** Una compra se anula por muchos motivos y en ninguno el precio de venta vigente tiene
+por qué volver atrás; si lo que estaba mal era el precio, se corrige con
+`PUT /api/productos/v1/{id}`.
+
 **Solo ADMIN.**
 
 **Response `204`**
 
-**Errores `400`:** ya se vendió parte de la mercadería ingresada · la compra se pagó por caja
-y ese turno ya cerró su corte (o no hay ninguno abierto)
+**Errores `400`:** ya se vendió parte de la mercadería ingresada —el mensaje nombra el producto—
+· la compra se pagó por caja y ese turno ya cerró su corte (o no hay ninguno abierto)
 
 ---
 

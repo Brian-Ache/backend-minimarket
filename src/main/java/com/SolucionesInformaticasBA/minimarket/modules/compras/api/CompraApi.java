@@ -22,12 +22,10 @@ public interface CompraApi {
                                         LocalDateTime desde, LocalDateTime hasta,
                                         Pageable pageable);
 
-    void delete(UUID id, UUID idUsuario);
-
-    // MÉTODOS COMENTADOS: Se reemplazaron por getAllFiltered() que cubre todos los casos
-    // con un solo query parametrizado. Se mantienen comentados por si en el futuro
-    // se necesitan endpoints dedicados (ej: historial por un usuario específico).
-    // List<CompraResponse> getAll();
-    // List<CompraResponse> getByUsuario(UUID idUsuario);
-    // List<CompraResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta);
+    /**
+     * Anula la compra. Quién la anula sale del JWT, no de un parámetro: ese id queda escrito
+     * en el movimiento de reversa de stock y en el de caja, que son las dos tablas con las que
+     * después se audita quién tocó qué.
+     */
+    void delete(UUID id);
 }

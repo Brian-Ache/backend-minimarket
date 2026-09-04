@@ -14,7 +14,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -100,10 +99,8 @@ public class CompraController {
     // }
 
     @DeleteMapping("/v1/{id}")
-    public ResponseEntity<Void> delete(
-            @RequestHeader("idUsuario") UUID idUsuario,
-            @PathVariable UUID id) {
-        compraApi.delete(id, idUsuario);
+    public ResponseEntity<Void> delete(@PathVariable UUID id) {
+        compraApi.delete(id);
         return ResponseEntity.noContent().build();
     }
 }

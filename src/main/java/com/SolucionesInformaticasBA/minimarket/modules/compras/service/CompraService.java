@@ -34,6 +34,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.productos.repository.Prod
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.ProveedoresApi;
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto.ProveedorResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
+import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
@@ -206,12 +207,23 @@ public class CompraService implements CompraApi {
      * Anula una compra: saca del stock lo que había ingresado y, si se pagó de la caja,
      * devuelve la plata al turno. Falla si la mercadería ya se vendió o si el turno que
      * registró el pago ya cerró su corte.
+     *
+     * <p><b>No revierte el costo, el margen, el precio ni el proveedor que el alta le escribió
+     * al producto</b>, y es a propósito: una compra se anula por muchos motivos —el proveedor
+     * no entregó, se cargó dos veces, se devolvió la mercadería— y en ninguno de esos el precio
+     * de venta vigente tiene por qué volver atrás. Si lo que estaba mal era justamente el
+     * precio, se corrige por el ABM de productos, que es donde vive esa decisión.
      */
     @Transactional
-    public void delete(UUID id, UUID idUsuario) {
+    public void delete(UUID id) {
         Compra compra = compraRepository.findByIdAndDeletedAtIsNull(id)
             .orElseThrow(() -> new ResourceNotFoundException("Compra no encontrada"));
 
+        // Del JWT y no de un parámetro: antes venía en un header que mandaba el cliente, así
+        // que quien anulaba podía firmar la reversa de stock y la entrada de caja con el id de
+        // otro usuario, justo en las dos tablas que sirven para auditar. Mismo criterio que la
+        // anulación de ventas.
+        UUID idUsuario = SecurityUtils.getCurrentUserId();
         LocalDateTime ahora = LocalDateTime.now();
 
         revertirCaja(compra, idUsuario);
@@ -292,20 +304,35 @@ public class CompraService implements CompraApi {
                     .idReferencia(compra.getId())
                     .build());
             } else {
-                // disminuir ya rechaza dejar el stock en negativo
-                inventarioApi.disminuir(MovimientoStockRequest.builder()
-                    .idProducto(m.getIdProducto())
-                    .cantidad(aDescontar)
-                    .tipo("AJUSTE")
-                    .motivo("Reversa por anulación de compra " + compra.getId())
-                    .idUsuario(idUsuario)
-                    .idReferencia(compra.getId())
-                    .build());
+                try {
+                    // disminuir ya rechaza dejar el stock en negativo
+                    inventarioApi.disminuir(MovimientoStockRequest.builder()
+                        .idProducto(m.getIdProducto())
+                        .cantidad(aDescontar)
+                        .tipo("AJUSTE")
+                        .motivo("Reversa por anulación de compra " + compra.getId())
+                        .idUsuario(idUsuario)
+                        .idReferencia(compra.getId())
+                        .build());
+                } catch (BadRequestException e) {
+                    // "Stock insuficiente" es correcto pero desorienta cuando lo que estás
+                    // haciendo es anular: significa que la mercadería ya se vendió. Se explica
+                    // igual que en la rama de lotes, y se conserva el detalle de cantidades.
+                    throw new BadRequestException(
+                        "No se puede anular: ya se vendió parte de lo que ingresó esta compra ("
+                            + nombreDeProducto(m.getIdProducto()) + "). " + e.getMessage());
+                }
             }
         }
     }
 
     // Helpers
+
+    /** Solo para armar mensajes de error: no se paga la consulta en el camino feliz. */
+    private String nombreDeProducto(UUID idProducto) {
+        String nombre = productosApi.getNombresPorId(List.of(idProducto)).get(idProducto);
+        return nombre != null ? nombre : "producto " + idProducto;
+    }
 
     /**
      * Igual que en ventas: los detalles de todas las compras se traen en una sola consulta y
