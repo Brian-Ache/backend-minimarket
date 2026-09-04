@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -22,6 +23,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.LoteRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.LoteResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.Lote;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.EstadoLote;
@@ -29,6 +31,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.Lot
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.StockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 
@@ -122,6 +125,53 @@ class InventarioServiceLotesTest {
         List<LoteResponse> lotes = inventarioService.getAll();
 
         assertEquals("Producto no encontrado", lotes.get(0).getNombreProducto());
+    }
+
+    @Test
+    @DisplayName("un lote sin fecha de vencimiento se rechaza")
+    void loteSinFechaEsBadRequest() {
+        // Es la validación que la compra se salteaba creando el lote a mano: sin fecha, el lote
+        // queda en SIN_FECHA y no aparece en ningún control de vencimientos.
+        BadRequestException ex = assertThrows(BadRequestException.class,
+                () -> inventarioService.crear(LoteRequest.builder()
+                        .idProducto(ID_PRODUCTO).cantidad(5).build()));
+
+        assertEquals("Fecha de vencimiento obligatoria", ex.getMessage());
+        verify(loteRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("un producto que no maneja lotes no puede recibir uno")
+    void loteDeProductoSinLotesEsBadRequest() {
+        when(productosApi.getById(ID_PRODUCTO)).thenReturn(
+                ProductoResponse.builder().id(ID_PRODUCTO).nombre("Agua").manejaLotes(false).build());
+
+        BadRequestException ex = assertThrows(BadRequestException.class,
+                () -> inventarioService.crear(LoteRequest.builder()
+                        .idProducto(ID_PRODUCTO)
+                        .fechaVencimiento(LocalDate.now().plusMonths(3))
+                        .cantidad(5)
+                        .build()));
+
+        assertEquals("El producto no maneja lotes", ex.getMessage());
+        verify(loteRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("crear un lote no vuelve a pedir el producto para armar la respuesta")
+    void crearNoPideElProductoDosVeces() {
+        when(productosApi.getById(ID_PRODUCTO)).thenReturn(
+                ProductoResponse.builder().id(ID_PRODUCTO).nombre("Leche").manejaLotes(true).build());
+        when(loteRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        LoteResponse response = inventarioService.crear(LoteRequest.builder()
+                .idProducto(ID_PRODUCTO)
+                .fechaVencimiento(LocalDate.now().plusMonths(3))
+                .cantidad(5)
+                .build());
+
+        assertEquals("Leche", response.getNombreProducto());
+        verify(productosApi, times(1)).getById(ID_PRODUCTO);
     }
 
     private Lote lote(LocalDate fechaVencimiento) {

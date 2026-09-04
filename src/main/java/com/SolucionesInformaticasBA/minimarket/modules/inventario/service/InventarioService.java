@@ -2,6 +2,7 @@ package com.SolucionesInformaticasBA.minimarket.modules.inventario.service;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -222,7 +223,11 @@ public class InventarioService implements InventarioApi{
         Lote lote = toLoteEntity(request);
         Lote guardado = loteRepository.save(lote);
 
-        return toLoteResponse(guardado);
+        // Con el producto que ya trajo la validación: el overload de una sola fila lo volvía
+        // a pedir, y esta alta la llama una compra por cada línea con lotes. singletonMap y no
+        // Map.of porque el nombre puede ser null y Map.of no admite valores nulos.
+        return toLoteResponse(guardado,
+            Collections.singletonMap(guardado.getIdProducto(), producto.getNombre()));
     }
 
     public List<LoteResponse> getAll(){
@@ -333,18 +338,6 @@ public class InventarioService implements InventarioApi{
             .estado(calcularEstado(request.getFechaVencimiento()))
             .fechaVencimiento(request.getFechaVencimiento())
             .cantidad(request.getCantidad())
-            .build();
-    }
-
-    private LoteResponse toLoteResponse(Lote l){
-        return LoteResponse.builder()
-            .id(l.getId())
-            .idProducto(l.getIdProducto())
-            .nombreProducto(productosApi.getById(l.getIdProducto()).getNombre())
-            .numeroLote(l.getNumeroLote())
-            .fechaVencimiento(l.getFechaVencimiento())
-            .cantidad(l.getCantidad())
-            .estado(calcularEstado(l.getFechaVencimiento()).name())
             .build();
     }
 

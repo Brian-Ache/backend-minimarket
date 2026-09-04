@@ -17,13 +17,12 @@ import java.time.LocalDateTime;
 public interface CompraRepository extends JpaRepository<Compra, UUID> {
     Optional<Compra> findByIdAndDeletedAtIsNull(UUID id);
 
-    // Rango semiabierto [desde, hasta), igual que en ventas.
-    @Query("""
-            SELECT c FROM Compra c
-             WHERE c.createdAt >= :desde AND c.createdAt < :hasta
-               AND c.deletedAt IS NULL
-            """)
-    List<Compra> findEnRango(@Param("desde") LocalDateTime desde, @Param("hasta") LocalDateTime hasta);
+    /**
+     * Un mismo proveedor no puede tener dos comprobantes con el mismo número. Dos proveedores
+     * distintos sí pueden repetirlo: son comprobantes distintos que casualmente coinciden.
+     */
+    boolean existsByIdProveedorAndNroComprobanteAndDeletedAtIsNull(UUID idProveedor, String nroComprobante);
+
     /**
      * Query unificado de compras con filtros opcionales.
      *

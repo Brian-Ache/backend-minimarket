@@ -21,10 +21,11 @@ import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.*;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.entity.*;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.repository.*;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.LoteRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.LoteResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.Lote;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.MovimientoStock;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.EstadoLote;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.LoteRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.MovimientoStockRepository;
@@ -65,6 +66,8 @@ public class CompraService implements CompraApi {
             throw new BadRequestException("El proveedor especificado no existe");
         }
 
+        exigirComprobanteLibre(request.getIdProveedor(), recortar(request.getNroComprobante()));
+
         // Igual que en ventas: se guarda primero para poder referenciar la compra en cada
         // movimiento de stock y hacer reversible la anulación.
         Compra compra = compraRepository.save(toCompraEntity(request, idUsuario));
@@ -93,15 +96,16 @@ public class CompraService implements CompraApi {
             procesados[i] = toDetalleCompraEntity(d, producto, compra);
 
             if (producto.isManejaLotes()) {
-                Lote lote = Lote.builder()
+                // Por la API de inventario y no escribiendo el lote a mano: las reglas del lote
+                // —fecha de vencimiento obligatoria, producto que efectivamente maneje lotes—
+                // viven ahí. Creándolo acá, una compra podía dejar lotes sin fecha, que quedan
+                // en estado SIN_FECHA y no aparecen en ningún control de vencimientos.
+                LoteResponse lote = inventarioApi.crear(LoteRequest.builder()
                     .idProducto(producto.getId())
                     .numeroLote(d.getNumeroLote())
                     .fechaVencimiento(d.getFechaVencimiento())
                     .cantidad(d.getCantidad())
-                    // Sin esto el lote quedaba con estado NULL hasta que alguien listara lotes.
-                    .estado(EstadoLote.calcularPara(d.getFechaVencimiento()))
-                    .build();
-                lote = loteRepository.save(lote);
+                    .build());
 
                 MovimientoStock m = MovimientoStock.builder()
                     .idProducto(producto.getId())
@@ -169,39 +173,15 @@ public class CompraService implements CompraApi {
     public Page<CompraResponse> getAllFiltered(UUID idProveedor, String tipoComprobante,
                                                LocalDateTime desde, LocalDateTime hasta,
                                                Pageable pageable) {
-        Page<Compra> compras =
-            compraRepository.findAllFiltered(idProveedor, tipoComprobante, desde, hasta, pageable);
+        // Mismo criterio que al guardar: si no, filtrar por "factura" no encontraba nada.
+        Page<Compra> compras = compraRepository.findAllFiltered(
+            idProveedor, normalizarTipoComprobante(tipoComprobante), desde, hasta, pageable);
 
+        // PageImpl y no compras.map(): el armado necesita la página entera para traer todos los
+        // detalles en una sola consulta. Mapear fila por fila volvería a un query por compra.
         return new PageImpl<>(
             toCompraResponseList(compras.getContent()), pageable, compras.getTotalElements());
     }
-
-    // MÉTODOS COMENTADOS: Se reemplazaron por getAllFiltered() que cubre todos los casos
-    // con un solo query parametrizado. Se mantienen comentados por si en el futuro
-    // se necesitan endpoints dedicados (ej: historial por un usuario específico).
-
-    // public Page<CompraResponse> getAll(Pageable pageable) {
-    //     return compraRepository.findAllPaginated(pageable).map(c -> {
-    //         List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-    //         return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-    //     });
-    // }
-
-    // public Page<CompraResponse> getByUsuario(UUID idUsuario, Pageable pageable) {
-    //     return compraRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario, pageable)
-    //         .map(c -> {
-    //             List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-    //             return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-    //         });
-    // }
-
-    // public Page<CompraResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta, Pageable pageable) {
-    //     return compraRepository.findByCreatedAtBetweenAndDeletedAtIsNull(desde, hasta, pageable)
-    //         .map(c -> {
-    //             List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-    //             return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-    //         });
-    // }
 
     /**
      * Anula una compra: saca del stock lo que había ingresado y, si se pagó de la caja,
@@ -328,6 +308,26 @@ public class CompraService implements CompraApi {
 
     // Helpers
 
+    /**
+     * Cargar dos veces el mismo remito duplica el ingreso de stock y la salida de caja, y no
+     * quedaba señal de nada: el número era texto libre sin control. Se valida solo dentro del
+     * mismo proveedor, porque dos proveedores distintos pueden emitir el mismo número sin que
+     * sea el mismo comprobante. Una compra sin proveedor o sin número no tiene con qué
+     * compararse y queda fuera.
+     *
+     * <p>La base sostiene lo mismo con un índice único, así que dos altas simultáneas tampoco
+     * pasan; acá el chequeo existe para dar un mensaje que se entienda en vez de un 409.
+     */
+    private void exigirComprobanteLibre(UUID idProveedor, String nroComprobante) {
+        if (idProveedor == null || nroComprobante == null || nroComprobante.isBlank()) {
+            return;
+        }
+        if (compraRepository.existsByIdProveedorAndNroComprobanteAndDeletedAtIsNull(idProveedor, nroComprobante)) {
+            throw new BadRequestException(
+                "Ese proveedor ya tiene una compra registrada con el comprobante " + nroComprobante);
+        }
+    }
+
     /** Solo para armar mensajes de error: no se paga la consulta en el camino feliz. */
     private String nombreDeProducto(UUID idProducto) {
         String nombre = productosApi.getNombresPorId(List.of(idProducto)).get(idProducto);
@@ -359,10 +359,24 @@ public class CompraService implements CompraApi {
             .idUsuario(idUsuario)
             .total(0)
             .idProveedor(request.getIdProveedor())
-            .tipoComprobante(request.getTipoComprobante())
-            .nroComprobante(request.getNroComprobante())
-            .observaciones(request.getObservaciones())
+            .tipoComprobante(normalizarTipoComprobante(request.getTipoComprobante()))
+            .nroComprobante(recortar(request.getNroComprobante()))
+            .observaciones(recortar(request.getObservaciones()))
             .build();
+    }
+
+    /**
+     * El tipo de comprobante es texto libre y el filtro compara por igualdad exacta, así que sin
+     * normalizar "factura", "Factura" y "FACTURA " eran tres tipos distintos: una compra cargada
+     * con uno no aparecía al filtrar por otro. Se guarda y se busca siempre en mayúsculas.
+     */
+    private static String normalizarTipoComprobante(String tipo) {
+        String limpio = recortar(tipo);
+        return limpio == null ? null : limpio.toUpperCase();
+    }
+
+    private static String recortar(String valor) {
+        return valor == null ? null : valor.trim();
     }
 
     private CompraResponse toCompraResponse(Compra compra, List<DetalleCompraResponse> detalle) {

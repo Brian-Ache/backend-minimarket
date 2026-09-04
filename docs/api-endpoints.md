@@ -940,12 +940,19 @@ abierta (falla con `400` si no hay ninguna). Reemplaza al `idSesion` que antes m
     }
   ],
   "idProveedor": "UUID (opcional)",
-  "tipoComprobante": "REMITO | FACTURA (opcional)",
-  "nroComprobante": "string (opcional)",
+  "tipoComprobante": "REMITO | FACTURA (opcional, se guarda en mayúsculas)",
+  "nroComprobante": "string (opcional, único por proveedor)",
   "observaciones": "string (opcional)",
   "pagoEnEfectivo": "boolean (default false)"
 }
 ```
+
+Si el producto maneja lotes, la línea **debe traer `fechaVencimiento`**: el lote se da de alta
+por el módulo de inventario, que la exige. Sin ella el lote quedaría en estado `SIN_FECHA` y no
+aparecería en ningún control de vencimientos.
+
+`tipoComprobante` se recorta y se guarda en mayúsculas, y el filtro del listado busca con el
+mismo criterio: cargar `"factura"` y filtrar por `"FACTURA"` encuentra la compra.
 
 **Response `200`:**
 ```json
@@ -960,6 +967,15 @@ abierta (falla con `400` si no hay ninguna). Reemplaza al `idSesion` que antes m
   "observaciones": "string | null"
 }
 ```
+
+**Errores `400`:** el proveedor no existe o está dado de baja · algún producto no existe · **ese
+proveedor ya tiene una compra con ese número de comprobante** · falta la fecha de vencimiento en
+una línea de un producto que maneja lotes · no hay turno de caja abierto y se marcó
+`pagoEnEfectivo`
+
+> El número de comprobante es único **por proveedor**: dos proveedores distintos pueden emitir
+> el mismo número y son comprobantes distintos. Las compras sin proveedor o sin número quedan
+> fuera de la regla, y anular una compra libera su número para volver a cargarla.
 
 ---
 
