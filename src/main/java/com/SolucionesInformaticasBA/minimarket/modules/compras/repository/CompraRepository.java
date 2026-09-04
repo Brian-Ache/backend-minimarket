@@ -40,24 +40,11 @@ public interface CompraRepository extends JpaRepository<Compra, UUID> {
            "AND (:idProveedor IS NULL OR c.idProveedor = :idProveedor) " +
            "AND (:tipoComprobante IS NULL OR c.tipoComprobante = :tipoComprobante) " +
            "AND (:desde IS NULL OR c.createdAt >= :desde) " +
-           "AND (:hasta IS NULL OR c.createdAt <= :hasta)")
+           "AND (:hasta IS NULL OR c.createdAt < :hasta)")
     Page<Compra> findAllFiltered(
         @Param("idProveedor") UUID idProveedor,
         @Param("tipoComprobante") String tipoComprobante,
         @Param("desde") LocalDateTime desde,
         @Param("hasta") LocalDateTime hasta,
         Pageable pageable);
-
-    // MÉTODOS COMENTADOS: Se reemplazaron por findAllFiltered() que cubre todos los casos
-    // con un solo query parametrizado. Se mantienen comentados por si en el futuro
-    // se necesitan endpoints dedicados (ej: historial por un usuario específico).
-
-    // @Query("SELECT c FROM Compra c WHERE c.deletedAt IS NULL ORDER BY c.createdAt DESC")
-    // Page<Compra> findAllPaginated(Pageable pageable);
-
-    // @Query("SELECT c FROM Compra c WHERE c.deletedAt IS NULL AND c.createdAt BETWEEN :desde AND :hasta ORDER BY c.createdAt DESC")
-    // Page<Compra> findByCreatedAtBetweenAndDeletedAtIsNull(LocalDateTime desde, LocalDateTime hasta, Pageable pageable);
-
-    // @Query("SELECT c FROM Compra c WHERE c.deletedAt IS NULL AND c.idUsuario = :idUsuario ORDER BY c.createdAt DESC")
-    // Page<Compra> findByIdUsuarioAndDeletedAtIsNull(UUID idUsuario, Pageable pageable);
 }

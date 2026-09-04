@@ -24,12 +24,18 @@ import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.CompraRes
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.AllArgsConstructor;
 
 @RestController
 @RequestMapping("/api/compras")
 @AllArgsConstructor
 public class CompraController {
+
+    /** Techo del tamaño de página: cada compra de la página resuelve además su proveedor. */
+    private static final int MAX_PAGE_SIZE = 100;
+
     private final CompraApi compraApi;
 
     @PostMapping("/v1")
@@ -61,42 +67,23 @@ public class CompraController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime desde,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta,
             @RequestParam(required = false) String sortTotal,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
+                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
 
         Sort sort = "asc".equals(sortTotal)
             ? Sort.by(Sort.Direction.ASC, "total")
             : "desc".equals(sortTotal)
                 ? Sort.by(Sort.Direction.DESC, "total")
                 : Sort.by(Sort.Direction.DESC, "createdAt");
-        Pageable pageable = PageRequest.of(page, size, sort);
+
+        // Con el id como desempate: por total la colisión es casi segura, y las compras
+        // cargadas en el mismo lote comparten createdAt. Sin desempate, el orden dentro de un
+        // empate lo elige la base y las filas se repiten o se saltean al pasar de página.
+        Pageable pageable = PageRequest.of(page, size, sort.and(Sort.by(Sort.Direction.ASC, "id")));
 
         return ResponseEntity.ok(compraApi.getAllFiltered(proveedor, tipoComprobante, desde, hasta, pageable));
     }
-
-    // ENDPOINTS COMENTADOS: Se reemplazaron por GET /v1 con filtros opcionales.
-    // GET /v1/fecha → ahora se pasa desde/hasta como query params en GET /v1
-    // GET /v1/usuario/{idUsuario} → ahora se pasa proveedor como query param en GET /v1
-    // Se mantienen comentados por si en el futuro se necesitan rutas dedicadas.
-
-    // @GetMapping("/v1/usuario/{idUsuario}")
-    // public ResponseEntity<Page<CompraResponse>> getByUsuario(
-    //         @PathVariable UUID idUsuario,
-    //         @RequestParam(defaultValue = "0") int page,
-    //         @RequestParam(defaultValue = "20") int size) {
-    //     Pageable pageable = PageRequest.of(page, size);
-    //     return ResponseEntity.ok(compraApi.getByUsuario(idUsuario, pageable));
-    // }
-
-    // @GetMapping("/v1/fecha")
-    // public ResponseEntity<Page<CompraResponse>> getByFecha(
-    //         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime desde,
-    //         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta,
-    //         @RequestParam(defaultValue = "0") int page,
-    //         @RequestParam(defaultValue = "20") int size) {
-    //     Pageable pageable = PageRequest.of(page, size);
-    //     return ResponseEntity.ok(compraApi.getByFecha(desde, hasta, pageable));
-    // }
 
     @DeleteMapping("/v1/{id}")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {

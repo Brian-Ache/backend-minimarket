@@ -971,21 +971,20 @@ abierta (falla con `400` si no hay ninguna). Reemplaza al `idSesion` que antes m
 
 ### `GET /api/compras/v1`
 
-**Response `200`:** `[ ...CompraResponse ]`
+Listado paginado con todos los filtros opcionales y combinables. Reemplaza a los endpoints
+dedicados por usuario y por fecha, que ya no existen.
 
----
+**Query params:** `?proveedor=UUID&tipoComprobante=FACTURA&desde=...&hasta=...&sortTotal=asc|desc&page=0&size=20`
 
-### `GET /api/compras/v1/usuario/{idUsuario}`
+El rango de fechas es **semiabierto**: incluye `desde` y excluye `hasta`, igual que en ventas y
+en los reportes. `page` arranca en 0; `size` va de 1 a 100. Por defecto ordena por fecha
+descendente; con `sortTotal` ordena por importe. En los dos casos desempata por `id`, para que la
+paginación sea estable cuando varias compras comparten fecha o importe.
 
-**Response `200`:** `[ ...CompraResponse ]`
+**Response `200`:** `Page<CompraResponse>` (`content`, `totalElements`, `totalPages`, `number`,
+`size`)
 
----
-
-### `GET /api/compras/v1/fecha`
-
-**Query params:** `desde=...&hasta=...`
-
-**Response `200`:** `[ ...CompraResponse ]`
+**Error `400`:** `page` negativo, o `size` fuera de 1..100
 
 ---
 
