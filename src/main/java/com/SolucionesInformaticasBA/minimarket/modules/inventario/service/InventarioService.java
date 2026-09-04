@@ -112,9 +112,21 @@ public class InventarioService implements InventarioApi{
         return toStockResponse(stock);
     }
 
+    /**
+     * Da de baja la fila de stock del producto, que es la operación inversa de {@link #crear}.
+     * Exige que esté en cero: borrarla con unidades hacía desaparecer existencias reales sin
+     * dejar movimiento, y era además la forma de saltearse la validación equivalente de la
+     * baja de producto.
+     */
     @Transactional
     public void delete(UUID idProducto){
         Stock s = buscarStock(idProducto);
+
+        if (s.getCantidad() != 0) {
+            throw new BadRequestException("No se puede borrar el stock de un producto con existencias: quedan "
+                + s.getCantidad() + " unidades. Ajustá el stock a 0 antes de darlo de baja");
+        }
+
         s.setDeletedAt(LocalDateTime.now());
         stockRepository.save(s);
     }
@@ -125,12 +137,25 @@ public class InventarioService implements InventarioApi{
             throw new ResourceNotFoundException("Usuario no encontrado");
         }
 
-        if(!productosApi.existsById(request.getIdProducto())){
-            throw new ResourceNotFoundException("Producto no encontrado");
+        ProductoResponse producto = productosApi.getById(request.getIdProducto());
+
+        // La existencia de un producto con lotes es la suma de sus lotes, no la tabla stock:
+        // ajustar por acá escribía una fila que después getExistenciasPorProducto ignora, así
+        // que el ajuste quedaba registrado y no cambiaba nada de lo que ve el usuario.
+        if (producto.isManejaLotes()) {
+            throw new BadRequestException(
+                "El producto maneja lotes: su existencia se ajusta cargando o descargando lotes");
         }
+
         if(request.getStockReal() < 0) throw new BadRequestException("El stock real no puede ser negativo");
 
-        Stock stock = buscarStock(request.getIdProducto());
+        // Un producto sin fila de stock es stock 0 y no un error, igual que en getByIdProducto:
+        // antes la lectura devolvía 0 y el ajuste sobre ese mismo producto respondía 404.
+        Stock stock = stockRepository.findByIdProductoParaActualizar(request.getIdProducto())
+            .orElseGet(() -> stockRepository.save(Stock.builder()
+                .idProducto(request.getIdProducto())
+                .cantidad(0)
+                .build()));
 
         int diferencia = request.getStockReal() - stock.getCantidad();
 

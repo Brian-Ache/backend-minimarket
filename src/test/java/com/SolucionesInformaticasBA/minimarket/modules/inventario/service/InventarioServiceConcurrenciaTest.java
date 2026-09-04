@@ -24,6 +24,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.Lot
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.StockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 
@@ -74,7 +75,7 @@ class InventarioServiceConcurrenciaTest {
     @DisplayName("el ajuste manual también lee con lock")
     void controlarStockTomaElLock() {
         when(usuarioApi.existById(ID_USUARIO)).thenReturn(true);
-        when(productosApi.existsById(ID_PRODUCTO)).thenReturn(true);
+        when(productosApi.getById(ID_PRODUCTO)).thenReturn(productoComun());
         when(stockRepository.findByIdProductoParaActualizar(ID_PRODUCTO))
                 .thenReturn(Optional.of(stockCon(10)));
 
@@ -95,6 +96,10 @@ class InventarioServiceConcurrenciaTest {
 
         assertEquals("Stock insuficiente. Disponible: 3, solicitado: 4", ex.getMessage());
         verify(stockRepository, never()).save(any());
+    }
+
+    private ProductoResponse productoComun() {
+        return ProductoResponse.builder().id(ID_PRODUCTO).nombre("Agua").manejaLotes(false).build();
     }
 
     private Stock stockCon(int cantidad) {
