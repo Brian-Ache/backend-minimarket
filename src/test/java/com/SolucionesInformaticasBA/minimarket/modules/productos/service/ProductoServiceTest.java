@@ -135,7 +135,7 @@ class ProductoServiceTest {
     void deleteDaDeBajaElStock() {
         when(productoRepository.findByIdAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(productoConCategoria());
         Stock stock = Stock.builder().id(UUID.randomUUID()).idProducto(ID_PRODUCTO).cantidad(0).build();
-        when(stockRepository.findByIdProductoAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(Optional.of(stock));
+        when(stockRepository.findByIdProductoParaActualizar(ID_PRODUCTO)).thenReturn(Optional.of(stock));
 
         productoService.delete(ID_PRODUCTO);
 
@@ -148,8 +148,8 @@ class ProductoServiceTest {
     @DisplayName("borrar el producto también da de baja sus lotes")
     void deleteDaDeBajaLosLotes() {
         when(productoRepository.findByIdAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(productoConCategoria());
-        when(stockRepository.findByIdProductoAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(Optional.empty());
-        when(loteRepository.findByIdProductoAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(List.of(
+        when(stockRepository.findByIdProductoParaActualizar(ID_PRODUCTO)).thenReturn(Optional.empty());
+        when(loteRepository.findParaDescuentoFifo(ID_PRODUCTO)).thenReturn(List.of(
                 Lote.builder().id(UUID.randomUUID()).idProducto(ID_PRODUCTO).cantidad(0).build(),
                 Lote.builder().id(UUID.randomUUID()).idProducto(ID_PRODUCTO).cantidad(0).build()));
 
@@ -168,7 +168,7 @@ class ProductoServiceTest {
     @DisplayName("un producto con stock no se puede borrar")
     void deleteConStockEsBadRequest() {
         when(productoRepository.findByIdAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(productoConCategoria());
-        when(stockRepository.findByIdProductoAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(Optional.of(
+        when(stockRepository.findByIdProductoParaActualizar(ID_PRODUCTO)).thenReturn(Optional.of(
                 Stock.builder().id(UUID.randomUUID()).idProducto(ID_PRODUCTO).cantidad(7).build()));
 
         BadRequestException ex = assertThrows(BadRequestException.class,
@@ -183,8 +183,8 @@ class ProductoServiceTest {
     @DisplayName("un producto con lotes cargados no se puede borrar")
     void deleteConLotesEsBadRequest() {
         when(productoRepository.findByIdAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(productoConCategoria());
-        when(stockRepository.findByIdProductoAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(Optional.empty());
-        when(loteRepository.findByIdProductoAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(List.of(
+        when(stockRepository.findByIdProductoParaActualizar(ID_PRODUCTO)).thenReturn(Optional.empty());
+        when(loteRepository.findParaDescuentoFifo(ID_PRODUCTO)).thenReturn(List.of(
                 Lote.builder().id(UUID.randomUUID()).idProducto(ID_PRODUCTO).cantidad(4).build(),
                 Lote.builder().id(UUID.randomUUID()).idProducto(ID_PRODUCTO).cantidad(0).build(),
                 Lote.builder().id(UUID.randomUUID()).idProducto(ID_PRODUCTO).cantidad(9).build()));
@@ -201,7 +201,7 @@ class ProductoServiceTest {
     @DisplayName("borrar un producto sin fila de stock no falla")
     void deleteSinStockNoFalla() {
         when(productoRepository.findByIdAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(productoConCategoria());
-        when(stockRepository.findByIdProductoAndDeletedAtIsNull(ID_PRODUCTO)).thenReturn(Optional.empty());
+        when(stockRepository.findByIdProductoParaActualizar(ID_PRODUCTO)).thenReturn(Optional.empty());
 
         productoService.delete(ID_PRODUCTO);
 

@@ -213,8 +213,14 @@ public class InventarioService implements InventarioApi{
 
     // Helpers
 
+    /**
+     * Solo la usan aumentar, disminuir y controlarStock, que escriben la cantidad, así que
+     * toma el lock de la fila. Sin él, dos operaciones simultáneas sobre el mismo producto
+     * leían el mismo valor y la segunda pisaba a la primera: se vendía de más y el faltante
+     * no quedaba registrado en ningún lado.
+     */
     private Stock buscarStock(UUID idProducto){
-        return stockRepository.findByIdProductoAndDeletedAtIsNull(idProducto)
+        return stockRepository.findByIdProductoParaActualizar(idProducto)
             .orElseThrow(() -> new ResourceNotFoundException("Stock no encontrado para el producto"));
     }
 

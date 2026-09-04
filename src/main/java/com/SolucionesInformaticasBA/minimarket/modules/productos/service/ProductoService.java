@@ -132,8 +132,13 @@ public class ProductoService implements ProductosApi{
         Producto p = productoRepository.findByIdAndDeletedAtIsNull(id);
         if(p == null) throw new ResourceNotFoundException("Producto no encontrado");
 
-        Stock stock = stockRepository.findByIdProductoAndDeletedAtIsNull(id).orElse(null);
-        List<Lote> lotes = loteRepository.findByIdProductoAndDeletedAtIsNull(id);
+        // Con lock: acá se lee para decidir si el producto se puede borrar y después se
+        // escriben esas mismas filas. Sin bloquearlas, una venta o una compra que entre en el
+        // medio deja stock o lotes vivos colgando de un producto ya dado de baja. Primero el
+        // stock y después los lotes, y los lotes por la misma consulta que usa el FIFO: el
+        // orden de bloqueo tiene que ser uno solo en todo el sistema para que no haya ciclo.
+        Stock stock = stockRepository.findByIdProductoParaActualizar(id).orElse(null);
+        List<Lote> lotes = loteRepository.findParaDescuentoFifo(id);
 
         validarSinExistencias(stock, lotes);
 

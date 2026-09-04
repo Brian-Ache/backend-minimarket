@@ -1222,6 +1222,16 @@ Historial de todos los cortes realizados.
 
 ## 9. Inventario — `/api/inventario/v1`
 
+> Las operaciones que escriben cantidades (aumentar, disminuir, ajuste manual, venta, compra y
+> sus anulaciones) toman el lock de la fila de stock o de lote sobre la que trabajan, para que
+> dos pedidos simultáneos sobre el mismo producto no partan del mismo valor. Los locks se toman
+> siempre en el mismo orden —productos por id ascendente y, dentro de cada uno, sus lotes por
+> vencimiento— así que dos operaciones no pueden trabarse cruzadas. Si aun así la base corta
+> por espera de lock, la respuesta es **`409`** y el pedido se puede reintentar tal cual.
+>
+> El detalle de una venta o una compra se guarda y se devuelve en el orden en que se cargó: el
+> orden de bloqueo es interno y no cambia el comprobante.
+
 ### `POST /api/inventario/v1/stock`
 
 Crea registro de stock para un producto.

@@ -2,10 +2,13 @@ package com.SolucionesInformaticasBA.minimarket.modules.compras.service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -65,10 +68,13 @@ public class CompraService implements CompraApi {
         // movimiento de stock y hacer reversible la anulación.
         Compra compra = compraRepository.save(toCompraEntity(request, idUsuario));
 
-        List<DetalleCompra> detalles = new ArrayList<>();
-        float total = 0;
+        // Igual que en ventas: se procesa por orden de bloqueo y cada línea vuelve a su
+        // posición, así lo que se guarda y se devuelve sigue el orden en que se cargó.
+        List<DetalleCompraRequest> pedidos = request.getDetalle();
+        DetalleCompra[] procesados = new DetalleCompra[pedidos.size()];
 
-        for (DetalleCompraRequest d : request.getDetalle()) {
+        for (int i : ordenDeBloqueo(pedidos)) {
+            DetalleCompraRequest d = pedidos.get(i);
             Producto producto = productoRepository.findByIdAndDeletedAtIsNull(d.getIdProducto());
             if (producto == null) {
                 throw new ResourceNotFoundException("Producto no encontrado: " + d.getIdProducto());
@@ -83,9 +89,7 @@ public class CompraService implements CompraApi {
             }
             productoRepository.save(producto);
 
-            DetalleCompra detalle = toDetalleCompraEntity(d, producto, compra);
-            detalles.add(detalle);
-            total += detalle.getTotal();
+            procesados[i] = toDetalleCompraEntity(d, producto, compra);
 
             if (producto.isManejaLotes()) {
                 Lote lote = Lote.builder()
@@ -118,6 +122,15 @@ public class CompraService implements CompraApi {
                     .idReferencia(compra.getId())
                     .build());
             }
+        }
+
+        List<DetalleCompra> detalles = new ArrayList<>(Arrays.asList(procesados));
+
+        // El total se suma en el orden en que se cargó la compra y no en el de bloqueo: con
+        // float, cambiar el orden de la suma puede correr el último centavo.
+        float total = 0;
+        for (DetalleCompra d : detalles) {
+            total += d.getTotal();
         }
 
         compra.setTotal(total);
@@ -240,16 +253,22 @@ public class CompraService implements CompraApi {
 
     /** Saca del stock lo que ingresó la compra, usando los movimientos que la referencian. */
     private void revertirStock(Compra compra, UUID idUsuario) {
-        List<MovimientoStock> movimientos =
+        List<MovimientoStock> movimientos = new ArrayList<>(
             movimientoStockRepository.findByIdReferenciaAndTipoAndDeletedAtIsNull(
-                compra.getId(), TipoMovimiento.COMPRA);
+                compra.getId(), TipoMovimiento.COMPRA));
+
+        // Mismo orden de bloqueo que el alta: por producto ascendente y, dentro de cada uno,
+        // los lotes en el orden que impone findParaDescuentoFifo.
+        movimientos.sort(Comparator.comparing(MovimientoStock::getIdProducto,
+                Comparator.nullsLast(Comparator.naturalOrder())));
+        reservarLotes(movimientos);
 
         for (MovimientoStock m : movimientos) {
             int aDescontar = Math.abs(m.getCantidad());
             if (aDescontar == 0) continue;
 
             if (m.getIdLote() != null) {
-                Lote lote = loteRepository.findById(m.getIdLote())
+                Lote lote = loteRepository.findByIdParaActualizar(m.getIdLote())
                     .orElseThrow(() -> new BadRequestException(
                         "No se puede revertir la compra: falta el lote " + m.getIdLote()));
 
@@ -342,6 +361,34 @@ public class CompraService implements CompraApi {
             .nroComprobante(compra.getNroComprobante())
             .observaciones(compra.getObservaciones())
             .build();
+    }
+
+    /**
+     * Índices del detalle ordenados por idProducto ascendente. Es el mismo criterio que usa
+     * ventas: toda operación que bloquee filas de inventario las toma en este orden, para que
+     * dos transacciones sobre los mismos productos no se queden cada una con la fila que la
+     * otra necesita y la base tenga que matar una por deadlock.
+     */
+    private static List<Integer> ordenDeBloqueo(List<DetalleCompraRequest> detalles) {
+        return IntStream.range(0, detalles.size())
+            .boxed()
+            .sorted(Comparator.comparing((Integer i) -> detalles.get(i).getIdProducto(),
+                    Comparator.nullsLast(Comparator.naturalOrder())))
+            .toList();
+    }
+
+    /**
+     * Toma por adelantado el lock de los lotes de cada producto involucrado, en el orden del
+     * FIFO. La reversa recorre movimientos, o sea un lote suelto por vez; sin esta pasada
+     * previa bloquearía los lotes de un producto en un orden distinto al del resto del
+     * sistema, que es justo lo que abre el ciclo.
+     */
+    private void reservarLotes(List<MovimientoStock> movimientos) {
+        movimientos.stream()
+            .filter(m -> m.getIdLote() != null)
+            .map(MovimientoStock::getIdProducto)
+            .distinct()
+            .forEach(loteRepository::findParaDescuentoFifo);
     }
 
     private DetalleCompra toDetalleCompraEntity(DetalleCompraRequest request, Producto producto, Compra compra) {

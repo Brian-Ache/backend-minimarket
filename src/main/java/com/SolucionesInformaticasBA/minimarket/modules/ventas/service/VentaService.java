@@ -3,10 +3,13 @@ package com.SolucionesInformaticasBA.minimarket.modules.ventas.service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import org.springframework.stereotype.Service;
 
@@ -73,10 +76,14 @@ public class VentaService implements VentasApi {
             .total(0)
             .build());
 
-        List<DetalleVenta> detalles = new ArrayList<>();
-        float total = 0;
+        // El detalle se procesa por orden de bloqueo, no por el orden en que llegó, y cada
+        // línea vuelve a su posición original: lo que se guarda y lo que se devuelve sigue
+        // siendo el ticket tal como lo cargó el cajero.
+        List<DetalleVentaRequest> pedidos = request.getDetalles();
+        DetalleVenta[] procesados = new DetalleVenta[pedidos.size()];
 
-        for (DetalleVentaRequest d : request.getDetalles()) {
+        for (int i : ordenDeBloqueo(pedidos)) {
+            DetalleVentaRequest d = pedidos.get(i);
             if (d.getCantidad() <= 0) {
                 throw new BadRequestException("Cantidad inválida");
             }
@@ -101,7 +108,9 @@ public class VentaService implements VentasApi {
 
                 if (producto.isManejaLotes()) {
                     int cantidadRestante = d.getCantidad();
-                    List<Lote> lotes = loteRepository.findByIdProductoAndDeletedAtIsNullOrderByFechaVencimientoAsc(producto.getId());
+                    // Con lock de fila: sin él, dos ventas simultáneas del mismo producto
+                    // descontaban las dos sobre la misma cantidad leída y se vendía de más.
+                    List<Lote> lotes = loteRepository.findParaDescuentoFifo(producto.getId());
                     for (Lote lote : lotes) {
                         if (cantidadRestante <= 0) break;
                         if (lote.getCantidad() <= 0) continue;
@@ -157,9 +166,16 @@ public class VentaService implements VentasApi {
             detalle.setCantidad(d.getCantidad());
             detalle.setPrecioUnitario(precio);
 
-            detalles.add(detalle);
+            procesados[i] = detalle;
+        }
 
-            total += precio * d.getCantidad();
+        List<DetalleVenta> detalles = new ArrayList<>(Arrays.asList(procesados));
+
+        // El total se suma en el orden del ticket y no en el de bloqueo: con float, cambiar el
+        // orden de la suma puede correr el último centavo.
+        float total = 0;
+        for (DetalleVenta d : detalles) {
+            total += d.getPrecioUnitario() * d.getCantidad();
         }
 
         venta.setTotal(total);
@@ -246,16 +262,24 @@ public class VentaService implements VentasApi {
      * nuevo, para no perder la trazabilidad de lo que pasó.
      */
     private void revertirStock(Venta venta, UUID idUsuario) {
-        List<MovimientoStock> movimientos =
+        List<MovimientoStock> movimientos = new ArrayList<>(
             movimientoStockRepository.findByIdReferenciaAndTipoAndDeletedAtIsNull(
-                venta.getId(), TipoMovimiento.VENTA);
+                venta.getId(), TipoMovimiento.VENTA));
+
+        // Mismo orden de bloqueo que la venta que se está anulando: por producto ascendente y,
+        // dentro de cada producto, los lotes en el orden del FIFO (que es el que impone
+        // findParaDescuentoFifo, ver reservarLotes). Sin esto, una anulación y una venta del
+        // mismo producto podían tomarse los lotes en orden cruzado y trabarse entre sí.
+        movimientos.sort(Comparator.comparing(MovimientoStock::getIdProducto,
+                Comparator.nullsLast(Comparator.naturalOrder())));
+        reservarLotes(movimientos);
 
         for (MovimientoStock m : movimientos) {
             int aReponer = Math.abs(m.getCantidad());
             if (aReponer == 0) continue;
 
             if (m.getIdLote() != null) {
-                Lote lote = loteRepository.findById(m.getIdLote())
+                Lote lote = loteRepository.findByIdParaActualizar(m.getIdLote())
                     .orElseThrow(() -> new BadRequestException(
                         "No se puede revertir la venta: falta el lote " + m.getIdLote()));
                 lote.setCantidad(lote.getCantidad() + aReponer);
@@ -281,6 +305,38 @@ public class VentaService implements VentasApi {
                     .build());
             }
         }
+    }
+
+    /**
+     * Índices del detalle ordenados por idProducto ascendente, con los ítems MANUAL —que no
+     * tocan inventario— al final.
+     *
+     * <p>Todas las operaciones que bloquean filas de inventario lo hacen en este orden. Sin un
+     * orden único, dos ventas simultáneas de los mismos dos productos cargados al revés se
+     * quedaban cada una con la fila que la otra necesitaba y la base tenía que matar una por
+     * deadlock. El id del producto no significa nada, pero es igual para todos: alcanza con
+     * que sea el mismo criterio en todas partes.
+     */
+    private static List<Integer> ordenDeBloqueo(List<DetalleVentaRequest> detalles) {
+        return IntStream.range(0, detalles.size())
+            .boxed()
+            .sorted(Comparator.comparing((Integer i) -> detalles.get(i).getIdProducto(),
+                    Comparator.nullsLast(Comparator.naturalOrder())))
+            .toList();
+    }
+
+    /**
+     * Toma por adelantado el lock de los lotes de cada producto involucrado, en el orden del
+     * FIFO. La reversa recorre movimientos, o sea un lote suelto por vez y en el orden en que
+     * se vendieron; sin esta pasada previa bloquearía los lotes de un producto en un orden
+     * distinto al que usa el resto del sistema, que es justo lo que abre el ciclo.
+     */
+    private void reservarLotes(List<MovimientoStock> movimientos) {
+        movimientos.stream()
+            .filter(m -> m.getIdLote() != null)
+            .map(MovimientoStock::getIdProducto)
+            .distinct()
+            .forEach(loteRepository::findParaDescuentoFifo);
     }
 
     @Override

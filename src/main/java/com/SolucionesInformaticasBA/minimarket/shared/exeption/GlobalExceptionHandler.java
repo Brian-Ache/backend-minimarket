@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 import org.springframework.context.MessageSourceResolvable;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -114,6 +115,18 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleNotReadable(HttpMessageNotReadableException ex) {
         return buildResponse(HttpStatus.BAD_REQUEST, "El cuerpo de la petición es inválido");
+    }
+
+    /**
+     * Dos operaciones peleando por la misma fila de stock o de lote: espera de lock agotada o
+     * deadlock resuelto por la base. El pedido estaba bien y reintentarlo probablemente
+     * funcione, así que va 409 y no el 500 del catch-all.
+     */
+    @ExceptionHandler(ConcurrencyFailureException.class)
+    public ResponseEntity<Map<String, Object>> handleConcurrencia(ConcurrencyFailureException ex) {
+        log.warn("Conflicto de concurrencia sobre el inventario", ex);
+        return buildResponse(HttpStatus.CONFLICT,
+                "La operación se cruzó con otra sobre el mismo producto. Volvé a intentarla");
     }
 
     /** Choque con una restricción de la base (único, clave foránea, etc.). */
