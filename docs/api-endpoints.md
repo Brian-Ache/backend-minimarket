@@ -508,17 +508,22 @@ endpoint que devuelve cuentas dadas de baja.
 
 **Response `200`:** `{ ...ProductoResponse }`
 
-**Error `400`:** si el barcode ya existe, o la categoría/proveedor no existen
+**Error `400`:** si el barcode ya existe, o la categoría/proveedor no existen (o están dados de baja)
 
 ---
 
 ### `GET /api/productos/v1`
 
-Lista todos los productos activos. Acepta filtros opcionales.
+Lista paginada de productos activos. Todos los filtros son opcionales y se combinan entre sí.
 
-**Query params:** `?categoria=UUID&proveedor=UUID`
+**Query params:** `?q=texto&categoria=UUID&proveedor=UUID&page=0&size=20`
 
-**Response `200`:** `[ ...ProductoResponse ]`
+`page` arranca en 0; `size` va de 1 a 100. Orden: `updatedAt` descendente, con el `id` como
+desempate para que la paginación sea estable.
+
+**Response `200`:** `Page<ProductoResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
+**Error `400`:** `page` negativo, o `size` fuera de 1..100
 
 ---
 
@@ -538,27 +543,38 @@ Busca por código de barras.
 
 ### `GET /api/productos/v1/search`
 
-Búsqueda por nombre (case-insensitive, top 20).
+Búsqueda por nombre (case-insensitive). Equivale a `GET /api/productos/v1?q=texto`.
 
-**Query params:** `?q=texto`
+**Query params:** `?q=texto&page=0&size=20`
 
-**Response `200`:** `[ ...ProductoResponse ]`
+**Response `200`:** `Page<ProductoResponse>`
+
+**Error `400`:** `page` negativo, o `size` fuera de 1..100
 
 ---
 
 ### `PUT /api/productos/v1/{id}`
 
+Reemplazo total: el body es la representación completa del producto. Los campos opcionales que
+se omitan o vengan en `null` **se borran** (es la forma de desasignar categoría, proveedor,
+costo o margen).
+
 **Request:** mismo body que POST
 
 **Response `200`:** `{ ...ProductoResponse }`
+
+**Error `404`:** el producto no existe o está dado de baja
 
 ---
 
 ### `DELETE /api/productos/v1/{id}`
 
-Soft delete.
+Soft delete. Da de baja también la fila de stock y los lotes del producto.
 
 **Response `204`**
+
+**Error `400`:** el producto todavía tiene existencias (stock o lotes con unidades). Hay que
+descargarlas antes, con una venta o con un ajuste de stock.
 
 ---
 
@@ -587,12 +603,17 @@ Soft delete.
 **Request:**
 ```json
 {
-  "nombre": "string (max 100, único)",
+  "nombre": "string (max 100, único entre las categorías activas)",
   "descripcion": "string (max 255, opcional)"
 }
 ```
 
+`nombre` y `descripcion` se recortan antes de guardarse. El nombre de una categoría dada de baja
+queda liberado: se puede volver a crear una con ese mismo nombre.
+
 **Response `200`:** `{ ...CategoriaResponse }`
+
+**Error `400`:** ya hay una categoría activa con ese nombre
 
 ---
 
@@ -618,7 +639,11 @@ Soft delete.
 
 ### `DELETE /api/categorias/v1/{id}`
 
+Soft delete. Libera el nombre para una categoría nueva.
+
 **Response `204`**
+
+**Error `400`:** hay productos activos asignados a la categoría. Hay que reasignarlos antes.
 
 ---
 
@@ -643,16 +668,25 @@ Soft delete.
 {
   "nombre": "string (max 150)",
   "telefono": "string (max 50, opcional)",
-  "email": "string (max 100, opcional)",
+  "email": "string (max 100, opcional, formato email)",
   "direccion": "string (max 255, opcional)"
 }
 ```
 
+Los campos se recortan antes de guardarse.
+
 **Response `200`:** `{ ...ProveedorResponse }`
+
+**Error `400`:** ya hay un proveedor activo con ese nombre, o el email no tiene formato válido
 
 ---
 
 ### `GET /api/proveedores/v1`
+
+**Query params:** `?incluirBajas=false`
+
+Con `incluirBajas=true` suma los proveedores dados de baja, que vienen con `deletedAt` cargado.
+Es cómo el front encuentra el que hay que restaurar: en el listado normal no aparecen.
 
 **Response `200`:** `[ ...ProveedorResponse ]`
 
@@ -674,7 +708,24 @@ Soft delete.
 
 ### `DELETE /api/proveedores/v1/{id}`
 
+Baja lógica. El proveedor deja de poder usarse en compras nuevas y de asignarse a un producto,
+pero **sigue apareciendo en el historial de compras y en los productos que lo tenían**, con
+`deletedAt` cargado. Es reversible con `/restaurar`. No exige que no tenga compras ni productos:
+conservar esa referencia es justamente el punto.
+
 **Response `204`**
+
+---
+
+### `POST /api/proveedores/v1/{id}/restaurar`
+
+Vuelve a habilitar un proveedor dado de baja. Va sobre la fila original y no sobre un alta nueva,
+para no partir el historial de compras, que lo referencia por id. Solo ADMIN.
+
+**Response `200`:** `{ ...ProveedorResponse }` (con `deletedAt` en `null`)
+
+**Error `400`:** el proveedor no está dado de baja, o mientras tanto se dio de alta otro activo
+con el mismo nombre
 
 ---
 
@@ -686,9 +737,14 @@ Soft delete.
   "nombre": "string",
   "telefono": "string | null",
   "email": "string | null",
-  "direccion": "string | null"
+  "direccion": "string | null",
+  "deletedAt": "datetime | null"
 }
 ```
+
+`deletedAt` viene con valor solo cuando el proveedor está dado de baja: desde
+`GET /api/proveedores/v1?incluirBajas=true`, desde el historial de compras y desde el catálogo
+de productos.
 
 ---
 

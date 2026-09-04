@@ -323,7 +323,10 @@ public class CompraService implements CompraApi {
         ProveedorResponse proveedor = null;
         if (compra.getIdProveedor() != null) {
             try {
-                proveedor = proveedoresApi.getById(compra.getIdProveedor());
+                // Incluyendo bajas: dar de baja a un proveedor cierra las compras nuevas, no
+                // borra de la pantalla a quién se le compró. Con getById, cada baja dejaba
+                // todas sus compras históricas mostrando proveedor en null.
+                proveedor = proveedoresApi.getByIdIncluyendoBajas(compra.getIdProveedor());
             } catch (ResourceNotFoundException e) {
                 proveedor = null;
             }

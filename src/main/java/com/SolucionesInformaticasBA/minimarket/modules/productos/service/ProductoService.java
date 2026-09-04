@@ -279,7 +279,10 @@ public class ProductoService implements ProductosApi{
                 proveedor = cacheProveedores.get(p.getIdProveedor());
             } else {
                 try {
-                    proveedor = proveedoresApi.getById(p.getIdProveedor());
+                    // Incluyendo bajas: el producto sigue mostrando su proveedor aunque esté
+                    // dado de baja, con deletedAt cargado para que el front lo distinga. Que
+                    // no se pueda asignar uno de baja ya lo cubre validarCategoriaYProveedor.
+                    proveedor = proveedoresApi.getByIdIncluyendoBajas(p.getIdProveedor());
                 } catch (ResourceNotFoundException e) {
                     proveedor = null;
                 }

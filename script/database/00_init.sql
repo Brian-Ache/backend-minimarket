@@ -87,8 +87,15 @@ CREATE TABLE IF NOT EXISTS categorias (
     created_at      DATETIME(6)  NOT NULL,
     updated_at      DATETIME(6)  NOT NULL,
     deleted_at      DATETIME(6)  NULL,
+    -- El nombre es unico solo entre las categorias activas: los NULL de un
+    -- indice unico no chocan entre si, asi que una categoria dada de baja
+    -- libera su nombre y se puede volver a crear. Mismo patron que
+    -- uk_productos_barcode_activo.
+    nombre_activo   VARCHAR(100)
+        GENERATED ALWAYS AS (IF(deleted_at IS NULL, nombre, NULL)) VIRTUAL,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_categorias_nombre (nombre),
+    UNIQUE KEY uk_categorias_nombre_activo (nombre_activo),
+    KEY ix_categorias_nombre (nombre),
     KEY ix_categorias_deleted_at (deleted_at)
 ) ENGINE = InnoDB;
 
