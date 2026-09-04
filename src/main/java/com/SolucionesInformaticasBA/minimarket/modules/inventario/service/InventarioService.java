@@ -200,11 +200,13 @@ public class InventarioService implements InventarioApi{
         return existencias;
     }
 
-    public List<MovimientoStockResponse> obtenerMovimientos(UUID idProducto){
-        return movimientoStockRepository.findByIdProductoAndDeletedAtIsNullOrderByCreatedAtDesc(idProducto)
-            .stream()
-            .map(this::toMovimientoResponse)
-            .toList();
+    /**
+     * Paginado: es la única tabla del módulo que crece con cada venta y cada compra, así que un
+     * listado completo se traía años de historia en un solo pedido.
+     */
+    public Page<MovimientoStockResponse> obtenerMovimientos(UUID idProducto, Pageable pageable){
+        return movimientoStockRepository.findByIdProductoAndDeletedAtIsNull(idProducto, pageable)
+            .map(this::toMovimientoResponse);
     }
 
     @Transactional
@@ -376,6 +378,9 @@ public class InventarioService implements InventarioApi{
             .tipo(m.getTipo().name())
             .motivo(m.getMotivo())
             .fecha(m.getCreatedAt())
+            .idLote(m.getIdLote())
+            .idReferencia(m.getIdReferencia())
+            .idUsuario(m.getIdUsuario())
             .build();
     }
 }

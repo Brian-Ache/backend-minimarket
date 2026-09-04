@@ -1260,6 +1260,10 @@ Stock actual de un producto.
 
 ### `PUT /api/inventario/v1/stock/aumentar`
 
+> `tipo` solo acepta **`AJUSTE`** o **`MERMA`**: `COMPRA` y `VENTA` los escribe el sistema al
+> registrar el comprobante, y son los que lee la reversa de una anulación. `idReferencia` que
+> venga en el body se descarta, y `idUsuario` sale siempre del JWT.
+
 Incrementa stock. Solo para productos que NO manejan lotes.
 
 **Request:**
@@ -1279,6 +1283,8 @@ Incrementa stock. Solo para productos que NO manejan lotes.
 
 ### `PUT /api/inventario/v1/stock/disminuir`
 
+> Mismas reglas de `tipo`, `idReferencia` e `idUsuario` que `aumentar`.
+
 Reduce stock. Valida stock suficiente.
 
 **Request:** mismo body que aumentar
@@ -1291,15 +1297,25 @@ Reduce stock. Valida stock suficiente.
 
 ### `DELETE /api/inventario/v1/stock/{idProducto}`
 
-Soft delete.
+Soft delete de la fila de stock. **Solo ADMIN**: borrar el stock de un producto saltea las
+validaciones de la baja de producto y puede tapar un faltante sin dejar rastro operativo.
 
 **Response `204`**
+
+**Error `400`:** el producto todavía tiene existencias. Hay que ajustar el stock a 0 antes.
+
+**Error `403`:** sin rol ADMIN
 
 ---
 
 ### `POST /api/inventario/v1/controlar`
 
-Ajuste físico de stock. Registra la diferencia como movimiento `AJUSTE`.
+Ajuste físico de stock. Registra la diferencia como movimiento `AJUSTE`. **Solo ADMIN**: es la
+operación que puede hacer desaparecer un faltante, así que va con el resto de lo sensible.
+
+Si el producto todavía no tiene fila de stock, la crea: un producto sin fila es stock 0, igual
+que en `GET /stock/{idProducto}`. **No aplica a productos que manejan lotes**, cuya existencia
+es la suma de sus lotes.
 
 **Request:**
 ```json
@@ -1313,25 +1329,43 @@ Ajuste físico de stock. Registra la diferencia como movimiento `AJUSTE`.
 
 **Response `200`**
 
+**Error `400`:** el producto maneja lotes, o el stock real es negativo
+
+**Error `403`:** sin rol ADMIN
+
 ---
 
 ### `GET /api/inventario/v1/movimientos/{idProducto}`
 
-Historial de movimientos de stock de un producto.
+Historial de movimientos de stock de un producto, del más reciente al más viejo.
+
+**Query params:** `?page=0&size=20`
+
+`page` arranca en 0; `size` va de 1 a 100.
+
+**Error `400`:** `page` negativo, o `size` fuera de 1..100
 
 **Response `200`:**
 ```json
-[
-  {
-    "id": "UUID",
-    "idProducto": "UUID",
-    "cantidad": "int",
-    "tipo": "COMPRA | VENTA | AJUSTE | MERMA",
-    "motivo": "string",
-    "fecha": "datetime"
-  }
-]
+`Page<MovimientoStockResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`),
+donde cada elemento es:
+
+```json
+{
+  "id": "UUID",
+  "idProducto": "UUID",
+  "cantidad": "int",
+  "tipo": "COMPRA | VENTA | AJUSTE | MERMA",
+  "motivo": "string",
+  "fecha": "datetime",
+  "idLote": "UUID | null",
+  "idReferencia": "UUID | null",
+  "idUsuario": "UUID | null"
+}
 ```
+
+`idLote` dice de qué lote salió la unidad (null si el producto no maneja lotes), `idReferencia`
+es la venta o compra que originó el movimiento, y `idUsuario` quién lo cargó.
 
 ---
 
