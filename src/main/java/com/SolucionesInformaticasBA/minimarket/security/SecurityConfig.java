@@ -64,6 +64,13 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.DELETE, "/api/productos/**", "/api/categorias/**",
                                 "/api/proveedores/**").hasRole("ADMIN")
 
+                        // Inventario: el ajuste manual y la baja de la fila de stock son las
+                        // dos operaciones que pueden tapar un faltante sin dejar rastro
+                        // operativo, así que van con el resto de lo sensible. Aumentar y
+                        // disminuir siguen abiertos: son el movimiento normal del día.
+                        .requestMatchers(HttpMethod.POST, "/api/inventario/v1/controlar").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/inventario/v1/stock/**").hasRole("ADMIN")
+
                         // Anular ventas y compras es una operación sensible
                         .requestMatchers(HttpMethod.DELETE, "/api/ventas/**", "/api/compras/**").hasRole("ADMIN")
 
