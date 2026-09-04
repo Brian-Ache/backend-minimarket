@@ -26,6 +26,8 @@ public interface LoteRepository extends JpaRepository<Lote,UUID>{
 
     List<Lote> findAllByDeletedAtIsNull();
 
+    List<Lote> findByFechaVencimientoIsNullAndDeletedAtIsNull();
+
     /**
      * Lotes activos del producto con el lock de cada fila tomado (SELECT ... FOR UPDATE), en
      * orden de vencimiento. Sin bloqueo, dos ventas simultáneas del mismo producto descontaban

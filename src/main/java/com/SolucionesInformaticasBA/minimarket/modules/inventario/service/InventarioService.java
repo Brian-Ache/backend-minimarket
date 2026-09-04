@@ -2,13 +2,16 @@ package com.SolucionesInformaticasBA.minimarket.modules.inventario.service;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
@@ -196,22 +199,47 @@ public class InventarioService implements InventarioApi{
     }
 
     public List<LoteResponse> getAll(){
-        Map<UUID, String> nombresProductos = productosApi.getAll(PageRequest.of(0, Integer.MAX_VALUE)).getContent().stream()
-            .collect(Collectors.toMap(ProductoResponse::getId, ProductoResponse::getNombre));
-
-        return loteRepository.findAllByDeletedAtIsNull().stream()
-            .map(l -> toLoteResponse(l, nombresProductos))
-            .toList();
+        return aLoteResponses(loteRepository.findAllByDeletedAtIsNull());
     }
 
+    /**
+     * Cada estado es un rango de fechas, así que se resuelve con una consulta y no trayendo
+     * todos los lotes —y antes también todo el catálogo— para descartar en memoria. Los
+     * límites salen de las mismas constantes que usa {@link EstadoLote#calcularPara}, que
+     * sigue siendo la única definición de qué es estar próximo a vencer.
+     */
     public List<LoteResponse> getByEstado(String estado) {
-        String buscado = parseEstadoLote(estado).name();
-        return getAll().stream()
-            .filter(lote -> buscado.equals(lote.getEstado()))
-            .toList();
+        LocalDate hoy = LocalDate.now();
+        LocalDate ultimoDiaProximo = hoy.plusDays(EstadoLote.DIAS_PROXIMO_A_VENCER - 1L);
+
+        List<Lote> lotes = switch (parseEstadoLote(estado)) {
+            case VENCIDO -> loteRepository.findByFechaVencimientoBeforeAndDeletedAtIsNull(hoy);
+            case PROXIMO -> loteRepository.findByFechaVencimientoBetweenAndDeletedAtIsNull(hoy, ultimoDiaProximo);
+            case VIGENTE -> loteRepository.findByFechaVencimientoAfterAndDeletedAtIsNull(ultimoDiaProximo);
+            case SIN_FECHA -> loteRepository.findByFechaVencimientoIsNullAndDeletedAtIsNull();
+        };
+
+        return aLoteResponses(lotes);
     }
 
     // Helpers
+
+    /**
+     * Resuelve los nombres de los productos involucrados en un solo pedido a productos, en vez
+     * de traerse el catálogo completo para armar un mapa que casi no se usa.
+     */
+    private List<LoteResponse> aLoteResponses(List<Lote> lotes) {
+        Set<UUID> idsProducto = lotes.stream()
+            .map(Lote::getIdProducto)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+
+        Map<UUID, String> nombres = productosApi.getNombresPorId(idsProducto);
+
+        return lotes.stream()
+            .map(l -> toLoteResponse(l, nombres))
+            .toList();
+    }
 
     /**
      * Solo la usan aumentar, disminuir y controlarStock, que escriben la cantidad, así que
@@ -250,8 +278,11 @@ public class InventarioService implements InventarioApi{
      * El estado es una función de la fecha de vencimiento y del día de hoy, así que se calcula
      * al leer. Antes se persistía y se "refrescaba" desde el GET de lotes: un endpoint de
      * lectura que escribía en la base, y que además dejaba el dato desactualizado hasta que
-     * alguien consultara. La columna `lote.estado` se sigue guardando al crear el lote, para
-     * que las consultas SQL directas tengan un valor razonable.
+     * alguien consultara.
+     *
+     * <p>La columna `lote.estado` se sigue escribiendo al crear el lote, pero <b>no se
+     * refresca nunca</b>: es el estado al momento del alta y no sirve para saber si hoy está
+     * vencido. Para eso está este cálculo, que es lo que devuelve la API.
      */
     private EstadoLote calcularEstado(LocalDate fechaVencimiento){
         return EstadoLote.calcularPara(fechaVencimiento);
@@ -294,12 +325,22 @@ public class InventarioService implements InventarioApi{
         return LoteResponse.builder()
             .id(l.getId())
             .idProducto(l.getIdProducto())
-            .nombreProducto(nombresProductos.getOrDefault(l.getIdProducto(), "Producto no encontrado"))
+            .nombreProducto(nombreDeProducto(l.getIdProducto(), nombresProductos))
             .numeroLote(l.getNumeroLote())
             .fechaVencimiento(l.getFechaVencimiento())
             .cantidad(l.getCantidad())
             .estado(calcularEstado(l.getFechaVencimiento()).name())
             .build();
+    }
+
+    /**
+     * El nombre puede faltar por dos motivos distintos y conviene no confundirlos: que el
+     * producto ya no exista, o que exista con la columna en null (la base lo admite).
+     */
+    private String nombreDeProducto(UUID idProducto, Map<UUID, String> nombres){
+        if (!nombres.containsKey(idProducto)) return "Producto no encontrado";
+        String nombre = nombres.get(idProducto);
+        return nombre != null ? nombre : "Producto sin nombre";
     }
 
     private MovimientoStockResponse toMovimientoResponse(MovimientoStock m){

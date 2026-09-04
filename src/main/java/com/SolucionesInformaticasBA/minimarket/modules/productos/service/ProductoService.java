@@ -1,6 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.modules.productos.service;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -78,6 +79,21 @@ public class ProductoService implements ProductosApi{
             throw new ResourceNotFoundException("Producto no encontrado");
         }
         return toResponse(producto);
+    }
+
+    @Override
+    public Map<UUID, String> getNombresPorId(Collection<UUID> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Map.of();
+        }
+        // HashMap y no Collectors.toMap: toMap revienta con NullPointerException si algún
+        // nombre es null, y la columna lo admite. Un producto sin nombre no puede tirar abajo
+        // el listado de otro módulo.
+        Map<UUID, String> nombres = new HashMap<>();
+        for (Producto p : productoRepository.findAllById(ids)) {
+            nombres.put(p.getId(), p.getNombre());
+        }
+        return nombres;
     }
 
     public Page<ProductoResponse> getAll(Pageable pageable){
