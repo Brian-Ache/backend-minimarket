@@ -34,3 +34,7 @@ build/
 
 ### Environment ###
 .env
+
+### Claude Code ###
+# Los permisos locales son de cada uno; las skills del proyecto sí se versionan.
+.claude/settings.local.json
