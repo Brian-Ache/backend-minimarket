@@ -101,7 +101,13 @@ CREATE TABLE IF NOT EXISTS productos (
     created_at      DATETIME(6)  NOT NULL,
     updated_at      DATETIME(6)  NOT NULL,
     deleted_at      DATETIME(6)  NULL,
+    -- El barcode es unico solo entre los productos activos: los NULL de un
+    -- indice unico no chocan entre si, asi que las filas borradas liberan el
+    -- codigo. Mismo patron que uk_stock_producto_activo.
+    barcode_activo  VARCHAR(255)
+        GENERATED ALWAYS AS (IF(deleted_at IS NULL, barcode, NULL)) VIRTUAL,
     PRIMARY KEY (id),
+    UNIQUE KEY uk_productos_barcode_activo (barcode_activo),
     KEY ix_productos_barcode (barcode),
     KEY ix_productos_categoria (id_categoria, deleted_at),
     KEY ix_productos_proveedor (id_proveedor, deleted_at),

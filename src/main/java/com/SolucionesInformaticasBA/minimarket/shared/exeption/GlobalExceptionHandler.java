@@ -3,6 +3,7 @@ package com.SolucionesInformaticasBA.minimarket.shared.exeption;
 import java.time.LocalDateTime;
 import java.util.Map;
 
+import org.springframework.context.MessageSourceResolvable;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +14,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -68,6 +70,23 @@ public class GlobalExceptionHandler {
         @SuppressWarnings("null")
         var errors = ex.getBindingResult().getFieldErrors().stream()
                 .map(FieldError::getDefaultMessage)
+                .toList();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(
+                "error", "Validation failed",
+                "details", errors,
+                "timestamp", LocalDateTime.now()));
+    }
+
+    /**
+     * Validación de parámetros sueltos: los {@code @Min} / {@code @Max} de un query param.
+     * Llegan por otra excepción que el {@code @Valid} del body y, sin este handler, las
+     * agarraba el catch-all: un {@code ?size=0} respondía 500, haciendo pasar un error del
+     * cliente por una falla del servidor.
+     */
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<Map<String, Object>> handleParamValidation(HandlerMethodValidationException ex) {
+        var errors = ex.getAllErrors().stream()
+                .map(MessageSourceResolvable::getDefaultMessage)
                 .toList();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(
                 "error", "Validation failed",

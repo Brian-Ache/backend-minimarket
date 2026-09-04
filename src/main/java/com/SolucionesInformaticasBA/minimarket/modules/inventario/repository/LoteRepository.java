@@ -29,6 +29,8 @@ public interface LoteRepository extends JpaRepository<Lote,UUID>{
 
     List<Lote> findAllByDeletedAtIsNull();
 
+    List<Lote> findByIdProductoAndDeletedAtIsNull(UUID idProducto);
+
     List<Lote> findByIdProductoAndDeletedAtIsNullOrderByFechaVencimientoAsc(UUID idProducto);
 
     // Existencias por producto en una sola consulta: evita un query por producto en el

@@ -24,6 +24,8 @@ import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.Product
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.AllArgsConstructor;
 
 
@@ -31,6 +33,13 @@ import lombok.AllArgsConstructor;
 @RequestMapping("/api/productos")
 @AllArgsConstructor
 public class ProductoController {
+
+    /**
+     * Techo del tamaño de página: cada fila resuelve además su categoría y su proveedor,
+     * así que sin límite un solo request puede pedir un trabajo arbitrariamente grande.
+     */
+    private static final int MAX_PAGE_SIZE = 100;
+
     private final ProductosApi productosApi;
 
     @PostMapping("/v1")
@@ -44,9 +53,10 @@ public class ProductoController {
             @RequestParam Optional<String> q,
             @RequestParam Optional<UUID> categoria,
             @RequestParam Optional<UUID> proveedor,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-                Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "updatedAt"));
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
+                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+                Pageable pageable = pagina(page, size);
                 if (q.isPresent()) {
                     if (categoria.isPresent() && proveedor.isPresent()) {
                         return ResponseEntity.ok(productosApi.searchByNombreAndCategoriaAndProveedor(q.get(), categoria.get(), proveedor.get(), pageable));
@@ -79,9 +89,10 @@ public class ProductoController {
     @GetMapping("/v1/search")
     public ResponseEntity<Page<ProductoResponse>> search(
             @RequestParam String q,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        return ResponseEntity.ok(productosApi.search(q, PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "updatedAt"))));
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
+                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+        return ResponseEntity.ok(productosApi.search(q, pagina(page, size)));
     }
 
     @GetMapping("/v1/barcode/{barcode}")
@@ -100,5 +111,16 @@ public class ProductoController {
     public ResponseEntity<Void> delete(@PathVariable UUID id){
         productosApi.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * updatedAt se mueve solo —cada compra reescribe costo y precio del producto— y por sí
+     * solo no desempata: los productos cargados juntos comparten timestamp. Sin el id como
+     * segundo criterio, el orden dentro de un empate lo elige la base y las filas se
+     * repetían o se salteaban al pasar de página.
+     */
+    private Pageable pagina(int page, int size) {
+        return PageRequest.of(page, size,
+                Sort.by(Sort.Direction.DESC, "updatedAt").and(Sort.by(Sort.Direction.ASC, "id")));
     }
 }
