@@ -126,6 +126,7 @@ public class CajaService implements CajaApi {
     @Transactional
     public MovimientoCajaResponse registrarEntradaAutomatica(
             UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia) {
+        exigirSesionAbierta(idSesion);
         MovimientoCaja movimiento = MovimientoCaja.builder()
             .idSesion(idSesion)
             .tipo(TipoMovimientoCaja.ENTRADA)
@@ -141,6 +142,7 @@ public class CajaService implements CajaApi {
     @Transactional
     public MovimientoCajaResponse registrarSalidaAutomatica(
             UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia) {
+        exigirSesionAbierta(idSesion);
         MovimientoCaja movimiento = MovimientoCaja.builder()
             .idSesion(idSesion)
             .tipo(TipoMovimientoCaja.SALIDA)
@@ -349,6 +351,20 @@ public class CajaService implements CajaApi {
             .stream()
             .map(s -> toCorteResponse(s, null, s.getSaldoFinal()))
             .toList();
+    }
+
+    /**
+     * Los movimientos automáticos reciben el id del turno de quien los origina. Hoy todos pasan
+     * el de la sesión abierta, pero la API aceptaba cualquiera: bastaba con equivocarse para
+     * imputarle plata a un turno cerrado y correrle el arqueo a un corte ya firmado.
+     */
+    private void exigirSesionAbierta(UUID idSesion) {
+        SesionCaja sesion = sesionCajaRepository.findByIdAndDeletedAtIsNull(idSesion)
+            .orElseThrow(() -> new ResourceNotFoundException("Sesión de caja no encontrada"));
+        if (sesion.getEstado() != EstadoSesion.ABIERTA) {
+            throw new BadRequestException(
+                "El turno de caja ya está cerrado: no se le pueden imputar movimientos nuevos");
+        }
     }
 
     /**

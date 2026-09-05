@@ -37,6 +37,11 @@ public interface CajaApi {
     MovimientoCajaResponse registrarEntradaManual(UUID idUsuario, MovimientoCajaRequest request);
     MovimientoCajaResponse registrarSalidaManual(UUID idUsuario, MovimientoCajaRequest request);
 
+    /**
+     * Movimientos que escribe el sistema al registrar un comprobante. Exigen que la sesión
+     * exista y siga abierta: aceptaban cualquier id, así que se podía imputar plata a un turno
+     * ya cerrado y correrle el arqueo a un corte firmado.
+     */
     MovimientoCajaResponse registrarEntradaAutomatica(UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia);
     MovimientoCajaResponse registrarSalidaAutomatica(UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia);
 
