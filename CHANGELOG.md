@@ -48,6 +48,10 @@ inventario.
   regla es por proveedor y por tipo: dos proveedores distintos pueden emitir el mismo número, y
   un mismo proveedor puede tener un remito y una factura con el mismo número porque cada tipo
   lleva su propia numeración. Ver *Base de datos*.
+- **`GET /api/caja/v1/movimientos` devuelve un `Page` y exige las dos fechas o ninguna.**
+  Acepta `?page=` y `?size=` (1 a 100). Antes, con solo `hasta`, el rango arrancaba en el año
+  2000 y se traía sin paginar la tabla que suma una fila por cada venta cobrada en efectivo,
+  cada compra pagada por caja y cada reversa.
 - **Los tres listados de ventas devuelven un `Page`.** `GET /api/ventas/v1`,
   `/api/ventas/v1/usuario/{idUsuario}` y `/api/ventas/v1/fecha` aceptan `?page=` y `?size=`
   (1 a 100) y ya no devuelven una lista. El primero traía **todas** las ventas de la historia
@@ -204,6 +208,17 @@ inventario.
   esperando un rango semiabierto —que es como está escrito el otro query del mismo repositorio y
   como funciona ventas—. Una compra registrada exactamente a las `00:00:00.000000` del día
   siguiente entraba en el reporte del día anterior.
+- **El corte de caja se archivaba con la fecha equivocada si el turno cruzaba la medianoche.**
+  Un turno que abre a las 22:00 y cierra a las 02:00 quedaba fechado al día siguiente, y el
+  corte es un documento contable: esa fecha queda guardada. Lo mismo pasaba en el resumen que
+  el cajero mira antes de cerrar. Ahora las dos salen de la apertura del turno.
+- **Dos cortes simultáneos se pisaban.** El cierre leía el turno, calculaba el arqueo y lo
+  escribía sin bloquear la fila, así que dos cierres a la vez —dos terminales, o un doble
+  clic— lo cerraban los dos: el segundo pisaba el saldo real, la diferencia y el desglose del
+  primero, que ya le había devuelto al usuario un corte que no quedó guardado. El índice único
+  de sesión abierta no alcanzaba, porque cerrar libera ese lugar en vez de ocuparlo.
+- **El listado de movimientos de caja no validaba el rango**: invertido devolvía vacío en
+  silencio.
 - **El resumen de ventas de un turno se fechaba con el día en que se lo consultaba.**
   `GET /api/ventas/v1/resumen/sesion/{idSesion}` usaba la fecha de hoy en lugar de la del turno,
   así que un turno que abre a las 22:00 y cierra a las 02:00 salía fechado al día siguiente, y
