@@ -20,9 +20,17 @@ public interface VentaRepository extends JpaRepository<Venta, UUID> {
 
     Optional<Venta> findByIdAndCobradaFalseAndDeletedAtIsNull(UUID id);
 
-    Page<Venta> findAllByDeletedAtIsNull(Pageable pageable);
-
-    Page<Venta> findByIdUsuarioAndDeletedAtIsNull(UUID idUsuario, Pageable pageable);
+    /**
+     * Listado paginado, opcionalmente acotado a un usuario. Con {@code idUsuario} en null trae
+     * las de todos: es lo que ve un administrador, mientras que un empleado siempre viaja con
+     * su propio id.
+     */
+    @Query("""
+            SELECT v FROM Venta v
+             WHERE v.deletedAt IS NULL
+               AND (:idUsuario IS NULL OR v.idUsuario = :idUsuario)
+            """)
+    Page<Venta> findFiltradas(@Param("idUsuario") UUID idUsuario, Pageable pageable);
 
     // Rango semiabierto [desde, hasta): Between es inclusivo en ambos extremos, así que una
     // venta justo en el límite se contaba en dos períodos consecutivos.
@@ -33,13 +41,15 @@ public interface VentaRepository extends JpaRepository<Venta, UUID> {
             """)
     List<Venta> findEnRango(@Param("desde") LocalDateTime desde, @Param("hasta") LocalDateTime hasta);
 
-    // Mismo rango semiabierto, paginado: es lo que consume el listado por fechas de la API.
+    // Mismo rango semiabierto, paginado y con el mismo filtro opcional por usuario.
     @Query("""
             SELECT v FROM Venta v
              WHERE v.createdAt >= :desde AND v.createdAt < :hasta
                AND v.deletedAt IS NULL
+               AND (:idUsuario IS NULL OR v.idUsuario = :idUsuario)
             """)
-    Page<Venta> findEnRango(@Param("desde") LocalDateTime desde, @Param("hasta") LocalDateTime hasta,
+    Page<Venta> findEnRango(@Param("idUsuario") UUID idUsuario,
+                            @Param("desde") LocalDateTime desde, @Param("hasta") LocalDateTime hasta,
                             Pageable pageable);
 
     /**

@@ -866,8 +866,15 @@ las 22:00 y cierra a las 02:00 se informa con el día en que abrió.
 
 **Response `200`:** `{ ...VentaResponse }`
 
+**Error `403`:** un `EMPLEADO` pidiendo la venta de otro
+
 ---
 
+> **Alcance por rol:** un `EMPLEADO` solo ve sus propias ventas, en cualquiera de los listados y
+> también al pedir una por id (`403` si es de otro). Un `ADMIN` ve las de todos. El alcance no se
+> acepta del cliente: sale del rol de quien pregunta, así que `GET /api/ventas/v1` devuelve cosas
+> distintas según quién llame.
+>
 > Los tres listados de abajo **paginan**: `?page=0&size=20`, con `page` desde 0 y `size` de 1 a
 > 100. Ordenan de la venta más reciente a la más vieja, con el `id` como desempate para que la
 > paginación sea estable cuando varias comparten el mismo instante. Todos responden `400` si
@@ -886,7 +893,7 @@ Listado paginado de ventas activas.
 
 ### `GET /api/ventas/v1/usuario/{idUsuario}`
 
-Filtra por usuario.
+Filtra por usuario. Un `EMPLEADO` solo puede pedir el suyo: con el id de otro recibe `403`.
 
 **Query params:** `?page=0&size=20`
 

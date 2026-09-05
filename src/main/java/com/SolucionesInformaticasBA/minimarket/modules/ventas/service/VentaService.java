@@ -41,6 +41,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.ventas.repository.Detalle
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.repository.VentaRepository;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
+import com.SolucionesInformaticasBA.minimarket.shared.exeption.ForbiddenException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
 import jakarta.transaction.Transactional;
@@ -197,6 +198,12 @@ public class VentaService implements VentasApi {
         Venta venta = ventaRepository.findByIdAndDeletedAtIsNull(id)
             .orElseThrow(() -> new ResourceNotFoundException("Venta no encontrada"));
 
+        // Mismo alcance que los listados: un empleado ve lo suyo, un administrador ve todo. Si
+        // no, alcanzaba con tener el id de una venta ajena para leerla entera.
+        if (!SecurityUtils.esAdmin() && !SecurityUtils.getCurrentUserId().equals(venta.getIdUsuario())) {
+            throw new ForbiddenException("No tenés permiso para ver una venta de otro usuario");
+        }
+
         List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(id);
 
         return toVentaResponse(venta, toDetalleVentaResponseList(detalles));
@@ -208,14 +215,8 @@ public class VentaService implements VentasApi {
      * una por línea—, así que con unos meses de operación cada llamada se volvía impagable.
      */
     @Override
-    public Page<VentaResponse> getAll(Pageable pageable) {
-        return toVentaResponsePage(ventaRepository.findAllByDeletedAtIsNull(pageable), pageable);
-    }
-
-    @Override
-    public Page<VentaResponse> getByUsuario(UUID idUsuario, Pageable pageable) {
-        return toVentaResponsePage(
-            ventaRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario, pageable), pageable);
+    public Page<VentaResponse> getAll(UUID idUsuario, Pageable pageable) {
+        return toVentaResponsePage(ventaRepository.findFiltradas(idUsuario, pageable), pageable);
     }
 
     @Override
@@ -224,8 +225,10 @@ public class VentaService implements VentasApi {
     }
 
     @Override
-    public Page<VentaResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta, Pageable pageable) {
-        return toVentaResponsePage(ventaRepository.findEnRango(desde, hasta, pageable), pageable);
+    public Page<VentaResponse> getByFecha(UUID idUsuario, LocalDateTime desde, LocalDateTime hasta,
+                                          Pageable pageable) {
+        return toVentaResponsePage(
+            ventaRepository.findEnRango(idUsuario, desde, hasta, pageable), pageable);
     }
 
     /**

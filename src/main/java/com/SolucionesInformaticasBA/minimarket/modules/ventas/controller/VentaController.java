@@ -12,6 +12,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -55,21 +56,26 @@ public class VentaController {
         return ResponseEntity.ok(ventasApi.getById(id));
     }
 
+    /**
+     * Un empleado ve solo sus ventas; un administrador, las de todos. El alcance no se acepta
+     * del cliente: sale del rol de quien pregunta.
+     */
     @GetMapping("/v1")
     public ResponseEntity<Page<VentaResponse>> getAll(
             @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
             @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
                 @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
-        return ResponseEntity.ok(ventasApi.getAll(pagina(page, size)));
+        return ResponseEntity.ok(ventasApi.getAll(alcance(), pagina(page, size)));
     }
 
     @GetMapping("/v1/usuario/{idUsuario}")
+    @PreAuthorize("hasRole('ADMIN') or #idUsuario.toString() == authentication.principal")
     public ResponseEntity<Page<VentaResponse>> getByUsuario(
             @PathVariable UUID idUsuario,
             @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
             @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
                 @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
-        return ResponseEntity.ok(ventasApi.getByUsuario(idUsuario, pagina(page, size)));
+        return ResponseEntity.ok(ventasApi.getAll(idUsuario, pagina(page, size)));
     }
 
     @GetMapping("/v1/fecha")
@@ -79,7 +85,7 @@ public class VentaController {
             @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
             @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
                 @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
-        return ResponseEntity.ok(ventasApi.getByFecha(desde, hasta, pagina(page, size)));
+        return ResponseEntity.ok(ventasApi.getByFecha(alcance(), desde, hasta, pagina(page, size)));
     }
 
     @PostMapping("/v1/{id}/cobrar")
@@ -108,6 +114,14 @@ public class VentaController {
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         ventasApi.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Null para un administrador —ve todas— y el id propio para cualquier otro rol. Es lo que
+     * mantiene el mismo criterio en los dos listados sin que el cliente pueda elegir el alcance.
+     */
+    private UUID alcance() {
+        return SecurityUtils.esAdmin() ? null : SecurityUtils.getCurrentUserId();
     }
 
     /**

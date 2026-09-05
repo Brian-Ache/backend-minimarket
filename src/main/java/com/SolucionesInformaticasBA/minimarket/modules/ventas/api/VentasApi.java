@@ -17,9 +17,14 @@ import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRespo
 public interface VentasApi {
     VentaResponse realizarVenta(UUID idUsuario, VentaRequest request);
     VentaResponse getById(UUID id);
-    Page<VentaResponse> getAll(Pageable pageable);
-    Page<VentaResponse> getByUsuario(UUID idUsuario, Pageable pageable);
-    Page<VentaResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta, Pageable pageable);
+    /**
+     * @param idUsuario acota el listado a un usuario; en null trae las ventas de todos. Quién
+     *        puede pedir qué lo decide el controller: un empleado solo ve las suyas.
+     */
+    Page<VentaResponse> getAll(UUID idUsuario, Pageable pageable);
+
+    Page<VentaResponse> getByFecha(UUID idUsuario, LocalDateTime desde, LocalDateTime hasta,
+                                   Pageable pageable);
 
     /** Solo ventas cobradas, filtradas por fecha de cobro. Es la fuente de todo reporte de dinero. */
     List<VentaResponse> getByFechaCobradas(LocalDateTime desde, LocalDateTime hasta);
