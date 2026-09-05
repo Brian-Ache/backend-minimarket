@@ -5,6 +5,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.ResumenDiarioResponse;
@@ -14,9 +17,9 @@ import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRespo
 public interface VentasApi {
     VentaResponse realizarVenta(UUID idUsuario, VentaRequest request);
     VentaResponse getById(UUID id);
-    List<VentaResponse> getAll();
-    List<VentaResponse> getByUsuario(UUID idUsuario);
-    List<VentaResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta);
+    Page<VentaResponse> getAll(Pageable pageable);
+    Page<VentaResponse> getByUsuario(UUID idUsuario, Pageable pageable);
+    Page<VentaResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta, Pageable pageable);
 
     /** Solo ventas cobradas, filtradas por fecha de cobro. Es la fuente de todo reporte de dinero. */
     List<VentaResponse> getByFechaCobradas(LocalDateTime desde, LocalDateTime hasta);

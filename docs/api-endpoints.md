@@ -861,11 +861,19 @@ acá se ve cuánto entró por tarjeta y transferencia en ese turno.
 
 ---
 
+> Los tres listados de abajo **paginan**: `?page=0&size=20`, con `page` desde 0 y `size` de 1 a
+> 100. Ordenan de la venta más reciente a la más vieja, con el `id` como desempate para que la
+> paginación sea estable cuando varias comparten el mismo instante. Todos responden `400` si
+> `page` es negativo o `size` queda fuera de rango.
+
 ### `GET /api/ventas/v1`
 
-Lista todas las ventas activas.
+Listado paginado de ventas activas.
 
-**Response `200`:** `[ ...VentaResponse ]`
+**Query params:** `?page=0&size=20`
+
+**Response `200`:** `Page<VentaResponse>` (`content`, `totalElements`, `totalPages`, `number`,
+`size`)
 
 ---
 
@@ -873,17 +881,19 @@ Lista todas las ventas activas.
 
 Filtra por usuario.
 
-**Response `200`:** `[ ...VentaResponse ]`
+**Query params:** `?page=0&size=20`
+
+**Response `200`:** `Page<VentaResponse>`
 
 ---
 
 ### `GET /api/ventas/v1/fecha`
 
-Filtra por rango de fechas.
+Filtra por rango de fechas. El rango es **semiabierto**: incluye `desde` y excluye `hasta`.
 
-**Query params:** `desde=2026-01-01T00:00:00&hasta=2026-12-31T23:59:59`
+**Query params:** `desde=2026-01-01T00:00:00&hasta=2026-12-31T23:59:59&page=0&size=20`
 
-**Response `200`:** `[ ...VentaResponse ]`
+**Response `200`:** `Page<VentaResponse>`
 
 ---
 

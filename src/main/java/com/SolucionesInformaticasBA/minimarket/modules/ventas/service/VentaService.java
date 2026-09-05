@@ -11,6 +11,9 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
@@ -199,15 +202,20 @@ public class VentaService implements VentasApi {
         return toVentaResponse(venta, toDetalleVentaResponseList(detalles));
     }
 
+    /**
+     * Paginado y filtrando en la consulta: traía la tabla entera con findAll y descartaba las
+     * anuladas en memoria. Es la tabla que más rápido crece del sistema —una fila por venta más
+     * una por línea—, así que con unos meses de operación cada llamada se volvía impagable.
+     */
     @Override
-    public List<VentaResponse> getAll() {
-        return toVentaResponseList(
-            ventaRepository.findAll().stream().filter(v -> v.getDeletedAt() == null).toList());
+    public Page<VentaResponse> getAll(Pageable pageable) {
+        return toVentaResponsePage(ventaRepository.findAllByDeletedAtIsNull(pageable), pageable);
     }
 
     @Override
-    public List<VentaResponse> getByUsuario(UUID idUsuario) {
-        return toVentaResponseList(ventaRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario));
+    public Page<VentaResponse> getByUsuario(UUID idUsuario, Pageable pageable) {
+        return toVentaResponsePage(
+            ventaRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario, pageable), pageable);
     }
 
     @Override
@@ -216,8 +224,8 @@ public class VentaService implements VentasApi {
     }
 
     @Override
-    public List<VentaResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta) {
-        return toVentaResponseList(ventaRepository.findEnRango(desde, hasta));
+    public Page<VentaResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta, Pageable pageable) {
+        return toVentaResponsePage(ventaRepository.findEnRango(desde, hasta, pageable), pageable);
     }
 
     /**
@@ -436,6 +444,15 @@ public class VentaService implements VentasApi {
      * Arma las respuestas de varias ventas con <b>dos</b> consultas en total, en vez de una por
      * venta: trae todos los detalles juntos y los agrupa en memoria.
      */
+    /**
+     * PageImpl y no page.map(): el armado necesita la página entera para traer todos los
+     * detalles en una sola consulta. Mapear fila por fila volvería a un query por venta.
+     */
+    private Page<VentaResponse> toVentaResponsePage(Page<Venta> ventas, Pageable pageable) {
+        return new PageImpl<>(toVentaResponseList(ventas.getContent()), pageable,
+            ventas.getTotalElements());
+    }
+
     private List<VentaResponse> toVentaResponseList(List<Venta> ventas) {
         if (ventas.isEmpty()) {
             return List.of();

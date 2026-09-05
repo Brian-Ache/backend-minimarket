@@ -1,5 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.repository;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -18,7 +20,9 @@ public interface VentaRepository extends JpaRepository<Venta, UUID> {
 
     Optional<Venta> findByIdAndCobradaFalseAndDeletedAtIsNull(UUID id);
 
-    List<Venta> findByIdUsuarioAndDeletedAtIsNull(UUID idUsuario);
+    Page<Venta> findAllByDeletedAtIsNull(Pageable pageable);
+
+    Page<Venta> findByIdUsuarioAndDeletedAtIsNull(UUID idUsuario, Pageable pageable);
 
     // Rango semiabierto [desde, hasta): Between es inclusivo en ambos extremos, así que una
     // venta justo en el límite se contaba en dos períodos consecutivos.
@@ -28,6 +32,15 @@ public interface VentaRepository extends JpaRepository<Venta, UUID> {
                AND v.deletedAt IS NULL
             """)
     List<Venta> findEnRango(@Param("desde") LocalDateTime desde, @Param("hasta") LocalDateTime hasta);
+
+    // Mismo rango semiabierto, paginado: es lo que consume el listado por fechas de la API.
+    @Query("""
+            SELECT v FROM Venta v
+             WHERE v.createdAt >= :desde AND v.createdAt < :hasta
+               AND v.deletedAt IS NULL
+            """)
+    Page<Venta> findEnRango(@Param("desde") LocalDateTime desde, @Param("hasta") LocalDateTime hasta,
+                            Pageable pageable);
 
     /**
      * Ventas efectivamente cobradas en el período, filtradas por <b>fecha de cobro</b>.

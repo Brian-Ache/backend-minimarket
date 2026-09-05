@@ -6,6 +6,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -26,12 +30,17 @@ import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRespo
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.AllArgsConstructor;
 
 @RestController
 @RequestMapping("/api/ventas")
 @AllArgsConstructor
 public class VentaController {
+
+    /** Techo del tamaño de página de los listados de ventas. */
+    private static final int MAX_PAGE_SIZE = 100;
 
     private final VentasApi ventasApi;
 
@@ -47,20 +56,30 @@ public class VentaController {
     }
 
     @GetMapping("/v1")
-    public ResponseEntity<List<VentaResponse>> getAll() {
-        return ResponseEntity.ok(ventasApi.getAll());
+    public ResponseEntity<Page<VentaResponse>> getAll(
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
+                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+        return ResponseEntity.ok(ventasApi.getAll(pagina(page, size)));
     }
 
     @GetMapping("/v1/usuario/{idUsuario}")
-    public ResponseEntity<List<VentaResponse>> getByUsuario(@PathVariable UUID idUsuario) {
-        return ResponseEntity.ok(ventasApi.getByUsuario(idUsuario));
+    public ResponseEntity<Page<VentaResponse>> getByUsuario(
+            @PathVariable UUID idUsuario,
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
+                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+        return ResponseEntity.ok(ventasApi.getByUsuario(idUsuario, pagina(page, size)));
     }
 
     @GetMapping("/v1/fecha")
-    public ResponseEntity<List<VentaResponse>> getByFecha(
+    public ResponseEntity<Page<VentaResponse>> getByFecha(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime desde,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta) {
-        return ResponseEntity.ok(ventasApi.getByFecha(desde, hasta));
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta,
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
+                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+        return ResponseEntity.ok(ventasApi.getByFecha(desde, hasta, pagina(page, size)));
     }
 
     @PostMapping("/v1/{id}/cobrar")
@@ -89,5 +108,15 @@ public class VentaController {
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         ventasApi.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * De la más reciente a la más vieja, con el id como desempate: las ventas de un mismo
+     * momento comparten createdAt, y sin segundo criterio el orden dentro de un empate lo elige
+     * la base, con lo que las filas se repiten o se saltean al pasar de página.
+     */
+    private Pageable pagina(int page, int size) {
+        return PageRequest.of(page, size,
+                Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id")));
     }
 }
