@@ -802,10 +802,14 @@ cuenta billetes— ni requiere que haya una caja abierta.
 **Request:**
 ```json
 {
-  "montoRecibido": "float (>= total de la venta)",
+  "montoRecibido": "float (solo EFECTIVO: obligatorio y >= total; ignorado en los otros medios)",
   "metodoPago": "EFECTIVO | TARJETA | TRANSFERENCIA"
 }
 ```
+
+`montoRecibido` es lo que el cliente entrega, para calcular el vuelto: solo existe en efectivo.
+Con `TARJETA` o `TRANSFERENCIA` se ignora, y la venta queda con `montoRecibido` en `null` aunque
+el body haya traído un número.
 
 **Response `200`:**
 ```json

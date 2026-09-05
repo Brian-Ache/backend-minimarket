@@ -354,26 +354,33 @@ public class VentaService implements VentasApi {
             .orElseThrow(() -> new BadRequestException("Venta no encontrada o ya está cobrada"));
 
         String metodoPago = normalizarMetodoPago(request.getMetodoPago());
+        boolean enEfectivo = ES_EFECTIVO.equals(metodoPago);
 
-        if (request.getMontoRecibido() < venta.getTotal()) {
-            throw new BadRequestException("El monto recibido es menor al total de la venta");
+        // El monto recibido es la plata que el cliente pone sobre el mostrador: se exige, se
+        // valida y se guarda solo cuando se cobra en efectivo. Con tarjeta o transferencia no
+        // existe tal cosa, y guardarlo dejaba la columna con un número que no significaba nada.
+        if (enEfectivo) {
+            if (request.getMontoRecibido() == null) {
+                throw new BadRequestException("El monto recibido es obligatorio para cobrar en efectivo");
+            }
+            if (request.getMontoRecibido() < venta.getTotal()) {
+                throw new BadRequestException("El monto recibido es menor al total de la venta");
+            }
         }
 
         // Solo hay vuelto si se paga en efectivo.
-        float cambio = ES_EFECTIVO.equals(metodoPago)
-            ? request.getMontoRecibido() - venta.getTotal()
-            : 0;
+        float cambio = enEfectivo ? request.getMontoRecibido() - venta.getTotal() : 0;
 
         venta.setCobrada(true);
         venta.setFechaCobro(LocalDateTime.now());
         venta.setMetodoPago(metodoPago);
-        venta.setMontoRecibido(request.getMontoRecibido());
+        venta.setMontoRecibido(enEfectivo ? request.getMontoRecibido() : null);
 
         // Solo el efectivo entra a la caja: la tarjeta y la transferencia quedan registradas
         // en la venta (metodo_pago) pero no forman parte del arqueo, que cuenta billetes.
         // La sesión se resuelve acá, al cobrar, y nunca se acepta del cliente: así no se
         // puede imputar plata a un turno que ya cerró su corte.
-        if (ES_EFECTIVO.equals(metodoPago)) {
+        if (enEfectivo) {
             UUID idSesion = cajaApi.getIdSesionActiva();
             venta.setIdSesion(idSesion);
             cajaApi.registrarEntradaAutomatica(
