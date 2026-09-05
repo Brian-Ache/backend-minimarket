@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.productos.controller;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -19,8 +20,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.PrecioReferenciaRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.PrecioReferenciaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.Paginacion;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
@@ -33,12 +37,6 @@ import lombok.AllArgsConstructor;
 @RequestMapping("/api/productos")
 @AllArgsConstructor
 public class ProductoController {
-
-    /**
-     * Techo del tamaño de página: cada fila resuelve además su categoría y su proveedor,
-     * así que sin límite un solo request puede pedir un trabajo arbitrariamente grande.
-     */
-    private static final int MAX_PAGE_SIZE = 100;
 
     private final ProductosApi productosApi;
 
@@ -53,9 +51,9 @@ public class ProductoController {
             @RequestParam Optional<String> q,
             @RequestParam Optional<UUID> categoria,
             @RequestParam Optional<UUID> proveedor,
-            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
-            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
-                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
                 Pageable pageable = pagina(page, size);
                 if (q.isPresent()) {
                     if (categoria.isPresent() && proveedor.isPresent()) {
@@ -89,9 +87,9 @@ public class ProductoController {
     @GetMapping("/v1/search")
     public ResponseEntity<Page<ProductoResponse>> search(
             @RequestParam String q,
-            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
-            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
-                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
         return ResponseEntity.ok(productosApi.search(q, pagina(page, size)));
     }
 
@@ -110,6 +108,37 @@ public class ProductoController {
     @DeleteMapping("/v1/{id}")
     public ResponseEntity<Void> delete(@PathVariable UUID id){
         productosApi.delete(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Catálogo de precios de referencia del producto: lo que cada proveedor lista por él. Es
+     * un dato de consulta, cargado siempre a mano, que no influye en ninguna compra.
+     *
+     * <p>Para verlo junto con lo que <b>realmente</b> se pagó está
+     * {@code GET /api/compras/v1/producto/{idProducto}/proveedores}, que vive en compras
+     * porque es el único módulo que ya depende de productos y de proveedores a la vez.
+     */
+    @GetMapping("/v1/{id}/proveedores")
+    public ResponseEntity<List<PrecioReferenciaResponse>> getProveedores(@PathVariable UUID id){
+        return ResponseEntity.ok(productosApi.getProveedoresDeProducto(id));
+    }
+
+    /** Upsert: el front no tiene por qué saber si la referencia ya existía. */
+    @PutMapping("/v1/{id}/proveedores/{idProveedor}")
+    public ResponseEntity<PrecioReferenciaResponse> guardarPrecioReferencia(
+            @PathVariable UUID id,
+            @PathVariable UUID idProveedor,
+            @Valid @RequestBody PrecioReferenciaRequest request){
+        return ResponseEntity.ok(productosApi.guardarPrecioReferencia(
+            id, idProveedor, request.getPrecioReferencia()));
+    }
+
+    @DeleteMapping("/v1/{id}/proveedores/{idProveedor}")
+    public ResponseEntity<Void> borrarPrecioReferencia(
+            @PathVariable UUID id,
+            @PathVariable UUID idProveedor){
+        productosApi.borrarPrecioReferencia(id, idProveedor);
         return ResponseEntity.noContent().build();
     }
 

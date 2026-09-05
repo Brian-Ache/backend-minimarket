@@ -125,6 +125,33 @@ CREATE TABLE IF NOT EXISTS productos (
         FOREIGN KEY (id_proveedor) REFERENCES proveedores (id) ON DELETE RESTRICT
 ) ENGINE = InnoDB;
 
+-- Catalogo de precios de referencia: lo que cada proveedor lista por un
+-- producto, cargado siempre a mano. No influye en ninguna compra ni en
+-- ningun calculo; es lo que se consulta al momento de comprar.
+-- productos.id_proveedor sigue siendo el proveedor habitual: son dos datos
+-- distintos. DECIMAL y no FLOAT porque la columna es nueva y no se suma con
+-- ningun otro importe (ver ARCHITECTURE.md, deuda de float).
+CREATE TABLE IF NOT EXISTS producto_proveedor (
+    id                BINARY(16)    NOT NULL,
+    id_producto       BINARY(16)    NOT NULL,
+    id_proveedor      BINARY(16)    NOT NULL,
+    precio_referencia DECIMAL(12,2) NOT NULL,
+    created_at        DATETIME(6)   NOT NULL,
+    updated_at        DATETIME(6)   NOT NULL,
+    deleted_at        DATETIME(6)   NULL,
+    -- Un solo precio activo por par, y borrar la referencia libera el par.
+    proveedor_activo  BINARY(16)
+        GENERATED ALWAYS AS (IF(deleted_at IS NULL, id_proveedor, NULL)) VIRTUAL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_prod_prov_activo (id_producto, proveedor_activo),
+    KEY ix_prod_prov_producto (id_producto, deleted_at),
+    KEY ix_prod_prov_proveedor (id_proveedor, deleted_at),
+    CONSTRAINT fk_prod_prov_producto
+        FOREIGN KEY (id_producto) REFERENCES productos (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_prod_prov_proveedor
+        FOREIGN KEY (id_proveedor) REFERENCES proveedores (id) ON DELETE RESTRICT
+) ENGINE = InnoDB;
+
 CREATE TABLE IF NOT EXISTS stock (
     id              BINARY(16)  NOT NULL,
     id_producto     BINARY(16)  NULL,
@@ -216,6 +243,9 @@ CREATE TABLE IF NOT EXISTS sesiones_caja (
     PRIMARY KEY (id),
     UNIQUE KEY uk_sesiones_una_abierta (sesion_abierta),
     KEY ix_sesiones_estado_fecha (estado, deleted_at, created_at),
+    -- El historial de cortes ordena por fecha_cierre, que no es el mismo orden que
+    -- created_at: un turno puede abrirse antes que otro y cerrarse despues.
+    KEY ix_sesiones_estado_cierre (estado, deleted_at, fecha_cierre),
     KEY ix_sesiones_created_at (created_at),
     KEY ix_sesiones_usuario_apertura (id_usuario_apertura),
     KEY ix_sesiones_usuario_cierre (id_usuario_cierre),

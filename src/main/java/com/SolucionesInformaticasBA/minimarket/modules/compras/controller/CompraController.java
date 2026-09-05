@@ -1,6 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.modules.compras.controller;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import org.springframework.data.domain.Page;
@@ -21,6 +22,8 @@ import org.springframework.web.bind.annotation.RestController;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.CompraApi;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.CompraRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.CompraResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.ProveedorDeProductoResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.Paginacion;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
@@ -32,9 +35,6 @@ import lombok.AllArgsConstructor;
 @RequestMapping("/api/compras")
 @AllArgsConstructor
 public class CompraController {
-
-    /** Techo del tamaño de página: cada compra de la página resuelve además su proveedor. */
-    private static final int MAX_PAGE_SIZE = 100;
 
     private final CompraApi compraApi;
 
@@ -67,9 +67,9 @@ public class CompraController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime desde,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta,
             @RequestParam(required = false) String sortTotal,
-            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
-            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
-                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
 
         Sort sort = "asc".equals(sortTotal)
             ? Sort.by(Sort.Direction.ASC, "total")
@@ -83,6 +83,21 @@ public class CompraController {
         Pageable pageable = PageRequest.of(page, size, sort.and(Sort.by(Sort.Direction.ASC, "id")));
 
         return ResponseEntity.ok(compraApi.getAllFiltered(proveedor, tipoComprobante, desde, hasta, pageable));
+    }
+
+    /**
+     * A quién se le puede comprar este producto y a cuánto: el precio que cada proveedor lista
+     * —el de referencia, que se carga a mano desde el catálogo— junto con lo que realmente se
+     * le pagó la última vez.
+     *
+     * <p>Es de consulta y no interviene en el alta de la compra: qué proveedor conviene lo
+     * decide el usuario. Sin paginar a propósito, porque la cantidad de proveedores de un
+     * producto es del orden de la decena.
+     */
+    @GetMapping("/v1/producto/{idProducto}/proveedores")
+    public ResponseEntity<List<ProveedorDeProductoResponse>> getProveedoresDeProducto(
+            @PathVariable UUID idProducto) {
+        return ResponseEntity.ok(compraApi.getProveedoresDeProducto(idProducto));
     }
 
     @DeleteMapping("/v1/{id}")

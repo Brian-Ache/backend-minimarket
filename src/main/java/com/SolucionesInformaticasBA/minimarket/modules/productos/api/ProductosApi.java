@@ -1,12 +1,15 @@
 package com.SolucionesInformaticasBA.minimarket.modules.productos.api;
 
+import java.math.BigDecimal;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
+import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.PrecioReferenciaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
 
@@ -42,4 +45,25 @@ public interface ProductosApi {
     ProductoResponse update(UUID idProducto, ProductoRequest request);
     void delete(UUID id);
     boolean existsById(UUID id);
+
+    /**
+     * Catálogo de precios de referencia del producto: lo que cada proveedor lista por él,
+     * cargado siempre a mano. De la más barata a la más cara.
+     *
+     * <p>No es lo que se pagó la última vez —eso sale del historial de compras— ni influye en
+     * ninguna compra. Es el dato que se consulta al momento de comprar, y lo usa el módulo de
+     * compras para armar la vista combinada de
+     * {@code GET /api/compras/v1/producto/{idProducto}/proveedores}.
+     */
+    List<PrecioReferenciaResponse> getProveedoresDeProducto(UUID idProducto);
+
+    /**
+     * Alta o corrección del precio de referencia de un proveedor. Es un upsert: si el par ya
+     * existía reescribe el precio, y si no lo crea.
+     */
+    PrecioReferenciaResponse guardarPrecioReferencia(UUID idProducto, UUID idProveedor,
+                                                     BigDecimal precioReferencia);
+
+    /** Saca al proveedor del catálogo de referencia del producto. Baja lógica. */
+    void borrarPrecioReferencia(UUID idProducto, UUID idProveedor);
 }

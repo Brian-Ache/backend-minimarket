@@ -2,6 +2,7 @@ package com.SolucionesInformaticasBA.minimarket.modules.compras.api;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -10,6 +11,7 @@ import org.springframework.data.domain.Pageable;
 
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.CompraRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.CompraResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.ProveedorDeProductoResponse;
 
 public interface CompraApi {
     CompraResponse crear(UUID idUsuario, CompraRequest request);
@@ -32,6 +34,16 @@ public interface CompraApi {
      * <p>Los días sin compras no aparecen en el mapa.
      */
     Map<LocalDate, Float> getTotalesPorDia(LocalDateTime desde, LocalDateTime hasta);
+
+    /**
+     * Los proveedores que tienen o tuvieron el producto, con el precio que cada uno lista y lo
+     * que se le pagó la última vez. Vive en compras porque es el único módulo que ya depende de
+     * productos y de proveedores; el catálogo de referencia lo tiene productos.
+     *
+     * <p>Orden: primero los del catálogo, del más barato al más caro; después, por nombre, los
+     * que solo aparecen en el historial de compras.
+     */
+    List<ProveedorDeProductoResponse> getProveedoresDeProducto(UUID idProducto);
 
     /**
      * Anula la compra. Quién la anula sale del JWT, no de un parámetro: ese id queda escrito
