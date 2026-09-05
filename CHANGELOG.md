@@ -48,6 +48,10 @@ inventario.
   regla es por proveedor y por tipo: dos proveedores distintos pueden emitir el mismo número, y
   un mismo proveedor puede tener un remito y una factura con el mismo número porque cada tipo
   lleva su propia numeración. Ver *Base de datos*.
+- **El corte de caja pide `montoRetirado`.** Al cerrar hay que declarar cuánto se saca de la
+  caja; lo que no se retira queda para el turno siguiente, que lo declara al abrir. Sin ese
+  dato el resumen del día contaba dos veces la misma plata. `CorteResponse` suma `montoRetirado`
+  y `saldoDejado`, y `SesionCajaResponse` suma `diferenciaApertura`.
 - **`GET /api/caja/v1/movimientos` devuelve un `Page` y exige las dos fechas o ninguna.**
   Acepta `?page=` y `?size=` (1 a 100). Antes, con solo `hasta`, el rango arrancaba en el año
   2000 y se traía sin paginar la tabla que suma una fila por cada venta cobrada en efectivo,
@@ -208,6 +212,14 @@ inventario.
   esperando un rango semiabierto —que es como está escrito el otro query del mismo repositorio y
   como funciona ventas—. Una compra registrada exactamente a las `00:00:00.000000` del día
   siguiente entraba en el reporte del día anterior.
+- **El resumen diario de caja inflaba el saldo esperado con cada turno.** Sumaba el saldo de
+  apertura de todas las sesiones del día, y como lo que un turno declara al abrir es la plata
+  que dejó el anterior, la misma plata se contaba una vez por turno. Ahora el día arranca con el
+  primer turno y los retiros de cada cierre salen como movimiento, así que el día cierra con lo
+  que efectivamente quedó en la caja.
+- **De la caja podía salir plata que no estaba.** Una salida manual no miraba el saldo del
+  turno: se podían sacar $50.000 de una caja con $3.000 y el arqueo informaba un saldo esperado
+  negativo, que físicamente no significa nada.
 - **El corte de caja se archivaba con la fecha equivocada si el turno cruzaba la medianoche.**
   Un turno que abre a las 22:00 y cierra a las 02:00 quedaba fechado al día siguiente, y el
   corte es un documento contable: esa fecha queda guardada. Lo mismo pasaba en el resumen que
@@ -308,9 +320,13 @@ inventario.
   que no traen número y las anuladas: anular libera el número para volver a cargar la compra
   bien. El tipo sin cargar cuenta como un valor más, así que no abre un agujero por el que se
   cuelen duplicados.
-- Las tres migraciones abren con una consulta informativa de los datos que podrían frenar el
+- **`08_retiro_de_cierre_de_caja.sql` — reparto del efectivo al cerrar el turno.** Suma
+  `monto_retirado`, `saldo_dejado` y `diferencia_apertura` a `sesiones_caja`, y agrega `RETIRO`
+  a los orígenes válidos de un movimiento de caja. Los turnos ya cerrados quedan con las
+  columnas nuevas en `NULL`, que es "no se sabe" y no "no se retiró nada".
+- Las cuatro migraciones abren con una consulta informativa de los datos que podrían frenar el
   `ALTER`. Aplicar en orden y con la aplicación detenida. `00_init.sql` y `00_init_limpio.sql` ya
-  traen los tres índices: una instalación nueva no necesita las migraciones.
+  traen todo eso: una instalación nueva no necesita las migraciones.
 
 ## 0.3.0 (2026-08-21)
 
