@@ -34,6 +34,10 @@ import lombok.AllArgsConstructor;
 @Service
 @AllArgsConstructor
 public class CajaService implements CajaApi {
+
+    /** Origen del movimiento con el que se saca de la caja lo que no queda para el turno siguiente. */
+    private static final String ORIGEN_RETIRO = "RETIRO";
+
     private final SesionCajaRepository sesionCajaRepository;
     private final MovimientoCajaRepository movimientoCajaRepository;
 
@@ -49,6 +53,10 @@ public class CajaService implements CajaApi {
             .saldoInicial(request.getSaldoInicial())
             .idUsuarioApertura(idUsuario)
             .estado(EstadoSesion.ABIERTA)
+            // Lo contado al abrir contra lo que dejó el cierre anterior. No se rechaza la
+            // apertura: el comercio tiene que poder trabajar aunque la caja no cuadre, y un
+            // faltante entre turnos es justamente lo que hay que dejar anotado.
+            .diferenciaApertura(diferenciaConElCierreAnterior(request.getSaldoInicial()))
             .build();
 
         return toSesionResponse(sesionCajaRepository.save(sesion));
@@ -199,9 +207,16 @@ public class CajaService implements CajaApi {
         LocalDateTime desde = fecha.atStartOfDay();
         LocalDateTime hasta = fecha.plusDays(1).atStartOfDay();
 
+        // El saldo inicial del día es el del PRIMER turno, no la suma de todos: lo que cada
+        // turno declara al abrir es, en general, la plata que dejó el anterior, así que sumarlos
+        // contaba la misma plata una vez por turno. Lo que sí sale es el retiro de cada cierre,
+        // que viaja como movimiento.
         float saldoInicial = (float) sesionCajaRepository
             .findByFechaAperturaGreaterThanEqualAndFechaAperturaLessThanAndDeletedAtIsNull(desde, hasta)
-            .stream().mapToDouble(SesionCaja::getSaldoInicial).sum();
+            .stream()
+            .min(java.util.Comparator.comparing(SesionCaja::getFechaApertura))
+            .map(SesionCaja::getSaldoInicial)
+            .orElse(0f);
 
         return calcularResumen(fecha, saldoInicial,
             movimientoCajaRepository.findEnRango(desde, hasta));
@@ -267,9 +282,17 @@ public class CajaService implements CajaApi {
             sesion.getSaldoInicial(),
             movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId()));
 
+        if (request.getMontoRetirado() > request.getSaldoReal()) {
+            throw new BadRequestException("No se puede retirar más de lo que hay en la caja: se "
+                + "contaron " + request.getSaldoReal() + " y se intentan retirar "
+                + request.getMontoRetirado());
+        }
+
         sesion.setSaldoEsperado(resumen.getSaldoEsperado());
         sesion.setSaldoFinal(request.getSaldoReal());
         sesion.setDiferencia(request.getSaldoReal() - resumen.getSaldoEsperado());
+        sesion.setMontoRetirado(request.getMontoRetirado());
+        sesion.setSaldoDejado(request.getSaldoReal() - request.getMontoRetirado());
         sesion.setObservaciones(request.getObservaciones());
         sesion.setFechaCierre(LocalDateTime.now());
         sesion.setIdUsuarioCierre(idUsuario);
@@ -285,6 +308,22 @@ public class CajaService implements CajaApi {
         sesion.setTotalSalidasManuales(resumen.getTotalSalidasManuales());
 
         SesionCaja cerrada = sesionCajaRepository.save(sesion);
+
+        // El retiro se registra como salida del turno, después de calcular el arqueo: lo que el
+        // cajero cuenta es el efectivo antes de retirar. Queda como movimiento para que el
+        // resumen del día lo vea salir, en vez de que la plata que quedó se cuente de nuevo
+        // como saldo inicial del turno siguiente.
+        if (request.getMontoRetirado() > 0) {
+            movimientoCajaRepository.saveAndFlush(MovimientoCaja.builder()
+                .idSesion(cerrada.getId())
+                .tipo(TipoMovimientoCaja.SALIDA)
+                .monto(request.getMontoRetirado())
+                .motivo("Retiro al cerrar el turno")
+                .idUsuario(idUsuario)
+                .origen(ORIGEN_RETIRO)
+                .idReferencia(cerrada.getId())
+                .build());
+        }
 
         return toCorteResponse(cerrada, resumen, request.getSaldoReal());
     }
@@ -327,6 +366,19 @@ public class CajaService implements CajaApi {
             .getSaldoEsperado();
     }
 
+    /**
+     * Diferencia entre lo que se cuenta al abrir y lo que dejó el último cierre. Null cuando no
+     * hay cierre previo, o cuando ese cierre es anterior a que el reparto se registrara: ahí no
+     * hay contra qué comparar, que no es lo mismo que una diferencia de cero.
+     */
+    private Float diferenciaConElCierreAnterior(float saldoInicial) {
+        return sesionCajaRepository
+            .findTopByEstadoAndDeletedAtIsNullOrderByCreatedAtDesc(EstadoSesion.CERRADA)
+            .map(SesionCaja::getSaldoDejado)
+            .map(dejado -> saldoInicial - dejado)
+            .orElse(null);
+    }
+
     // findTop en lugar de findBy: si por una carrera quedaran dos sesiones abiertas,
     // esto degrada tomando la más reciente en vez de romper con NonUniqueResultException.
     private SesionCaja obtenerSesionActiva() {
@@ -341,6 +393,7 @@ public class CajaService implements CajaApi {
             .saldoInicial(s.getSaldoInicial())
             .estado(s.getEstado().name())
             .idUsuarioApertura(s.getIdUsuarioApertura())
+            .diferenciaApertura(s.getDiferenciaApertura())
             .build();
     }
 
@@ -382,6 +435,8 @@ public class CajaService implements CajaApi {
             .saldoEsperado(s.getSaldoEsperado() != null ? s.getSaldoEsperado() : 0)
             .saldoReal(saldoReal != null ? saldoReal : 0)
             .diferencia(s.getDiferencia() != null ? s.getDiferencia() : 0)
+            .montoRetirado(s.getMontoRetirado())
+            .saldoDejado(s.getSaldoDejado())
             .observaciones(s.getObservaciones())
             .idUsuarioApertura(s.getIdUsuarioApertura())
             .idUsuarioCierre(s.getIdUsuarioCierre())

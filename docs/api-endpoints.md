@@ -1080,7 +1080,8 @@ Módulo unificado de caja: sesiones, movimientos manuales, resumen diario y cort
 
 ### `POST /api/caja/v1/abrir`
 
-Abre una nueva sesión de caja. Valida que no exista otra sesión abierta.
+Abre una nueva sesión de caja. Valida que no exista otra sesión abierta. `saldoInicial` es el
+efectivo **contado** al abrir.
 
 **Request:**
 ```json
@@ -1096,9 +1097,15 @@ Abre una nueva sesión de caja. Valida que no exista otra sesión abierta.
   "fechaApertura": "datetime",
   "saldoInicial": "float",
   "estado": "ABIERTA",
-  "idUsuarioApertura": "UUID"
+  "idUsuarioApertura": "UUID",
+  "diferenciaApertura": "float | null"
 }
 ```
+
+`diferenciaApertura` es lo contado menos lo que dejó el cierre anterior: `0` si coincide,
+negativo si falta plata, `null` si no hay cierre previo con ese dato. **No impide abrir** —el
+comercio tiene que poder trabajar— pero deja el faltante registrado en vez de perderlo entre dos
+turnos.
 
 **Error `400`:** si ya hay una sesión abierta
 
@@ -1197,8 +1204,11 @@ en ese mismo turno, usar [`GET /api/ventas/v1/resumen/sesion/{idSesion}`](#get-a
 ### `GET /api/caja/v1/resumen/diario`
 
 Resumen de un día completo, calculado sobre los movimientos de esa fecha. **No requiere que
-haya una caja abierta**, así que sirve para consultar días ya cerrados. El saldo inicial es la
-suma de los saldos de apertura de las sesiones de ese día.
+haya una caja abierta**, así que sirve para consultar días ya cerrados.
+
+El saldo inicial es el del **primer turno** del día, no la suma de todos: lo que cada turno
+declara al abrir es la plata que dejó el anterior, así que sumarlos contaba la misma plata una
+vez por turno. Lo que sí sale es el retiro de cada cierre, que viaja como movimiento.
 
 **Query params:** `?fecha=2026-07-12` (opcional, default hoy)
 
@@ -1240,9 +1250,17 @@ encuentra la sesión ya cerrada y recibe `400`.
 ```json
 {
   "saldoReal": "float (>= 0)",
+  "montoRetirado": "float (>= 0, <= saldoReal)",
   "observaciones": "string (max 255, opcional)"
 }
 ```
+
+`saldoReal` es el efectivo contado al cerrar y `montoRetirado` cuánto se saca de la caja: la
+diferencia queda para el turno siguiente, que la declara como `saldoInicial` al abrir. El retiro
+se registra además como movimiento `SALIDA` con origen `RETIRO`, y es lo que evita que el
+resumen del día vuelva a sumar como apertura del turno siguiente una plata que nunca salió.
+
+**Error `400`:** `montoRetirado` mayor que `saldoReal`
 
 **Response `200`:**
 ```json
@@ -1254,6 +1272,8 @@ encuentra la sesión ya cerrada y recibe `400`.
   "saldoEsperado": "float",
   "saldoReal": "float",
   "diferencia": "float (saldoReal - saldoEsperado)",
+  "montoRetirado": "float | null",
+  "saldoDejado": "float | null (saldoReal - montoRetirado)",
   "observaciones": "string | null",
   "idUsuarioApertura": "UUID",
   "idUsuarioCierre": "UUID",

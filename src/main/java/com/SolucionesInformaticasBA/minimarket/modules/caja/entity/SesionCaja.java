@@ -51,6 +51,25 @@ public class SesionCaja {
 
     private Float diferencia;
 
+    /**
+     * Reparto del efectivo al cerrar: cuánto se retira y cuánto queda en la caja para el turno
+     * siguiente. Null en los cortes anteriores a que esto se registrara, que es "no se sabe" y
+     * no "no se retiró nada".
+     */
+    @Column(name = "monto_retirado")
+    private Float montoRetirado;
+
+    @Column(name = "saldo_dejado")
+    private Float saldoDejado;
+
+    /**
+     * Cuánto se apartó lo contado al abrir de lo que había dejado el cierre anterior. No impide
+     * abrir —el comercio tiene que poder trabajar— pero deja el faltante o el sobrante
+     * registrado en vez de perderlo entre dos turnos.
+     */
+    @Column(name = "diferencia_apertura")
+    private Float diferenciaApertura;
+
     // Desglose del arqueo, congelado al cerrar. Un corte es un documento contable:
     // se guarda como quedó, no se recalcula al consultarlo.
     @Column(name = "total_ventas")

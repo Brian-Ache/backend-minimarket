@@ -191,6 +191,13 @@ CREATE TABLE IF NOT EXISTS sesiones_caja (
     saldo_final             FLOAT        NULL,
     saldo_esperado          FLOAT        NULL,
     diferencia              FLOAT        NULL,
+    -- Al cerrar, una parte del efectivo se retira y otra queda en la caja. El retiro
+    -- se registra ademas como movimiento SALIDA con origen RETIRO, para que el dia no
+    -- vuelva a sumar como apertura del turno siguiente la plata que nunca salio.
+    monto_retirado          FLOAT        NULL,
+    saldo_dejado            FLOAT        NULL,
+    -- Cuanto se aparto lo contado al abrir de lo que dejo el cierre anterior.
+    diferencia_apertura     FLOAT        NULL,
     total_ventas            FLOAT        NULL,
     cantidad_ventas         INT          NULL,
     total_compras           FLOAT        NULL,
@@ -241,7 +248,7 @@ CREATE TABLE IF NOT EXISTS movimientos_caja (
     CONSTRAINT fk_mov_caja_usuario
         FOREIGN KEY (id_usuario) REFERENCES usuarios (id) ON DELETE RESTRICT,
     CONSTRAINT ck_mov_caja_origen
-        CHECK (origen IS NULL OR origen IN ('MANUAL','VENTA','COMPRA','REVERSA'))
+        CHECK (origen IS NULL OR origen IN ('MANUAL','VENTA','COMPRA','REVERSA','RETIRO'))
 ) ENGINE = InnoDB;
 
 CREATE TABLE IF NOT EXISTS ventas (
