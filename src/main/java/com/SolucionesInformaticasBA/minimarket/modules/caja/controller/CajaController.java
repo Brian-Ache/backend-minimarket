@@ -24,6 +24,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.MovimientoCa
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.MovimientoCajaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.ResumenCajaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.SesionCajaResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.Paginacion;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
@@ -35,9 +36,6 @@ import lombok.AllArgsConstructor;
 @RequestMapping("/api/caja")
 @AllArgsConstructor
 public class CajaController {
-
-    /** Techo del tamaño de página del listado de movimientos. */
-    private static final int MAX_PAGE_SIZE = 100;
 
     private final CajaApi cajaApi;
 
@@ -72,9 +70,9 @@ public class CajaController {
     public ResponseEntity<Page<MovimientoCajaResponse>> getMovimientos(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Optional<LocalDateTime> desde,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Optional<LocalDateTime> hasta,
-            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
-            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
-                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
         // Del movimiento más reciente al más viejo, con el id como desempate: los movimientos
         // automáticos de una misma operación comparten el instante de creación.
         Pageable pageable = PageRequest.of(page, size,

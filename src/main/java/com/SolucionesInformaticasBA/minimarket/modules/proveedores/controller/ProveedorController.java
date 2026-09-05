@@ -1,8 +1,11 @@
 package com.SolucionesInformaticasBA.minimarket.modules.proveedores.controller;
 
-import java.util.List;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,8 +20,11 @@ import org.springframework.web.bind.annotation.RestController;
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.ProveedoresApi;
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto.ProveedorRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto.ProveedorResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.Paginacion;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.AllArgsConstructor;
 
 @RestController
@@ -38,9 +44,16 @@ public class ProveedorController {
      *        normal no aparecen.
      */
     @GetMapping("/v1")
-    public ResponseEntity<List<ProveedorResponse>> getAll(
-            @RequestParam(defaultValue = "false") boolean incluirBajas) {
-        return ResponseEntity.ok(proveedoresApi.getAll(incluirBajas));
+    public ResponseEntity<Page<ProveedorResponse>> getAll(
+            @RequestParam(defaultValue = "false") boolean incluirBajas,
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
+        // Por nombre, con el id como desempate: dos proveedores pueden tener el mismo nombre
+        // si uno está dado de baja, y sin desempate las filas se repiten al pasar de página.
+        Pageable pageable = PageRequest.of(page, size,
+                Sort.by(Sort.Direction.ASC, "nombre").and(Sort.by(Sort.Direction.ASC, "id")));
+        return ResponseEntity.ok(proveedoresApi.getAll(incluirBajas, pageable));
     }
 
     @GetMapping("/v1/{id}")

@@ -21,6 +21,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto.ProveedorRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto.ProveedorResponse;
@@ -103,11 +106,15 @@ class ProveedorServiceTest {
     @Test
     @DisplayName("el listado normal no trae las bajas y con incluirBajas sí")
     void getAllSegunIncluirBajas() {
-        when(proveedorRepository.findAllByDeletedAtIsNull()).thenReturn(List.of(proveedorActivo()));
-        assertEquals(1, proveedorService.getAll(false).size());
+        Pageable pageable = PageRequest.of(0, 20);
 
-        when(proveedorRepository.findAll()).thenReturn(List.of(proveedorActivo(), proveedorDadoDeBaja()));
-        assertEquals(2, proveedorService.getAll(true).size());
+        when(proveedorRepository.findAllByDeletedAtIsNull(pageable))
+                .thenReturn(new PageImpl<>(List.of(proveedorActivo()), pageable, 1));
+        assertEquals(1, proveedorService.getAll(false, pageable).getTotalElements());
+
+        when(proveedorRepository.findAll(pageable))
+                .thenReturn(new PageImpl<>(List.of(proveedorActivo(), proveedorDadoDeBaja()), pageable, 2));
+        assertEquals(2, proveedorService.getAll(true, pageable).getTotalElements());
     }
 
     @Test

@@ -4,6 +4,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.ActualizarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarPasswordRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarRolRequest;
@@ -31,7 +34,7 @@ public interface UsuarioApi {
      *        cargado. Es lo que le permite al administrador encontrar una para
      *        {@link #restaurar}: son invisibles en el listado normal.
      */
-    List<UsuarioResponse> getAll(boolean incluirBajas);
+    Page<UsuarioResponse> getAll(boolean incluirBajas, Pageable pageable);
 
     UsuarioResponse update(UUID id, ActualizarUsuarioRequest request);
 

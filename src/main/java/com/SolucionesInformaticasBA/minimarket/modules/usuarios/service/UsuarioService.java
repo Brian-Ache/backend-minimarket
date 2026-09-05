@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -122,14 +124,12 @@ public class UsuarioService implements UsuarioApi {
     }
 
     @Override
-    public List<UsuarioResponse> getAll(boolean incluirBajas) {
-        List<Usuario> usuarios = incluirBajas
-                ? userRepository.findAll()
-                : userRepository.findAllByDeletedAtIsNull();
+    public Page<UsuarioResponse> getAll(boolean incluirBajas, Pageable pageable) {
+        Page<Usuario> usuarios = incluirBajas
+                ? userRepository.findAll(pageable)
+                : userRepository.findAllByDeletedAtIsNull(pageable);
 
-        return usuarios.stream()
-                .map(this::toUserResponse)
-                .toList();
+        return usuarios.map(this::toUserResponse);
     }
 
     @Override

@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -35,7 +37,12 @@ public interface SesionCajaRepository extends JpaRepository<SesionCaja, UUID> {
     Optional<SesionCaja> findAbiertaParaActualizar();
     Optional<SesionCaja> findTopByOrderByCreatedAtDesc();
 
-    List<SesionCaja> findByEstadoAndDeletedAtIsNullOrderByFechaCierreDesc(EstadoSesion estado);
+    /**
+     * Historial de turnos cerrados. El orden va en el {@code Pageable} y no en el nombre del
+     * método: una fila por turno cerrado crece para siempre, así que el listado se pagina y el
+     * orden tiene que llevar el desempate por id.
+     */
+    Page<SesionCaja> findByEstadoAndDeletedAtIsNull(EstadoSesion estado, Pageable pageable);
 
     // Sesiones abiertas dentro de un día, para el saldo inicial del resumen por fecha.
     List<SesionCaja> findByFechaAperturaGreaterThanEqualAndFechaAperturaLessThanAndDeletedAtIsNull(

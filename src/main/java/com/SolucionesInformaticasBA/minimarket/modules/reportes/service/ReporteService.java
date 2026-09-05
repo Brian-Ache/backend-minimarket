@@ -10,7 +10,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.CompraApi;
@@ -159,14 +160,19 @@ public class ReporteService implements ReportesApi {
     }
 
     @Override
-    public List<ReporteInventarioItem> getReporteInventario() {
-        List<ProductoResponse> productos = productosApi.getAll(PageRequest.of(0, Integer.MAX_VALUE)).getContent();
+    public Page<ReporteInventarioItem> getReporteInventario(Pageable pageable) {
+        // Paginado: era el catálogo entero en cada request, pedido con
+        // PageRequest.of(0, Integer.MAX_VALUE), y cada fila resuelve además su categoría.
+        Page<ProductoResponse> productos = productosApi.getAll(pageable);
 
-        // Dos consultas agregadas en total: la tabla stock para los productos comunes y la
-        // suma de lotes para los que manejan lotes, que antes salían siempre en 0.
-        Map<UUID, Integer> existencias = inventarioApi.getExistenciasPorProducto();
+        // Dos consultas agregadas, acotadas a los productos de la página: pedir las
+        // existencias de todo el catálogo para armar una página de 20 anulaba el trabajo de
+        // paginarla. La tabla stock para los productos comunes y la suma de lotes para los que
+        // manejan lotes, que antes salían siempre en 0.
+        Map<UUID, Integer> existencias = inventarioApi.getExistenciasPorProductos(
+            productos.getContent().stream().map(ProductoResponse::getId).toList());
 
-        return productos.stream().map(p -> ReporteInventarioItem.builder()
+        return productos.map(p -> ReporteInventarioItem.builder()
                 .idProducto(p.getId())
                 .nombre(p.getNombre())
                 .barcode(p.getBarcode())
@@ -175,8 +181,7 @@ public class ReporteService implements ReportesApi {
                 .costo(p.getCosto())
                 .categoria(p.getCategoria())
                 .manejaLotes(p.isManejaLotes())
-                .build())
-            .toList();
+                .build());
     }
 
     @Override

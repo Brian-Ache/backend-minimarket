@@ -4,6 +4,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.ProveedoresApi;
@@ -52,14 +54,12 @@ public class ProveedorService implements ProveedoresApi {
     }
 
     @Override
-    public List<ProveedorResponse> getAll(boolean incluirBajas) {
-        List<Proveedor> proveedores = incluirBajas
-            ? proveedorRepository.findAll()
-            : proveedorRepository.findAllByDeletedAtIsNull();
+    public Page<ProveedorResponse> getAll(boolean incluirBajas, Pageable pageable) {
+        Page<Proveedor> proveedores = incluirBajas
+            ? proveedorRepository.findAll(pageable)
+            : proveedorRepository.findAllByDeletedAtIsNull(pageable);
 
-        return proveedores.stream()
-            .map(this::toResponse)
-            .toList();
+        return proveedores.map(this::toResponse);
     }
 
     @Override

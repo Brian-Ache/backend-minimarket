@@ -345,12 +345,10 @@ public class CajaService implements CajaApi {
     }
 
     @Override
-    public List<CorteResponse> getHistorialCortes() {
+    public Page<CorteResponse> getHistorialCortes(Pageable pageable) {
         return sesionCajaRepository
-            .findByEstadoAndDeletedAtIsNullOrderByFechaCierreDesc(EstadoSesion.CERRADA)
-            .stream()
-            .map(s -> toCorteResponse(s, null, s.getSaldoFinal()))
-            .toList();
+            .findByEstadoAndDeletedAtIsNull(EstadoSesion.CERRADA, pageable)
+            .map(s -> toCorteResponse(s, null, s.getSaldoFinal()));
     }
 
     /**

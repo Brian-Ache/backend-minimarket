@@ -3,6 +3,10 @@ package com.SolucionesInformaticasBA.minimarket.modules.proveedores.api;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
+
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto.ProveedorRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto.ProveedorResponse;
 
@@ -23,7 +27,7 @@ public interface ProveedoresApi {
      *        cargado. Es cómo el front encuentra el que hay que restaurar: en el listado
      *        normal no aparecen.
      */
-    List<ProveedorResponse> getAll(boolean incluirBajas);
+    Page<ProveedorResponse> getAll(boolean incluirBajas, Pageable pageable);
 
     ProveedorResponse update(UUID id, ProveedorRequest request);
 

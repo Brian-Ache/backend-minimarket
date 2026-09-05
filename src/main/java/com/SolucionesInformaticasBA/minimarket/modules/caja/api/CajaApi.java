@@ -2,7 +2,6 @@ package com.SolucionesInformaticasBA.minimarket.modules.caja.api;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -57,5 +56,6 @@ public interface CajaApi {
     CorteResponse realizarCorte(UUID idUsuario, CorteRequest request);
     CorteResponse getCorteById(UUID id);
     CorteResponse getUltimoCorte();
-    List<CorteResponse> getHistorialCortes();
+    /** Paginado: suma una fila por turno cerrado y crece para siempre. */
+    Page<CorteResponse> getHistorialCortes(Pageable pageable);
 }

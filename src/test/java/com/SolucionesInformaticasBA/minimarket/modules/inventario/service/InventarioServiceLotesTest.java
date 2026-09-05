@@ -22,6 +22,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.LoteRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.LoteResponse;
@@ -47,20 +51,21 @@ class InventarioServiceLotesTest {
     @InjectMocks private InventarioService inventarioService;
 
     private static final UUID ID_PRODUCTO = UUID.randomUUID();
+    private static final Pageable PAGINA = PageRequest.of(0, 20);
 
     @Test
     @DisplayName("los vencidos se piden a la base por fecha, no filtrando todo en memoria")
     void vencidosSeConsultanPorFecha() {
         LocalDate hoy = LocalDate.now();
-        when(loteRepository.findByFechaVencimientoBeforeAndDeletedAtIsNull(hoy))
-                .thenReturn(List.of(lote(hoy.minusDays(1))));
+        when(loteRepository.findByFechaVencimientoBeforeAndDeletedAtIsNull(hoy, PAGINA))
+                .thenReturn(pagina(lote(hoy.minusDays(1))));
         when(productosApi.getNombresPorId(anyCollection())).thenReturn(Map.of(ID_PRODUCTO, "Leche"));
 
-        List<LoteResponse> lotes = inventarioService.getByEstado("VENCIDO");
+        List<LoteResponse> lotes = inventarioService.getByEstado("VENCIDO", PAGINA).getContent();
 
         assertEquals(1, lotes.size());
         assertEquals("VENCIDO", lotes.get(0).getEstado());
-        verify(loteRepository, never()).findAllByDeletedAtIsNull();
+        verify(loteRepository, never()).findAllByDeletedAtIsNull(PAGINA);
         verify(productosApi, never()).getAll(any());
     }
 
@@ -69,13 +74,13 @@ class InventarioServiceLotesTest {
     void proximosUsanElRangoDeEstadoLote() {
         LocalDate hoy = LocalDate.now();
         LocalDate ultimoDiaProximo = hoy.plusDays(EstadoLote.DIAS_PROXIMO_A_VENCER - 1L);
-        when(loteRepository.findByFechaVencimientoBetweenAndDeletedAtIsNull(hoy, ultimoDiaProximo))
-                .thenReturn(List.of());
+        when(loteRepository.findByFechaVencimientoBetweenAndDeletedAtIsNull(hoy, ultimoDiaProximo, PAGINA))
+                .thenReturn(pagina());
         when(productosApi.getNombresPorId(anyCollection())).thenReturn(Map.of());
 
-        inventarioService.getByEstado("proximo");
+        inventarioService.getByEstado("proximo", PAGINA);
 
-        verify(loteRepository).findByFechaVencimientoBetweenAndDeletedAtIsNull(hoy, ultimoDiaProximo);
+        verify(loteRepository).findByFechaVencimientoBetweenAndDeletedAtIsNull(hoy, ultimoDiaProximo, PAGINA);
     }
 
     /**
@@ -98,7 +103,8 @@ class InventarioServiceLotesTest {
     @Test
     @DisplayName("un estado que no existe es 400 y no un 500")
     void estadoInvalidoEsBadRequest() {
-        assertThrows(BadRequestException.class, () -> inventarioService.getByEstado("CUALQUIERA"));
+        assertThrows(BadRequestException.class,
+                () -> inventarioService.getByEstado("CUALQUIERA", PAGINA));
     }
 
     @Test
@@ -108,10 +114,10 @@ class InventarioServiceLotesTest {
         // mapa armado así, un solo producto sin nombre devolvía 500 en los cinco endpoints.
         Map<UUID, String> conNulo = new HashMap<>();
         conNulo.put(ID_PRODUCTO, null);
-        when(loteRepository.findAllByDeletedAtIsNull()).thenReturn(List.of(lote(LocalDate.now().plusMonths(2))));
+        when(loteRepository.findAllByDeletedAtIsNull(PAGINA)).thenReturn(pagina(lote(LocalDate.now().plusMonths(2))));
         when(productosApi.getNombresPorId(anyCollection())).thenReturn(conNulo);
 
-        List<LoteResponse> lotes = inventarioService.getAll();
+        List<LoteResponse> lotes = inventarioService.getAll(PAGINA).getContent();
 
         assertEquals("Producto sin nombre", lotes.get(0).getNombreProducto());
     }
@@ -119,10 +125,10 @@ class InventarioServiceLotesTest {
     @Test
     @DisplayName("un lote de un producto que ya no está se muestra como no encontrado")
     void productoInexistenteSeMarcaEnElListado() {
-        when(loteRepository.findAllByDeletedAtIsNull()).thenReturn(List.of(lote(LocalDate.now().plusMonths(2))));
+        when(loteRepository.findAllByDeletedAtIsNull(PAGINA)).thenReturn(pagina(lote(LocalDate.now().plusMonths(2))));
         when(productosApi.getNombresPorId(anyCollection())).thenReturn(Collections.emptyMap());
 
-        List<LoteResponse> lotes = inventarioService.getAll();
+        List<LoteResponse> lotes = inventarioService.getAll(PAGINA).getContent();
 
         assertEquals("Producto no encontrado", lotes.get(0).getNombreProducto());
     }
@@ -172,6 +178,10 @@ class InventarioServiceLotesTest {
 
         assertEquals("Leche", response.getNombreProducto());
         verify(productosApi, times(1)).getById(ID_PRODUCTO);
+    }
+
+    private Page<Lote> pagina(Lote... lotes) {
+        return new PageImpl<>(List.of(lotes), PAGINA, lotes.length);
     }
 
     private Lote lote(LocalDate fechaVencimiento) {

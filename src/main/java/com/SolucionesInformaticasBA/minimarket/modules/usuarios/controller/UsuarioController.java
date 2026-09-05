@@ -1,8 +1,11 @@
 package com.SolucionesInformaticasBA.minimarket.modules.usuarios.controller;
 
-import java.util.List;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -22,9 +25,12 @@ import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarP
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarRolRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.InvitarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.Paginacion;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -76,9 +82,17 @@ public class UsuarioController {
      */
     @GetMapping("/v1")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<List<UsuarioResponse>> getAll(
-            @RequestParam(defaultValue = "false") boolean incluirBajas) {
-        return ResponseEntity.ok(usuarioApi.getAll(incluirBajas));
+    public ResponseEntity<Page<UsuarioResponse>> getAll(
+            @RequestParam(defaultValue = "false") boolean incluirBajas,
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
+        // Por username, que es único entre las cuentas activas, con el id como desempate: el
+        // unique no mira deleted_at, pero una baja y su restauración comparten fila, así que
+        // el empate real solo puede darse entre una cuenta viva y otra dada de baja.
+        Pageable pageable = PageRequest.of(page, size,
+                Sort.by(Sort.Direction.ASC, "username").and(Sort.by(Sort.Direction.ASC, "id")));
+        return ResponseEntity.ok(usuarioApi.getAll(incluirBajas, pageable));
     }
 
     @PatchMapping("/v1/{id}")

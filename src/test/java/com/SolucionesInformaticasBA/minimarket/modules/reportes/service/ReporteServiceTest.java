@@ -269,10 +269,15 @@ class ReporteServiceTest {
                 producto(conStock, "Fideos", "779"),
                 producto(sinStock, "Arroz", null)), PageRequest.of(0, 20), 2);
         when(productosApi.getAll(any())).thenReturn(pagina);
-        when(inventarioApi.getExistenciasPorProducto()).thenReturn(Map.of(conStock, 7));
+        // Acotado a los productos de la página: pedir las existencias de todo el catálogo
+        // para armar una página de 20 anulaba el trabajo de paginarla.
+        when(inventarioApi.getExistenciasPorProductos(List.of(conStock, sinStock)))
+                .thenReturn(Map.of(conStock, 7));
 
-        List<ReporteInventarioItem> items = reporteService.getReporteInventario();
+        List<ReporteInventarioItem> items =
+                reporteService.getReporteInventario(PageRequest.of(0, 20)).getContent();
 
+        verify(inventarioApi, never()).getExistenciasPorProducto();
         assertEquals(7, items.get(0).getStockActual());
         assertEquals("779", items.get(0).getBarcode());
         assertEquals(0, items.get(1).getStockActual());

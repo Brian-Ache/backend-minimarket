@@ -22,6 +22,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -416,13 +419,15 @@ class UsuarioServiceInvitacionTest {
     void listadoConBajas() {
         Usuario baja = usuario(Rol.EMPLEADO);
         baja.setDeletedAt(LocalDateTime.now());
-        when(userRepository.findAll()).thenReturn(java.util.List.of(usuario(Rol.ADMIN), baja));
+        Pageable pageable = PageRequest.of(0, 20);
+        when(userRepository.findAll(pageable)).thenReturn(
+                new PageImpl<>(java.util.List.of(usuario(Rol.ADMIN), baja), pageable, 2));
 
-        var todos = service.getAll(true);
+        var todos = service.getAll(true, pageable).getContent();
 
         assertThat(todos).hasSize(2);
         assertThat(todos).filteredOn(u -> u.getDeletedAt() != null).hasSize(1);
-        verify(userRepository, never()).findAllByDeletedAtIsNull();
+        verify(userRepository, never()).findAllByDeletedAtIsNull(pageable);
     }
 
     // --- Reseteo de contraseña como cierre alternativo del alta ------------------------------

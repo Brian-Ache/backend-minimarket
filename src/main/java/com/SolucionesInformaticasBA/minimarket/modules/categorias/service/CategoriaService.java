@@ -4,6 +4,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.categorias.api.CategoriasApi;
@@ -51,10 +53,8 @@ public class CategoriaService implements CategoriasApi {
     }
 
     @Override
-    public List<CategoriaResponse> getAll() {
-        return categoriaRepository.findAllByDeletedAtIsNull().stream()
-            .map(this::toResponse)
-            .toList();
+    public Page<CategoriaResponse> getAll(Pageable pageable) {
+        return categoriaRepository.findAllByDeletedAtIsNull(pageable).map(this::toResponse);
     }
 
     @Override

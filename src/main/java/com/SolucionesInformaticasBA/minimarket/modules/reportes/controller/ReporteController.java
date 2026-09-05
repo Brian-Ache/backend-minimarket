@@ -3,6 +3,10 @@ package com.SolucionesInformaticasBA.minimarket.modules.reportes.controller;
 import java.time.LocalDate;
 import java.util.List;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,6 +19,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.reportes.api.dto.Producto
 import com.SolucionesInformaticasBA.minimarket.modules.reportes.api.dto.ReporteGananciasResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.reportes.api.dto.ReporteInventarioItem;
 import com.SolucionesInformaticasBA.minimarket.modules.reportes.api.dto.ReporteVentasResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.Paginacion;
 
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -44,9 +49,18 @@ public class ReporteController {
         return ResponseEntity.ok(reportesApi.getReporteGanancias(desde, hasta));
     }
 
+    /**
+     * Mismo orden que el catálogo (`updatedAt DESC, id ASC`): es la misma consulta, así que la
+     * paginación se comporta igual en los dos listados.
+     */
     @GetMapping("/v1/inventario")
-    public ResponseEntity<List<ReporteInventarioItem>> inventario() {
-        return ResponseEntity.ok(reportesApi.getReporteInventario());
+    public ResponseEntity<Page<ReporteInventarioItem>> inventario(
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
+        Pageable pageable = PageRequest.of(page, size,
+                Sort.by(Sort.Direction.DESC, "updatedAt").and(Sort.by(Sort.Direction.ASC, "id")));
+        return ResponseEntity.ok(reportesApi.getReporteInventario(pageable));
     }
 
     @GetMapping("/v1/productos-mas-vendidos")

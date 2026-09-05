@@ -28,6 +28,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVent
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.ResumenDiarioResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.Paginacion;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
@@ -39,9 +40,6 @@ import lombok.AllArgsConstructor;
 @RequestMapping("/api/ventas")
 @AllArgsConstructor
 public class VentaController {
-
-    /** Techo del tamaño de página de los listados de ventas. */
-    private static final int MAX_PAGE_SIZE = 100;
 
     private final VentasApi ventasApi;
 
@@ -62,9 +60,9 @@ public class VentaController {
      */
     @GetMapping("/v1")
     public ResponseEntity<Page<VentaResponse>> getAll(
-            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
-            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
-                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
         return ResponseEntity.ok(ventasApi.getAll(alcance(), pagina(page, size)));
     }
 
@@ -72,9 +70,9 @@ public class VentaController {
     @PreAuthorize("hasRole('ADMIN') or #idUsuario.toString() == authentication.principal")
     public ResponseEntity<Page<VentaResponse>> getByUsuario(
             @PathVariable UUID idUsuario,
-            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
-            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
-                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
         return ResponseEntity.ok(ventasApi.getAll(idUsuario, pagina(page, size)));
     }
 
@@ -82,9 +80,9 @@ public class VentaController {
     public ResponseEntity<Page<VentaResponse>> getByFecha(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime desde,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta,
-            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
-            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
-                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size) {
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
         return ResponseEntity.ok(ventasApi.getByFecha(alcance(), desde, hasta, pagina(page, size)));
     }
 

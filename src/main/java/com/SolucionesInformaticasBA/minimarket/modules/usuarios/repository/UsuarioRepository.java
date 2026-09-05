@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
@@ -40,4 +42,6 @@ public interface UsuarioRepository extends JpaRepository<Usuario, UUID> {
     Optional<Usuario> findByIdAndDeletedAtIsNullAndEstado(UUID id, EstadoUsuario estado);
 
     List<Usuario> findAllByDeletedAtIsNull();
+
+    Page<Usuario> findAllByDeletedAtIsNull(Pageable pageable);
 }

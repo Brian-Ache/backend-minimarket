@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.inventario.repository;
 
+import java.util.Collection;
 import java.util.Optional;
 import java.util.List;
 import java.util.UUID;
@@ -28,6 +29,11 @@ public interface StockRepository extends JpaRepository<Stock, UUID>{
 
     @Query("SELECT s.idProducto, s.cantidad FROM Stock s WHERE s.deletedAt IS NULL")
     List<Object[]> cantidadesPorProducto();
+
+    /** Igual que la anterior, acotada a los productos pedidos: es la que usa una página. */
+    @Query("SELECT s.idProducto, s.cantidad FROM Stock s"
+        + " WHERE s.deletedAt IS NULL AND s.idProducto IN :ids")
+    List<Object[]> cantidadesDeProductos(@Param("ids") Collection<UUID> ids);
 
     List<Stock> findByIdProductoInAndDeletedAtIsNull(List<UUID> idProductos);
 }

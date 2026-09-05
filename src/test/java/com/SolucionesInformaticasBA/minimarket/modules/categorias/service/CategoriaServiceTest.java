@@ -20,6 +20,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import com.SolucionesInformaticasBA.minimarket.modules.categorias.api.dto.CategoriaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.categorias.api.dto.CategoriaResponse;
@@ -106,10 +109,12 @@ class CategoriaServiceTest {
     @Test
     @DisplayName("el listado no trae las categorías dadas de baja desde la base")
     void getAllConsultaSoloLasActivas() {
-        when(categoriaRepository.findAllByDeletedAtIsNull()).thenReturn(List.of(categoriaActiva()));
+        Pageable pageable = PageRequest.of(0, 20);
+        when(categoriaRepository.findAllByDeletedAtIsNull(pageable))
+                .thenReturn(new PageImpl<>(List.of(categoriaActiva()), pageable, 1));
 
-        assertEquals(1, categoriaService.getAll().size());
-        verify(categoriaRepository, never()).findAll();
+        assertEquals(1, categoriaService.getAll(pageable).getTotalElements());
+        verify(categoriaRepository, never()).findAll(pageable);
     }
 
     private Categoria categoriaActiva() {
