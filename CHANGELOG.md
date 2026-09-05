@@ -1,10 +1,18 @@
 # Changelog
 
-## Sin publicar
+## 0.4.0 (2026-09-04)
 
 Cierre del alta por invitación y limpieza de los límites entre los módulos `auth` y `usuarios`,
-más la auditoría de los módulos de catálogo —productos, categorías y proveedores—, de
-inventario y de reportes.
+más la auditoría módulo por módulo de todo el resto del sistema: catálogo —productos, categorías
+y proveedores—, inventario, ventas, compras, caja y reportes. Es la versión con más cambios
+incompatibles del proyecto: la mayoría son listados que pasaron a paginar y errores del cliente
+que respondían `500`.
+
+**Al actualizar hay que aplicar las migraciones `04` a `08`** en orden y con la aplicación
+detenida; ver *Base de datos*. Una instalación nueva no las necesita.
+
+> Esta entrada absorbe el diario de trabajo que se llevaba aparte en `CHANGELOG-BACKEND.md`, que
+> registraba los mismos cambios archivo por archivo y quedó eliminado: el changelog es uno solo.
 
 ### Cambios que rompen compatibilidad
 
@@ -82,6 +90,11 @@ inventario y de reportes.
 - **`porDia` del reporte de ganancias cubre el rango completo.** Los días sin ventas ni compras
   ahora salen en cero, como ya hacía `/reportes/ventas`. Devolvían arrays de distinto largo para
   el mismo período, así que no se podían graficar juntos sin rellenarlos en el front.
+- **`GET /api/compras/v1` devuelve un `Page` y absorbió a los otros dos listados.**
+  `GET /api/compras/v1/fecha` y `GET /api/compras/v1/usuario/{idUsuario}` **se eliminaron**: sus
+  filtros pasaron a ser parámetros opcionales del listado único, junto con `proveedor`,
+  `tipoComprobante` y `sortTotal`. Acepta `?page=` y `?size=` (1 a 100). Eran tres endpoints que
+  hacían la misma consulta con un filtro distinto cada uno, y ninguno paginaba.
 - **`DELETE /api/compras/v1/{id}` ya no lleva el header `idUsuario`.** Era el último endpoint que
   lo exigía, contra lo que la documentación viene diciendo desde hace dos versiones. Si el front
   lo sigue mandando, se ignora; si antes lo omitía, dejaba de responder `500`.
@@ -126,6 +139,14 @@ inventario y de reportes.
 - **El historial de movimientos de stock expone `idLote`, `idReferencia` e `idUsuario`.** Sin
   esos tres no alcanzaba para auditar: no se podía saber de qué lote salió cada unidad, qué
   comprobante lo originó ni quién lo cargó.
+- **`POST /api/inventario/v1/stock/batch` — existencias de varios productos en un pedido.**
+  Recibe una lista de ids en el body y devuelve el `idProducto` y la `cantidad` de cada uno. Es
+  lo que necesita una pantalla que muestra el stock de toda una grilla: uno por uno era una
+  request por fila.
+- **`margen` y `precioVenta` en cada línea de una compra.** Los dos son opcionales. El front ya
+  calcula el precio de venta a partir del costo y el margen que el operador carga en la pantalla
+  de compra; mandarlos evita que el backend rehaga esa cuenta y termine con un precio distinto
+  del que la persona vio en pantalla por un redondeo.
 
 ### Cambiado
 
@@ -157,6 +178,19 @@ inventario y de reportes.
   tenían lo siguen mostrando, con `deletedAt` cargado. Antes el historial pasaba a mostrar
   `proveedor: null`, o sea que una baja borraba a quién se le había comprado.
 - **El nombre de una categoría dada de baja vuelve a estar disponible.** Ver *Base de datos*.
+- **Registrar una compra le reescribe al producto el costo, el margen, el precio y el
+  proveedor.** El costo sale del precio unitario de la línea; el margen y el precio de venta,
+  solo si vienen en el request; el proveedor, el de la compra. Antes una compra dejaba el
+  catálogo intacto, así que el costo con el que se calculaba la ganancia era el de la primera
+  carga y había que ir a corregirlo a mano producto por producto. **Anular la compra no lo
+  revierte**, y es a propósito: se anula por motivos que no tienen nada que ver con el precio
+  —el proveedor no entregó, se cargó dos veces— y en ninguno corresponde volver atrás el precio
+  de venta vigente. Si lo que estaba mal era el precio, se corrige por el ABM de productos.
+- **Crear un producto crea su fila de stock en cero.** Sin ella, la primera compra de ese
+  producto fallaba con `"Stock no encontrado"`: el alta del catálogo y el alta de existencias
+  eran dos pasos y nada obligaba a hacer el segundo.
+- **El catálogo se lista del más reciente al más viejo**, por `updatedAt` descendente y con el
+  `id` de desempate.
 - **El ajuste manual de stock crea la fila si falta y rechaza los productos con lotes.** Un
   producto sin fila de stock es stock 0 y no un error, igual que en la lectura; antes el
   operador veía 0 y el ajuste sobre ese mismo producto respondía `404`. Y ajustar por stock un
@@ -326,6 +360,9 @@ inventario y de reportes.
   mercadería, con su movimiento de reversa. En **`0`** queda apagado, que es el comportamiento
   anterior.
 - **`ventas.reserva-stock.revision-ms`** (default 300000) — cada cuánto corre ese barrido.
+- **`CORS_ALLOWED_ORIGINS`** — orígenes permitidos, separados por coma. El default suma
+  `http://localhost:1420` al `5173` de siempre: es el puerto en el que sirve Vite dentro de
+  Tauri, y sin él el preflight del login se bloqueaba desde la aplicación de escritorio.
 
 ### Base de datos
 
@@ -356,9 +393,13 @@ inventario y de reportes.
   `monto_retirado`, `saldo_dejado` y `diferencia_apertura` a `sesiones_caja`, y agrega `RETIRO`
   a los orígenes válidos de un movimiento de caja. Los turnos ya cerrados quedan con las
   columnas nuevas en `NULL`, que es "no se sabe" y no "no se retiró nada".
-- Las cuatro migraciones abren con una consulta informativa de los datos que podrían frenar el
+- Las cinco migraciones abren con una consulta informativa de los datos que podrían frenar el
   `ALTER`. Aplicar en orden y con la aplicación detenida. `00_init.sql` y `00_init_limpio.sql` ya
   traen todo eso: una instalación nueva no necesita las migraciones.
+- **`02_seed_productos.sql` y `03_seed_stock.sql` — datos de prueba, opcionales.** 81 productos
+  de las tres categorías del seed con sus existencias iniciales. No van a producción: sirven
+  para levantar un entorno con el catálogo cargado. Cada uno cierra con un `SELECT` de
+  verificación.
 
 ## 0.3.0 (2026-08-21)
 

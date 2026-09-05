@@ -1349,7 +1349,27 @@ Stock actual de un producto.
 
 **Response `200`:** `{ "idProducto": "UUID", "cantidad": "int" }`
 
-**Error `404`:** sin stock registrado
+Un producto sin fila de stock devuelve `cantidad: 0`, no `404`: no tener existencias registradas
+es un estado válido, y el ajuste sobre ese mismo producto crea la fila.
+
+---
+
+### `POST /api/inventario/v1/stock/batch`
+
+Stock de varios productos en un solo pedido, para las pantallas que muestran una grilla entera:
+uno por uno era una request por fila. Es `POST` porque la lista de ids viaja en el body.
+
+**Request:** `["UUID", "UUID", …]`
+
+**Response `200`:**
+```json
+[
+  { "idProducto": "UUID", "cantidad": "int" }
+]
+```
+
+Los productos sin fila de stock **no aparecen** en la respuesta; el que pregunta los cuenta como
+0. No incluye a los productos que manejan lotes, cuya existencia es la suma de sus lotes.
 
 ---
 

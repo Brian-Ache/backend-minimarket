@@ -1,4 +1,4 @@
-# Arquitectura — backend-minimarket v0.3.0
+# Arquitectura — backend-minimarket v0.4.0
 
 Backend de un punto de venta para minimarket: catálogo, ventas con cobro, compras a proveedores,
 inventario con lotes, caja con arqueo y reportes.
