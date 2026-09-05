@@ -2,8 +2,11 @@ package com.SolucionesInformaticasBA.minimarket.modules.inventario.service;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -33,26 +36,14 @@ import lombok.AllArgsConstructor;
 @Service
 @AllArgsConstructor
 public class InventarioService implements InventarioApi{
+    /** Motivo de un control que se hizo y no encontró nada que corregir. */
+    private static final String MOTIVO_SIN_DIFERENCIAS = "Control manual — sin diferencias";
+
     private final StockRepository stockRepository;
     private final LoteRepository loteRepository;
     private final MovimientoStockRepository movimientoStockRepository;
     private final ProductosApi productosApi;
     private final UsuarioApi usuarioApi;
-
-    @Transactional
-    public StockResponse crear(StockRequest request){
-        if (!productosApi.existsById(request.getIdProducto())) {
-            throw new ResourceNotFoundException("Producto no encontrado");
-        }
-        // Un producto tiene una sola fila de stock activa: con dos, las consultas por
-        // producto pasarían a fallar de forma permanente.
-        if (stockRepository.findByIdProductoAndDeletedAtIsNull(request.getIdProducto()).isPresent()) {
-            throw new BadRequestException("El producto ya tiene stock inicializado");
-        }
-        Stock guadado = stockRepository.save(toStockEntity(request));
-
-        return toStockResponse(guadado);
-    }
 
     /** Un producto sin fila de stock todavía no tiene movimientos: es stock 0, no un error. */
     public StockResponse getByIdProducto(UUID idProducto){
@@ -145,7 +136,7 @@ public class InventarioService implements InventarioApi{
         // que el ajuste quedaba registrado y no cambiaba nada de lo que ve el usuario.
         if (producto.isManejaLotes()) {
             throw new BadRequestException(
-                "El producto maneja lotes: su existencia se ajusta cargando o descargando lotes");
+                "El producto maneja lotes: su existencia se ajusta por lote, con POST /api/inventario/v1/lotes/ajustar");
         }
 
         if(request.getStockReal() < 0) throw new BadRequestException("El stock real no puede ser negativo");
@@ -165,35 +156,154 @@ public class InventarioService implements InventarioApi{
             stockRepository.save(stock);
         }
 
-        String motivo = request.getMotivo();
-        if(motivo == null || motivo.isBlank()){
-            motivo = diferencia == 0
-                ? "Control manual — sin diferencias"
-                : "Ajuste manual de stock";
-        }
-
         MovimientoStock m = MovimientoStock.builder()
             .idProducto(request.getIdProducto())
             .cantidad(diferencia)
             .tipo(TipoMovimiento.AJUSTE)
-            .motivo(motivo)
+            .motivo(motivoOPorDefecto(request.getMotivo(), diferencia == 0
+                ? MOTIVO_SIN_DIFERENCIAS
+                : "Ajuste manual de stock"))
             .idUsuario(idUsuario)
             .build();
 
         movimientoStockRepository.save(m);
     }
 
+    /**
+     * Ajuste de un producto con lotes contra el conteo físico, que es lo que
+     * {@link #controlarStock} no puede hacer: para estos productos la existencia es la suma de
+     * los lotes, así que corregir el total sin decir de qué lote sale no significa nada.
+     *
+     * <p>Hace falta porque el FEFO reparte por vencimiento, pero en la góndola el cliente
+     * agarra cualquier envase: con el tiempo el total puede seguir siendo correcto y el
+     * reparto por lote no serlo.
+     *
+     * <p>Es <b>parcial</b>: los lotes que el request no menciona quedan como estaban.
+     */
+    @Transactional
+    public List<LoteResponse> ajustarLotes(UUID idUsuario, AjusteLotesRequest request){
+        if(!usuarioApi.existById(idUsuario)){
+            throw new ResourceNotFoundException("Usuario no encontrado");
+        }
+
+        ProductoResponse producto = productosApi.getById(request.getIdProducto());
+
+        // Espejo exacto de la validación de controlarStock, del otro lado del mostrador.
+        if (!producto.isManejaLotes()) {
+            throw new BadRequestException(
+                "El producto no maneja lotes: su existencia se ajusta con POST /api/inventario/v1/controlar");
+        }
+
+        // Todos los lotes del producto de una vez y por la única puerta de bloqueo que hay.
+        // Bloquearlos uno por uno en el orden en que los mandó el cliente los tomaría en un
+        // orden distinto al del resto del sistema, que es justo lo que abre un ciclo con las
+        // ventas y las anulaciones.
+        List<Lote> lotes = loteRepository.findParaDescuentoFefo(request.getIdProducto());
+        Map<UUID, Lote> porId = new HashMap<>();
+        for (Lote lote : lotes) {
+            porId.put(lote.getId(), lote);
+        }
+
+        // Dos pasadas: primero se valida todo el conteo y recién después se escribe. Un
+        // request con un lote ajeno en la última línea no deja las anteriores aplicadas.
+        Set<UUID> contados = new HashSet<>();
+        for (ConteoLoteRequest conteo : request.getConteos()) {
+            if (!contados.add(conteo.getIdLote())) {
+                throw new BadRequestException(
+                    "El lote " + conteo.getIdLote() + " viene contado más de una vez");
+            }
+            if (!porId.containsKey(conteo.getIdLote())) {
+                throw new BadRequestException("El lote " + conteo.getIdLote()
+                    + " no existe, está dado de baja o no es de este producto");
+            }
+        }
+
+        List<MovimientoStock> movimientos = new ArrayList<>();
+        for (ConteoLoteRequest conteo : request.getConteos()) {
+            Lote lote = porId.get(conteo.getIdLote());
+            int diferencia = conteo.getCantidadReal() - lote.getCantidad();
+            if (diferencia == 0) continue;
+
+            lote.setCantidad(conteo.getCantidadReal());
+            loteRepository.save(lote);
+
+            movimientos.add(MovimientoStock.builder()
+                .idProducto(request.getIdProducto())
+                .idLote(lote.getId())
+                .cantidad(diferencia)
+                .tipo(TipoMovimiento.AJUSTE)
+                .motivo(motivoOPorDefecto(request.getMotivo(), "Ajuste manual de stock por lote"))
+                .idUsuario(idUsuario)
+                .build());
+        }
+
+        // Un conteo que no encontró diferencias también queda registrado, igual que en
+        // controlarStock: lo que prueba el movimiento es que alguien contó, no solo que hubo
+        // que corregir. Sin idLote, porque no es de ninguno en particular.
+        if (movimientos.isEmpty()) {
+            movimientos.add(MovimientoStock.builder()
+                .idProducto(request.getIdProducto())
+                .cantidad(0)
+                .tipo(TipoMovimiento.AJUSTE)
+                .motivo(motivoOPorDefecto(request.getMotivo(), MOTIVO_SIN_DIFERENCIAS))
+                .idUsuario(idUsuario)
+                .build());
+        }
+        movimientoStockRepository.saveAll(movimientos);
+
+        return aLoteResponsesDe(producto, lotes);
+    }
+
+    /**
+     * Los lotes que tiene sentido ofrecer en la pantalla de ajuste. Es un filtro <b>de la
+     * lista</b> y no del ajuste: {@link #ajustarLotes} acepta cualquier lote activo del
+     * producto, porque si no un error de carga sobre un lote ya vencido no tendría forma de
+     * corregirse.
+     */
+    public List<LoteResponse> getLotesAjustables(UUID idProducto){
+        ProductoResponse producto = productosApi.getById(idProducto);
+
+        if (!producto.isManejaLotes()) {
+            throw new BadRequestException("El producto no maneja lotes");
+        }
+
+        return aLoteResponsesDe(producto, loteRepository.findAjustables(
+            idProducto,
+            LocalDate.now(),
+            LocalDateTime.now().minusDays(EstadoLote.DIAS_LOTE_AGOTADO)));
+    }
+
     @Override
     public Map<UUID, Integer> getExistenciasPorProducto(){
+        return existencias(
+            stockRepository.cantidadesPorProducto(),
+            loteRepository.sumCantidadAgrupadaPorProducto());
+    }
+
+    @Override
+    public Map<UUID, Integer> getExistenciasPorProductos(Collection<UUID> idProductos){
+        if (idProductos == null || idProductos.isEmpty()) {
+            return Map.of();
+        }
+        return existencias(
+            stockRepository.cantidadesDeProductos(idProductos),
+            loteRepository.sumCantidadAgrupadaDeProductos(idProductos));
+    }
+
+    /**
+     * Arma el mapa a partir de las dos consultas agregadas. Los lotes van segundos y pisan:
+     * un producto con lotes puede tener además una fila de stock vieja —el alta la creaba— y
+     * su existencia es la suma de los lotes, nunca esa fila.
+     */
+    private Map<UUID, Integer> existencias(List<Object[]> porStock, List<Object[]> porLote){
         Map<UUID, Integer> existencias = new HashMap<>();
 
-        for (Object[] fila : stockRepository.cantidadesPorProducto()) {
+        for (Object[] fila : porStock) {
             if (fila[0] != null) {
                 existencias.put((UUID) fila[0], ((Number) fila[1]).intValue());
             }
         }
-        // Los productos con lotes no usan la tabla stock: su existencia es la suma de lotes.
-        for (Object[] fila : loteRepository.sumCantidadAgrupadaPorProducto()) {
+        for (Object[] fila : porLote) {
             if (fila[0] != null) {
                 existencias.put((UUID) fila[0], ((Number) fila[1]).intValue());
             }
@@ -230,8 +340,12 @@ public class InventarioService implements InventarioApi{
             Collections.singletonMap(guardado.getIdProducto(), producto.getNombre()));
     }
 
-    public List<LoteResponse> getAll(){
-        return aLoteResponses(loteRepository.findAllByDeletedAtIsNull());
+    /**
+     * Paginado: la tabla suma un lote por cada línea de compra de un producto con vencimiento,
+     * así que el listado completo crecía sin techo y traía años de lotes ya agotados.
+     */
+    public Page<LoteResponse> getAll(Pageable pageable){
+        return aLoteResponses(loteRepository.findAllByDeletedAtIsNull(pageable));
     }
 
     /**
@@ -240,15 +354,15 @@ public class InventarioService implements InventarioApi{
      * límites salen de las mismas constantes que usa {@link EstadoLote#calcularPara}, que
      * sigue siendo la única definición de qué es estar próximo a vencer.
      */
-    public List<LoteResponse> getByEstado(String estado) {
+    public Page<LoteResponse> getByEstado(String estado, Pageable pageable) {
         LocalDate hoy = LocalDate.now();
         LocalDate ultimoDiaProximo = hoy.plusDays(EstadoLote.DIAS_PROXIMO_A_VENCER - 1L);
 
-        List<Lote> lotes = switch (parseEstadoLote(estado)) {
-            case VENCIDO -> loteRepository.findByFechaVencimientoBeforeAndDeletedAtIsNull(hoy);
-            case PROXIMO -> loteRepository.findByFechaVencimientoBetweenAndDeletedAtIsNull(hoy, ultimoDiaProximo);
-            case VIGENTE -> loteRepository.findByFechaVencimientoAfterAndDeletedAtIsNull(ultimoDiaProximo);
-            case SIN_FECHA -> loteRepository.findByFechaVencimientoIsNullAndDeletedAtIsNull();
+        Page<Lote> lotes = switch (parseEstadoLote(estado)) {
+            case VENCIDO -> loteRepository.findByFechaVencimientoBeforeAndDeletedAtIsNull(hoy, pageable);
+            case PROXIMO -> loteRepository.findByFechaVencimientoBetweenAndDeletedAtIsNull(hoy, ultimoDiaProximo, pageable);
+            case VIGENTE -> loteRepository.findByFechaVencimientoAfterAndDeletedAtIsNull(ultimoDiaProximo, pageable);
+            case SIN_FECHA -> loteRepository.findByFechaVencimientoIsNullAndDeletedAtIsNull(pageable);
         };
 
         return aLoteResponses(lotes);
@@ -260,17 +374,48 @@ public class InventarioService implements InventarioApi{
      * Resuelve los nombres de los productos involucrados en un solo pedido a productos, en vez
      * de traerse el catálogo completo para armar un mapa que casi no se usa.
      */
+    /**
+     * Variante para los listados de un solo producto, que ya lo tienen resuelto: arma el mapa
+     * de nombres con lo que ya está en memoria en vez de repreguntárselo a productos. Mismo
+     * criterio que el alta de lote, y singletonMap y no Map.of porque el nombre puede ser null.
+     */
+    private List<LoteResponse> aLoteResponsesDe(ProductoResponse producto, List<Lote> lotes) {
+        Map<UUID, String> nombre = Collections.singletonMap(producto.getId(), producto.getNombre());
+        return lotes.stream()
+            .map(l -> toLoteResponse(l, nombre))
+            .toList();
+    }
+
+    /** El motivo que cargó el usuario, o el que describe la operación si no cargó ninguno. */
+    private String motivoOPorDefecto(String motivo, String porDefecto) {
+        return (motivo != null && !motivo.isBlank()) ? motivo : porDefecto;
+    }
+
     private List<LoteResponse> aLoteResponses(List<Lote> lotes) {
+        Map<UUID, String> nombres = nombresDeLosProductosDe(lotes);
+
+        return lotes.stream()
+            .map(l -> toLoteResponse(l, nombres))
+            .toList();
+    }
+
+    /**
+     * Igual para una página: el mapa se arma con el contenido de la página y recién después se
+     * mapea, así que sigue siendo un solo pedido a productos y no uno por fila.
+     */
+    private Page<LoteResponse> aLoteResponses(Page<Lote> lotes) {
+        Map<UUID, String> nombres = nombresDeLosProductosDe(lotes.getContent());
+
+        return lotes.map(l -> toLoteResponse(l, nombres));
+    }
+
+    private Map<UUID, String> nombresDeLosProductosDe(List<Lote> lotes) {
         Set<UUID> idsProducto = lotes.stream()
             .map(Lote::getIdProducto)
             .filter(Objects::nonNull)
             .collect(Collectors.toSet());
 
-        Map<UUID, String> nombres = productosApi.getNombresPorId(idsProducto);
-
-        return lotes.stream()
-            .map(l -> toLoteResponse(l, nombres))
-            .toList();
+        return productosApi.getNombresPorId(idsProducto);
     }
 
     /**
@@ -318,12 +463,6 @@ public class InventarioService implements InventarioApi{
      */
     private EstadoLote calcularEstado(LocalDate fechaVencimiento){
         return EstadoLote.calcularPara(fechaVencimiento);
-    }
-
-    private Stock toStockEntity(StockRequest request){
-        return Stock.builder()
-            .idProducto(request.getIdProducto())
-            .cantidad(request.getCantidad()).build();
     }
 
     private StockResponse toStockResponse(Stock stock){

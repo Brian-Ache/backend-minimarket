@@ -19,14 +19,15 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.AjusteLotesRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.AjusteStockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.LoteRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.LoteResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockResponse;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.StockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.StockResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
+import com.SolucionesInformaticasBA.minimarket.shared.Paginacion;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 
@@ -40,15 +41,7 @@ import lombok.AllArgsConstructor;
 @AllArgsConstructor
 public class InventarioController {
 
-    /** Techo del tamaño de página del historial de movimientos. */
-    private static final int MAX_PAGE_SIZE = 100;
-
     private final InventarioApi inventarioApi;
-
-    @PostMapping("/v1/stock")
-    public ResponseEntity<StockResponse> crearStock(@Valid @RequestBody StockRequest request){
-        return ResponseEntity.ok(inventarioApi.crear(request));
-    }
 
     @GetMapping("/v1/stock/{idProducto}")
     public ResponseEntity<StockResponse> getStock(@PathVariable UUID idProducto){
@@ -88,9 +81,9 @@ public class InventarioController {
     @GetMapping("/v1/movimientos/{idProducto}")
     public ResponseEntity<Page<MovimientoStockResponse>> obtenerMovimientos(
             @PathVariable UUID idProducto,
-            @RequestParam(defaultValue = "0") @Min(value = 0, message = "El número de página no puede ser negativo") int page,
-            @RequestParam(defaultValue = "20") @Min(value = 1, message = "El tamaño de página debe ser al menos 1")
-                @Max(value = MAX_PAGE_SIZE, message = "El tamaño de página no puede superar " + MAX_PAGE_SIZE) int size){
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size){
         Pageable pageable = PageRequest.of(page, size,
                 Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id")));
         return ResponseEntity.ok(inventarioApi.obtenerMovimientos(idProducto, pageable));
@@ -101,29 +94,75 @@ public class InventarioController {
         return ResponseEntity.ok(inventarioApi.crear(request));
     }
 
+    /**
+     * Conteo físico de un producto que maneja lotes. Es el equivalente de {@code /controlar}
+     * para estos productos, que no pueden ajustarse por ahí: su existencia es la suma de los
+     * lotes, así que corregir el total sin decir de qué lote sale no significa nada.
+     *
+     * <p>Solo se ajustan los lotes que vienen en el request; el resto queda como estaba.
+     */
+    @PostMapping("/v1/lotes/ajustar")
+    public ResponseEntity<List<LoteResponse>> ajustarLotes(
+            @Valid @RequestBody AjusteLotesRequest request){
+        return ResponseEntity.ok(inventarioApi.ajustarLotes(SecurityUtils.getCurrentUserId(), request));
+    }
+
+    /** Los lotes que conviene ofrecer en la pantalla de ajuste: sin vencidos ni agotados viejos. */
+    @GetMapping("/v1/lotes/ajustables/{idProducto}")
+    public ResponseEntity<List<LoteResponse>> getLotesAjustables(@PathVariable UUID idProducto){
+        return ResponseEntity.ok(inventarioApi.getLotesAjustables(idProducto));
+    }
+
     @GetMapping("/v1/lotes")
-    public ResponseEntity<List<LoteResponse>> getAllLotes(){
-        return ResponseEntity.ok(inventarioApi.getAll());
+    public ResponseEntity<Page<LoteResponse>> getAllLotes(
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size){
+        return ResponseEntity.ok(inventarioApi.getAll(porVencimiento(page, size)));
     }
 
     @GetMapping("/v1/lotes/estado/{estado}")
-    public ResponseEntity<List<LoteResponse>> getLotesByEstado(@PathVariable String estado){
-        return ResponseEntity.ok(inventarioApi.getByEstado(estado));
+    public ResponseEntity<Page<LoteResponse>> getLotesByEstado(
+            @PathVariable String estado,
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size){
+        return ResponseEntity.ok(inventarioApi.getByEstado(estado, porVencimiento(page, size)));
     }
 
     @GetMapping("/v1/lotes/vencimiento/proximos")
-    public ResponseEntity<List<LoteResponse>> lotesProximos(){
-        return ResponseEntity.ok(inventarioApi.getByEstado("PROXIMO"));
+    public ResponseEntity<Page<LoteResponse>> lotesProximos(
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size){
+        return ResponseEntity.ok(inventarioApi.getByEstado("PROXIMO", porVencimiento(page, size)));
     }
 
     @GetMapping("/v1/lotes/vencimiento/vencidos")
-    public ResponseEntity<List<LoteResponse>> lotesVencidos(){
-        return ResponseEntity.ok(inventarioApi.getByEstado("VENCIDO"));
+    public ResponseEntity<Page<LoteResponse>> lotesVencidos(
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size){
+        return ResponseEntity.ok(inventarioApi.getByEstado("VENCIDO", porVencimiento(page, size)));
     }
 
     @GetMapping("/v1/lotes/vencimiento/vigentes")
-    public ResponseEntity<List<LoteResponse>> lotesVigentes(){
-        return ResponseEntity.ok(inventarioApi.getByEstado("VIGENTE"));
+    public ResponseEntity<Page<LoteResponse>> lotesVigentes(
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size){
+        return ResponseEntity.ok(inventarioApi.getByEstado("VIGENTE", porVencimiento(page, size)));
+    }
+
+    /**
+     * El orden de los cinco listados de lotes: el que vence antes primero, que es el que hay
+     * que mirar. Con el id como desempate, porque los lotes que vencen el mismo día son
+     * muchos —una compra entera comparte vencimiento— y sin criterio de desempate las filas se
+     * repiten o se saltean al pasar de página.
+     */
+    private Pageable porVencimiento(int page, int size){
+        return PageRequest.of(page, size,
+                Sort.by(Sort.Direction.ASC, "fechaVencimiento").and(Sort.by(Sort.Direction.ASC, "id")));
     }
 
     /**
