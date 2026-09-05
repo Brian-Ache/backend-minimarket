@@ -1148,32 +1148,41 @@ Registra un movimiento manual de salida (ej: "compra de café para el personal")
 
 ### `GET /api/caja/v1/movimientos`
 
-Lista movimientos de caja. Si no se especifica rango, usa la sesión activa.
+Listado paginado. **Sin fechas** devuelve los movimientos del turno abierto; con fechas, los del
+período. Las dos fechas van juntas: con una sola no hay período que consultar. El rango es
+**semiabierto** —incluye `desde`, excluye `hasta`— igual que en ventas y compras.
 
-**Query params:** `?desde=2026-07-12T00:00:00&hasta=2026-07-12T23:59:59`
+**Query params:** `?desde=2026-07-12T00:00:00&hasta=2026-07-13T00:00:00&page=0&size=20`
 
-**Response `200`:**
+`page` arranca en 0; `size` va de 1 a 100. Ordena del movimiento más reciente al más viejo, con
+el `id` como desempate: los movimientos automáticos de una misma operación comparten instante.
+
+**Response `200`:** `Page<MovimientoCajaResponse>` (`content`, `totalElements`, `totalPages`,
+`number`, `size`), donde cada elemento es:
+
 ```json
-[
-  {
-    "id": "UUID",
-    "idSesion": "UUID",
-    "tipo": "ENTRADA | SALIDA",
-    "monto": "float",
-    "motivo": "string | null",
-    "origen": "VENTA | COMPRA | MANUAL",
-    "idReferencia": "UUID | null",
-    "fecha": "datetime"
-  }
-]
+{
+  "id": "UUID",
+  "idSesion": "UUID",
+  "tipo": "ENTRADA | SALIDA",
+  "monto": "float",
+  "motivo": "string | null",
+  "origen": "VENTA | COMPRA | MANUAL | REVERSA",
+  "idReferencia": "UUID | null",
+  "fecha": "datetime"
+}
 ```
+
+**Errores `400`:** viene una sola de las dos fechas · `desde` no es anterior a `hasta` · no hay
+turno abierto y tampoco se mandó rango · `page` negativo o `size` fuera de 1..100
 
 ---
 
 ### `GET /api/caja/v1/resumen/sesion`
 
 Estado del turno abierto: es lo que se mira antes de cerrar la caja. Solo cuenta **efectivo**,
-que es lo que el cajero tiene para contar. Para ver cuánto se cobró con tarjeta o transferencia
+que es lo que el cajero tiene para contar. La `fecha` del resumen es la de **apertura del
+turno**, no la del día en que se consulta. Para ver cuánto se cobró con tarjeta o transferencia
 en ese mismo turno, usar [`GET /api/ventas/v1/resumen/sesion/{idSesion}`](#get-apiventasv1resumensesionidsesion).
 
 **Response `200`:** `{ ...ResumenCaja }`

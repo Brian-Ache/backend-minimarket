@@ -6,6 +6,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
@@ -135,17 +138,31 @@ public class CajaService implements CajaApi {
     }
 
     @Override
-    public List<MovimientoCajaResponse> getMovimientos(LocalDateTime desde, LocalDateTime hasta) {
+    public Page<MovimientoCajaResponse> getMovimientos(LocalDateTime desde, LocalDateTime hasta,
+                                                       Pageable pageable) {
         if (desde == null && hasta == null) {
             SesionCaja sesion = sesionCajaRepository.findTopByEstadoAndDeletedAtIsNullOrderByCreatedAtDesc(EstadoSesion.ABIERTA)
                 .orElseThrow(() -> new BadRequestException("No hay sesión activa. Especifique un rango de fechas."));
-            return movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId())
-                .stream().map(this::toMovimientoResponse).toList();
+            return movimientoCajaRepository
+                .findByIdSesionAndDeletedAtIsNull(sesion.getId(), pageable)
+                .map(this::toMovimientoResponse);
         }
-        if (desde == null) desde = LocalDateTime.of(2000, 1, 1, 0, 0);
-        if (hasta == null) hasta = LocalDateTime.now();
-        return movimientoCajaRepository.findEnRango(desde, hasta)
-            .stream().map(this::toMovimientoResponse).toList();
+
+        // Las dos fechas o ninguna: con una sola, la que faltaba se rellenaba sola y un pedido
+        // con solo `hasta` terminaba barriendo desde el año 2000 sobre la tabla que más crece
+        // del módulo.
+        if (desde == null || hasta == null) {
+            throw new BadRequestException(
+                "Para consultar por fechas hay que indicar 'desde' y 'hasta'; sin ninguna de las "
+                    + "dos se devuelven los movimientos del turno abierto");
+        }
+        if (!desde.isBefore(hasta)) {
+            throw new BadRequestException(
+                "El rango de fechas es inválido: 'desde' tiene que ser anterior a 'hasta'");
+        }
+
+        return movimientoCajaRepository.findEnRango(desde, hasta, pageable)
+            .map(this::toMovimientoResponse);
     }
 
     /** Estado del turno abierto: es lo que el cajero mira antes de cerrar. */

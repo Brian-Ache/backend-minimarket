@@ -6,6 +6,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.AbrirSesionRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.CorteRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.CorteResponse;
@@ -36,7 +39,12 @@ public interface CajaApi {
     MovimientoCajaResponse registrarEntradaAutomatica(UUID idSesion, UUID idUsuario, float monto, String origen, UUID idReferencia);
     MovimientoCajaResponse registrarSalidaAutomatica(UUID idSesion, UUID idUsuario, float monto, String origen, UUID idReferencia);
 
-    List<MovimientoCajaResponse> getMovimientos(LocalDateTime desde, LocalDateTime hasta);
+    /**
+     * Movimientos del turno abierto —sin fechas— o de un rango. El rango es semiabierto y las
+     * dos fechas van juntas: con una sola no hay período que consultar.
+     */
+    Page<MovimientoCajaResponse> getMovimientos(LocalDateTime desde, LocalDateTime hasta,
+                                                Pageable pageable);
     ResumenCajaResponse getResumenSesion();
     ResumenCajaResponse getResumenDiario(LocalDate fecha);
 
