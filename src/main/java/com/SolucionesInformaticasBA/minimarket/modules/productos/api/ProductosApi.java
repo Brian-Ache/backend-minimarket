@@ -23,6 +23,13 @@ public interface ProductosApi {
      * cargado, y los ids que no existen no aparecen en el mapa.
      */
     Map<UUID, String> getNombresPorId(Collection<UUID> ids);
+
+    /**
+     * Barcodes de los productos pedidos, con las mismas reglas que {@link #getNombresPorId}:
+     * en una sola consulta, incluyendo los productos dados de baja, con valor null si la fila
+     * no tiene barcode cargado y sin entrada para los ids que no existen.
+     */
+    Map<UUID, String> getBarcodesPorId(Collection<UUID> ids);
     Page<ProductoResponse> getAll(Pageable pageable);
     Page<ProductoResponse> getByCategoria(UUID idCategoria, Pageable pageable);
     Page<ProductoResponse> getByProveedor(UUID idProveedor, Pageable pageable);

@@ -1,6 +1,8 @@
 package com.SolucionesInformaticasBA.minimarket.modules.compras.api;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.data.domain.Page;
@@ -21,6 +23,15 @@ public interface CompraApi {
     Page<CompraResponse> getAllFiltered(UUID idProveedor, String tipoComprobante,
                                         LocalDateTime desde, LocalDateTime hasta,
                                         Pageable pageable);
+
+    /**
+     * Total comprado por día en el rango (semiabierto: incluye {@code desde}, excluye
+     * {@code hasta}). Para los reportes, que solo necesitan importes: pedir el listado
+     * completo traía todos los detalles y una consulta de proveedor por compra.
+     *
+     * <p>Los días sin compras no aparecen en el mapa.
+     */
+    Map<LocalDate, Float> getTotalesPorDia(LocalDateTime desde, LocalDateTime hasta);
 
     /**
      * Anula la compra. Quién la anula sale del JWT, no de un parámetro: ese id queda escrito

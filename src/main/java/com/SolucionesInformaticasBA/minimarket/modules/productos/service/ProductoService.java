@@ -96,6 +96,21 @@ public class ProductoService implements ProductosApi{
         return nombres;
     }
 
+    @Override
+    public Map<UUID, String> getBarcodesPorId(Collection<UUID> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Map.of();
+        }
+        // Mismo criterio que getNombresPorId: HashMap para tolerar el barcode nulo, que la
+        // columna admite, e incluyendo bajas para que un reporte histórico siga mostrando el
+        // código del producto aunque hoy esté dado de baja.
+        Map<UUID, String> barcodes = new HashMap<>();
+        for (Producto p : productoRepository.findAllById(ids)) {
+            barcodes.put(p.getId(), p.getBarcode());
+        }
+        return barcodes;
+    }
+
     public Page<ProductoResponse> getAll(Pageable pageable){
         return toResponsePage(productoRepository.findAllPaginated(pageable));
     }

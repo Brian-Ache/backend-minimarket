@@ -1,9 +1,11 @@
 package com.SolucionesInformaticasBA.minimarket.modules.compras.service;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -185,6 +187,26 @@ public class CompraService implements CompraApi {
         // detalles en una sola consulta. Mapear fila por fila volvería a un query por compra.
         return new PageImpl<>(
             toCompraResponseList(compras.getContent()), pageable, compras.getTotalElements());
+    }
+
+    /**
+     * Totales por día para los reportes. Va contra una proyección de dos columnas y no contra
+     * getAllFiltered: ese arma la respuesta completa de cada compra —detalles incluidos— y
+     * resuelve un proveedor por fila, así que un reporte mensual disparaba una consulta por
+     * compra del período para después quedarse solo con la fecha y el importe.
+     */
+    @Override
+    public Map<LocalDate, Float> getTotalesPorDia(LocalDateTime desde, LocalDateTime hasta) {
+        Map<LocalDate, Float> totales = new HashMap<>();
+        for (Object[] fila : compraRepository.fechasYTotalesEnRango(desde, hasta)) {
+            if (fila[0] == null) {
+                continue;
+            }
+            LocalDate dia = ((LocalDateTime) fila[0]).toLocalDate();
+            float total = fila[1] == null ? 0f : ((Number) fila[1]).floatValue();
+            totales.merge(dia, total, Float::sum);
+        }
+        return totales;
     }
 
     /**

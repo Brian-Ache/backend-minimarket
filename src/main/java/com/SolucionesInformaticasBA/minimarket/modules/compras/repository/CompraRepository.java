@@ -60,4 +60,18 @@ public interface CompraRepository extends JpaRepository<Compra, UUID> {
         @Param("desde") LocalDateTime desde,
         @Param("hasta") LocalDateTime hasta,
         Pageable pageable);
+
+    /**
+     * Fecha y total de cada compra del rango, sin nada más. Es lo único que necesita el reporte
+     * de ganancias, y pedirlo así evita armar la CompraResponse completa: esa trae todos los
+     * detalles y resuelve un proveedor por compra, o sea cientos de consultas para datos que el
+     * reporte descarta.
+     */
+    @Query("""
+            SELECT c.createdAt, c.total FROM Compra c
+             WHERE c.deletedAt IS NULL
+               AND c.createdAt >= :desde AND c.createdAt < :hasta
+            """)
+    List<Object[]> fechasYTotalesEnRango(@Param("desde") LocalDateTime desde,
+                                         @Param("hasta") LocalDateTime hasta);
 }

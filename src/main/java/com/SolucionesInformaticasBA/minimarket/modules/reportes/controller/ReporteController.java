@@ -16,12 +16,18 @@ import com.SolucionesInformaticasBA.minimarket.modules.reportes.api.dto.ReporteG
 import com.SolucionesInformaticasBA.minimarket.modules.reportes.api.dto.ReporteInventarioItem;
 import com.SolucionesInformaticasBA.minimarket.modules.reportes.api.dto.ReporteVentasResponse;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.AllArgsConstructor;
 
 @RestController
 @RequestMapping("/api/reportes")
 @AllArgsConstructor
 public class ReporteController {
+
+    /** Techo del top de productos, mismo criterio que el tamaño de página del resto. */
+    private static final int MAX_LIMITE = 100;
+
     private final ReportesApi reportesApi;
 
     @GetMapping("/v1/ventas")
@@ -47,7 +53,10 @@ public class ReporteController {
     public ResponseEntity<List<ProductoMasVendidoResponse>> productosMasVendidos(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
-            @RequestParam(defaultValue = "10") int limite) {
+            @RequestParam(defaultValue = "10")
+                @Min(value = 1, message = "El límite debe ser al menos 1")
+                @Max(value = MAX_LIMITE, message = "El límite no puede superar " + MAX_LIMITE)
+                int limite) {
         return ResponseEntity.ok(reportesApi.getProductosMasVendidos(desde, hasta, limite));
     }
 }
