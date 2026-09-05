@@ -57,6 +57,12 @@ public class CajaService implements CajaApi {
     }
 
     @Override
+    public SesionCajaResponse getSesionById(UUID id) {
+        return toSesionResponse(sesionCajaRepository.findByIdAndDeletedAtIsNull(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Sesión de caja no encontrada")));
+    }
+
+    @Override
     public UUID getIdSesionActiva() {
         return obtenerSesionActiva().getId();
     }

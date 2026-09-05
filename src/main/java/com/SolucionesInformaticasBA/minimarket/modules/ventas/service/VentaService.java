@@ -403,10 +403,17 @@ public class VentaService implements VentasApi {
         return toResumen(fecha, ventas);
     }
 
-    /** Mismo desglose, acotado a un turno de caja: es lo que se mira al cerrar. */
+    /**
+     * Mismo desglose, acotado a un turno de caja: es lo que se mira al cerrar.
+     *
+     * <p>La fecha sale de la apertura del turno y no del reloj: un turno que abre a las 22:00 y
+     * cierra a las 02:00, o cualquier consulta hecha al día siguiente, salía fechado con el día
+     * en que se lo miraba y no con el que corresponde.
+     */
     @Override
     public ResumenDiarioResponse getResumenPorSesion(UUID idSesion) {
-        return toResumen(LocalDate.now(),
+        LocalDate fechaDelTurno = cajaApi.getSesionById(idSesion).getFechaApertura().toLocalDate();
+        return toResumen(fechaDelTurno,
             ventaRepository.findByIdSesionAndCobradaTrueAndDeletedAtIsNull(idSesion));
     }
 

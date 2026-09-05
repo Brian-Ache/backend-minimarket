@@ -18,6 +18,12 @@ public interface CajaApi {
     SesionCajaResponse abrirSesion(UUID idUsuario, AbrirSesionRequest request);
     SesionCajaResponse getSesionActiva();
 
+    /**
+     * Una sesión cualquiera, abierta o cerrada. La usa el resumen de ventas por turno para
+     * fecharse con la apertura del turno y no con el día en que se lo consulta.
+     */
+    SesionCajaResponse getSesionById(UUID id);
+
     /** Id de la sesión abierta. Falla si no hay ninguna. Nunca aceptar un idSesion del cliente. */
     UUID getIdSesionActiva();
 

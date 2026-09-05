@@ -836,6 +836,9 @@ Resumen de las ventas **cobradas** del día, desglosado por medio de pago. Filtr
 Mismo desglose, acotado a un turno de caja. Complementa el corte, que solo cuenta efectivo:
 acá se ve cuánto entró por tarjeta y transferencia en ese turno.
 
+`fecha` es la de **apertura del turno**, no la del día en que se consulta: un turno que abre a
+las 22:00 y cierra a las 02:00 se informa con el día en que abrió.
+
 **Response `200`:** `{ ...ResumenVentas }`
 
 ---
