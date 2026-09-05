@@ -3,8 +3,8 @@
 ## Sin publicar
 
 Cierre del alta por invitación y limpieza de los límites entre los módulos `auth` y `usuarios`,
-más la auditoría de los módulos de catálogo —productos, categorías y proveedores— y de
-inventario.
+más la auditoría de los módulos de catálogo —productos, categorías y proveedores—, de
+inventario y de reportes.
 
 ### Cambios que rompen compatibilidad
 
@@ -71,6 +71,17 @@ inventario.
   número —normalmente el total exacto— para que el cobro pasara, y ese número quedaba guardado
   como si fuera la plata que entregó el cliente. En efectivo sigue siendo obligatorio y tiene
   que alcanzar para el total.
+- **Los reportes con fechas acotan el rango a 366 días.** `GET /api/reportes/v1/ventas`,
+  `/ganancias` y `/productos-mas-vendidos` responden `400` si el período es más largo o si
+  `desde` es posterior a `hasta`. Cada reporte devuelve una fila por día del rango y carga en
+  memoria las ventas del período con sus detalles: con `desde=0001-01-01&hasta=9999-12-31` se
+  armaban más de tres millones de filas en una sola respuesta.
+- **`limite` de `GET /api/reportes/v1/productos-mas-vendidos` va de 1 a 100.** Fuera de ese
+  rango es `400`; antes un valor negativo respondía `500` y uno arbitrariamente grande se
+  aceptaba.
+- **`porDia` del reporte de ganancias cubre el rango completo.** Los días sin ventas ni compras
+  ahora salen en cero, como ya hacía `/reportes/ventas`. Devolvían arrays de distinto largo para
+  el mismo período, así que no se podían graficar juntos sin rellenarlos en el front.
 - **`DELETE /api/compras/v1/{id}` ya no lleva el header `idUsuario`.** Era el último endpoint que
   lo exigía, contra lo que la documentación viene diciendo desde hace dos versiones. Si el front
   lo sigue mandando, se ignora; si antes lo omitía, dejaba de responder `500`.
@@ -164,6 +175,14 @@ inventario.
 
 ### Correcciones
 
+- **El `barcode` del top de productos más vendidos salía siempre en `null`.** El detalle de la
+  venta congela el nombre y el precio, no el código, y el reporte nunca lo buscaba, aunque el
+  campo estaba en la respuesta y documentado. Ahora se resuelve en una sola consulta y solo para
+  los productos que quedaron en el top.
+- **El top de productos empatados salía en cualquier orden.** Se ordenaba solo por cantidad
+  vendida, así que entre dos productos con la misma cantidad el corte del `limite` podía dejar
+  afuera a uno u otro sin criterio y cambiar entre dos llamadas idénticas. Desempata por importe
+  y después por id.
 - **Un invitado que reseteaba la contraseña en vez de aceptar la invitación quedaba afuera para
   siempre.** `POST /api/auth/v1/password-reset` alcanza a las cuentas `PENDIENTE`, pero
   confirmar el reseteo cambiaba el hash sin tocar el estado, y el login exige una cuenta activa:
@@ -293,6 +312,10 @@ inventario.
   incluidas las filas dadas de baja, ignorando el índice de `deleted_at`.
 - **El tamaño de página del catálogo tiene techo** (100). Sin límite, un solo pedido podía exigir
   un trabajo arbitrariamente grande.
+- **El reporte de ganancias pedía el listado completo de compras del período.** Ese listado arma
+  la respuesta entera de cada compra —todos sus detalles y una consulta de proveedor por fila—
+  para que el reporte se quedara solo con la fecha y el importe: un mes con 300 compras eran 300
+  consultas de más. Ahora las compras se piden como totales por día.
 
 ### Configuración
 

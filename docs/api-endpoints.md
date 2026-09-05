@@ -1532,9 +1532,15 @@ Shorthands para filtrar por estado.
 > cobro**, con rangos sin solapamiento entre días consecutivos. `/reportes/ventas`,
 > `/reportes/ganancias` y `/ventas/resumen/diario` devuelven el mismo total para el mismo rango.
 
+> **El rango incluye las dos puntas y no puede superar los 366 días.** Un reporte devuelve una
+> fila por día y carga en memoria las ventas del período con sus detalles, así que un rango
+> abierto se comía el servidor. `desde` posterior a `hasta` también es `400`: es un error de
+> quien pregunta, no un reporte en cero. Vale para los tres endpoints con fechas.
+
 ### `GET /api/reportes/v1/ventas`
 
-Reporte de ventas por día en un rango de fechas.
+Reporte de ventas por día en un rango de fechas. `porDia` cubre el rango completo: los días sin
+ventas salen en cero.
 
 **Query params:** `desde=2026-07-01&hasta=2026-07-12`
 
@@ -1555,6 +1561,8 @@ Reporte de ventas por día en un rango de fechas.
 }
 ```
 
+**Error `400`:** `desde` posterior a `hasta`, o rango de más de 366 días
+
 ---
 
 ### `GET /api/reportes/v1/ganancias`
@@ -1568,6 +1576,9 @@ pérdida cada vez que se repone mercadería, aunque el negocio haya ganado plata
 
 `unidadesSinCosto` cuenta las unidades vendidas sin costo conocido (ítems manuales o productos
 sin costo cargado). Si es alto, la ganancia informada está sobrestimada.
+
+`porDia` cubre el rango completo, igual que el reporte de ventas: los días sin movimiento salen
+en cero, así los dos reportes del mismo período devuelven arrays del mismo largo.
 
 **Query params:** `desde=2026-07-01&hasta=2026-07-12`
 
@@ -1592,6 +1603,8 @@ sin costo cargado). Si es alto, la ganancia informada está sobrestimada.
   ]
 }
 ```
+
+**Error `400`:** `desde` posterior a `hasta`, o rango de más de 366 días
 
 ---
 
@@ -1620,9 +1633,12 @@ suma de sus lotes activos (antes salía siempre en 0, porque solo se miraba la t
 
 ### `GET /api/reportes/v1/productos-mas-vendidos`
 
-Top N productos más vendidos en un período.
+Top N productos más vendidos en un período. Los ítems manuales no entran: no son productos del
+catálogo. Ordena por cantidad vendida y desempata por importe y después por id, para que el corte
+del `limite` no dependa del orden en que salgan los datos.
 
-**Query params:** `desde=2026-07-01&hasta=2026-07-12&limite=10` (limite default 10)
+**Query params:** `desde=2026-07-01&hasta=2026-07-12&limite=10`. `limite` va de 1 a 100 (default
+10).
 
 **Response `200`:**
 ```json
@@ -1630,9 +1646,15 @@ Top N productos más vendidos en un período.
   {
     "idProducto": "UUID",
     "nombre": "string",
-    "barcode": "string",
+    "barcode": "string | null",
     "cantidadVendida": "int",
     "totalVendido": "float"
   }
 ]
 ```
+
+`nombre` es el que tenía el producto al venderse (queda congelado en el detalle de la venta);
+`barcode` es el vigente hoy, y es `null` si el producto no tiene código cargado.
+
+**Error `400`:** `desde` posterior a `hasta`, rango de más de 366 días, o `limite` fuera de
+1..100
