@@ -1,4 +1,4 @@
-# Arquitectura — backend-minimarket v0.4.0
+# Arquitectura — backend-minimarket v0.5.0
 
 Backend de un punto de venta para minimarket: catálogo, ventas con cobro, compras a proveedores,
 inventario con lotes, caja con arqueo y reportes.
@@ -148,15 +148,16 @@ Logout -> revoca el refresh token (idempotente)
 
 | Operación | SUPERADMIN | ADMIN | EMPLEADO |
 |---|:---:|:---:|:---:|
-| Vender, cobrar, comprar, mover caja e inventario | ✅ | ✅ | ✅ |
+| Vender, cobrar, comprar, mover stock y caja | ✅ | ✅ | ✅ |
 | Consultar catálogo · ver y editar su propio usuario | ✅ | ✅ | ✅ |
 | Escritura de catálogo · anular ventas y compras · corte de caja · reportes | ✅ | ✅ | ❌ |
+| Ajuste de inventario contra conteo físico (`/controlar`, `/lotes/ajustar`) | ✅ | ✅ | ❌ |
 | Alta, bloqueo y baja de EMPLEADO | ✅ | ✅ | ❌ |
 | Alta, bloqueo y baja de ADMIN | ✅ | ❌ | ❌ |
 
 ## Modelo de Datos
 
-15 tablas. Convenciones transversales: PK `UUID` (`BINARY(16)`), borrado lógico con `deleted_at`
+16 tablas. Convenciones transversales: PK `UUID` (`BINARY(16)`), borrado lógico con `deleted_at`
 (NULL = activo) y auditoría `created_at` / `updated_at`.
 
 | Tabla | Propósito |
@@ -167,7 +168,8 @@ Logout -> revoca el refresh token (idempotente)
 | `categorias` | Categorías de producto |
 | `proveedores` | Proveedores |
 | `productos` | Catálogo. El stock **no** vive acá |
-| `stock` | Existencias agregadas por producto (una fila activa por producto) |
+| `producto_proveedor` | Precio de referencia de cada proveedor por producto (catálogo de consulta) |
+| `stock` | Existencias agregadas por producto (una fila activa; los que manejan lotes no llevan) |
 | `lote` | Lotes con vencimiento, para productos con `maneja_lotes` |
 | `movimientos_stock` | Kardex: toda entrada y salida, con `id_referencia` al comprobante |
 | `ventas` | Cabecera de venta |
@@ -188,8 +190,9 @@ Usuario --+-- Venta / Compra / MovimientoStock / MovimientoCaja
           +-- SesionCaja (apertura y cierre)
           +-- AuthToken / RefreshToken (ON DELETE CASCADE)
 
-Producto --+-- Stock            (1 fila activa)
+Producto --+-- Stock            (1 fila activa, solo si NO maneja lotes)
            +-- Lote             (N, con vencimiento)
+           +-- ProductoProveedor (N, precio de referencia por proveedor)
            +-- MovimientoStock
            +-- DetalleVenta     (nullable: los ítems MANUAL no tienen producto)
            +-- DetalleCompra
@@ -206,8 +209,15 @@ una venta o a una compra según el origen), por eso no llevan FK.
 ### Decisiones de modelado
 
 - **El stock tiene dos fuentes según el producto:** la tabla `stock` para los comunes y la suma
-  de lotes activos para los que manejan lotes. Las ventas de estos últimos consumen por FIFO
-  según fecha de vencimiento.
+  de lotes activos para los que manejan lotes. Un producto con lotes **no lleva fila de `stock`**:
+  esa fila no la lee nadie y no se actualiza cuando entra o sale mercadería por lote. Las ventas
+  de estos productos consumen por **FEFO** —*first expired, first out*—, o sea el lote que vence
+  antes, que no es lo mismo que el que entró antes.
+- **El precio de referencia de un proveedor no es lo que se le pagó.** `producto_proveedor` es un
+  catálogo de consulta que se carga a mano; lo que realmente se pagó sale del historial de
+  compras. La vista que los cruza vive en `compras`, el único módulo que ya depende de productos
+  y de proveedores; el catálogo lo tiene `productos`, porque `productos -> proveedores` ya existe
+  y colgarlo del otro lado cerraría un ciclo.
 - **`movimientos_stock` es la fuente de verdad de la trazabilidad.** Nunca se borra un
   movimiento: anular un comprobante genera movimientos de reversa que referencian al original.
   Es lo que permite reponer cada lote en la cantidad exacta que se le sacó.
@@ -220,7 +230,7 @@ una venta o a una compra según el origen), por eso no llevan FK.
 
 ## Flujos principales
 
-**Venta.** Se crea con sus líneas y descuenta stock en el momento (FIFO por lote si
+**Venta.** Se crea con sus líneas y descuenta stock en el momento (FEFO por lote si
 corresponde). Queda `cobrada = false` hasta el cobro, que registra medio de pago y monto. Solo
 el pago **en efectivo** asocia la venta al turno de caja y genera la entrada; tarjeta y
 transferencia quedan registradas pero fuera del arqueo. Anular una venta no cobrada devuelve la
@@ -280,10 +290,15 @@ Scripts en `script/database/`:
 | `00_init_limpio.sql` | Esquema final autocontenido para una base nueva |
 | `01_seed.sql` | Datos de desarrollo (admin, catálogo de ejemplo) |
 | `02_parche_migraciones.sql` | Parche acumulado para una base existente anterior al esquema final |
+| `02_seed_productos.sql`, `03_seed_stock.sql` | Datos de prueba opcionales: catálogo con existencias |
+| `04` a `11` | Migraciones numeradas, una por cambio de esquema. Ver el `CHANGELOG` de cada versión |
 
 El esquema está alineado con las entidades: la app puede arrancar con
-`spring.jpa.hibernate.ddl-auto=validate` y no reporta discrepancias. El parche se aplica a mano;
-incorporar Flyway es trabajo pendiente.
+`spring.jpa.hibernate.ddl-auto=validate` y no reporta discrepancias. Las migraciones numeradas se
+aplican **a mano, en orden y con la aplicación detenida**; cada una abre con una consulta
+informativa de los datos que podrían frenar el `ALTER` y cierra con una de verificación. Una
+instalación nueva no las necesita: `00_init_limpio.sql` ya las trae incorporadas. Incorporar
+Flyway es trabajo pendiente.
 
 Configuración por variables de entorno (ver `.env.example`): `DB_URL`, `DB_USERNAME`,
 `DB_PASSWORD`, `JWT_SECRET` (obligatoria), `JWT_EXPIRATION_HOURS`, `SERVER_PORT`,
@@ -302,9 +317,10 @@ Configuración por variables de entorno (ver `.env.example`): `DB_URL`, `DB_USER
 
 ## Estado y deuda conocida
 
-- **No hay tests automatizados** más allá de la carga de contexto. Es la deuda más importante:
-  toda la verificación de la v0.2.0 fue manual.
-- Los listados de ventas y compras **no están paginados**.
+- **Los tests son unitarios y con mocks**: 258 en 37 archivos (JUnit 5 + Mockito), un archivo
+  por área de un servicio. No hay tests de integración contra una base real —
+  `MinimarketApplicationTests.contextLoads` es el único que necesita MySQL levantado—, así que
+  las consultas JPQL y los índices se verifican a mano.
 - Las migraciones se aplican a mano (falta Flyway).
 - **Los importes usan `float`.** Para dinero corresponde `DECIMAL` + `BigDecimal`; mientras
   siga así, los totales acumulan error de redondeo.

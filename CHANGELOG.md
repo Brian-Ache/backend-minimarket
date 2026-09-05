@@ -1,5 +1,153 @@
 # Changelog
 
+## 0.5.0 (2026-09-05)
+
+Cuatro trabajos que venían anotados como pendientes: el alta de producto pasa a cargar sus
+existencias iniciales, los productos que manejan lotes ganan un ajuste manual por lote, cada
+proveedor puede tener un precio de referencia por producto, y terminan de paginarse los seis
+listados que quedaban sin techo.
+
+**Al actualizar hay que aplicar las migraciones `09` a `11`** en orden y con la aplicación
+detenida; ver *Base de datos*. Una instalación nueva no las necesita.
+
+### Cambios que rompen compatibilidad
+
+- **Se eliminó `POST /api/inventario/v1/stock`.** Era inalcanzable: el alta de producto siempre
+  había creado la fila de stock, así que este endpoint respondía `400 El producto ya tiene stock
+  inicializado` para cualquier producto dado de alta por la API. Las existencias iniciales ahora
+  se cargan en `POST /api/productos/v1`. Se fueron con él `InventarioApi.crear(StockRequest)` y
+  el DTO `StockRequest`.
+- **Un producto que maneja lotes ya no lleva fila de `stock`.** Sus existencias son la suma de
+  sus lotes y esa fila no la leía nadie: no se actualizaba al entrar o salir mercadería por lote
+  y ocupaba el índice único sin representar nada. El alta dejó de crearla y la migración `09` da
+  de baja las que quedaron.
+- **`PUT /api/productos/v1/{id}` puede responder `400` al cambiar `manejaLotes`.** El cambio
+  mueve la fuente de las existencias del producto —la tabla `stock` para los comunes, la suma de
+  lotes para los que manejan lotes—, así que con unidades cargadas las hacía desaparecer de toda
+  la aplicación: seguían en la base y ningún reporte volvía a mostrarlas, sin movimiento ni
+  error. Ahora hay que descargarlas primero.
+- **Los seis listados que faltaban devuelven un `Page`.** `GET /api/inventario/v1/lotes` y sus
+  cuatro variantes por estado y vencimiento, `GET /api/caja/v1/corte/historial`,
+  `GET /api/reportes/v1/inventario`, `GET /api/categorias/v1`, `GET /api/proveedores/v1` y
+  `GET /api/users/v1`. Todos aceptan `?page=` y `?size=` (1 a 100) y devuelven `content`,
+  `totalElements`, `totalPages`, `number` y `size` en vez de un array. Los parámetros que ya
+  tenían —`?incluirBajas=` en usuarios y proveedores— se conservan tal cual.
+
+### Agregado
+
+- **`POST /api/productos/v1` carga las existencias iniciales.** Suma `cantidadInicial` (opcional,
+  0 por defecto) y `loteInicial` con `numeroLote` y `fechaVencimiento`. Producto, existencias y
+  movimiento de stock se escriben en la misma transacción, así que la pantalla de registrar
+  stock ya no tiene que mandar al usuario de vuelta al formulario de producto ni completar el
+  alta con una segunda llamada que, si fallaba, dejaba un producto en cero sin avisar.
+  - Sin lotes: fila de `stock` con la cantidad, más un movimiento `AJUSTE` "Carga inicial de
+    stock" cuando es mayor a cero.
+  - Con lotes: el lote de `loteInicial` con esa cantidad y su movimiento, **sin** fila de stock.
+  - `400` si `manejaLotes` es `false` y viene `loteInicial`, si es `true` con cantidad y sin
+    `loteInicial`, o si viene `loteInicial` con la cantidad en cero.
+- **`POST /api/inventario/v1/lotes/ajustar` — conteo físico por lote.** Es el equivalente de
+  `/controlar` para los productos que manejan lotes, que hasta ahora **no tenían ningún camino
+  de corrección**: `controlarStock` los rechazaba, y con razón, porque escribiría una tabla que
+  para ellos nadie lee. Hace falta porque el consumo reparte por vencimiento pero en la góndola
+  el cliente agarra cualquier envase: con el tiempo el total puede seguir siendo correcto y el
+  reparto por lote no serlo.
+  - **Parcial**: solo se tocan los lotes que vienen en `conteos`. Un conteo incompleto no borra
+    existencias que nadie miró.
+  - Un movimiento `AJUSTE` por lote con diferencia, con su `idLote` y la diferencia firmada. Un
+    conteo sin diferencias deja **un solo** movimiento en cero y sin lote: lo que se registra es
+    que alguien contó.
+  - Valida todo el conteo antes de escribir nada, así que un lote ajeno en la última línea no
+    deja aplicadas las anteriores.
+  - Solo ADMIN, igual que `/controlar`.
+- **`GET /api/inventario/v1/lotes/ajustables/{idProducto}`** — los lotes que conviene ofrecer en
+  esa pantalla: sin los vencidos, que corresponden a una merma y no a un ajuste de conteo, y sin
+  los que están en cero desde hace más de 30 días (`EstadoLote.DIAS_LOTE_AGOTADO`). Es un filtro
+  de la lista, no del ajuste: el `POST` acepta cualquier lote activo, porque si no un error de
+  carga sobre un lote vencido no tendría forma de corregirse.
+- **Precio de referencia por proveedor.** Cada producto puede tener el precio que **lista** cada
+  proveedor, cargado y corregido siempre a mano. No es lo que se pagó la última vez ni influye
+  en ninguna compra ni en ningún cálculo: es el dato que se consulta al momento de comprar.
+  - `GET /api/productos/v1/{id}/proveedores`, del más barato al más caro.
+  - `PUT /api/productos/v1/{id}/proveedores/{idProveedor}` — upsert, para que el front no tenga
+    que saber de antemano si la referencia ya existía. Solo ADMIN.
+  - `DELETE /api/productos/v1/{id}/proveedores/{idProveedor}` — baja lógica, que libera el par
+    para volver a cargarlo. Solo ADMIN.
+- **`GET /api/compras/v1/producto/{idProducto}/proveedores`** — a quién se le puede comprar el
+  producto y a cuánto: cruza el precio de referencia con **lo que realmente se pagó** la última
+  vez a cada proveedor. Ordena primero los del catálogo por precio y después, por nombre, los
+  que solo aparecen en el historial. Es de consulta y no interviene en el alta de la compra.
+
+### Cambiado
+
+- **`findParaDescuentoFifo` pasó a llamarse `findParaDescuentoFefo`,** y con ella los
+  comentarios y el motivo que se guarda en los movimientos (`"Venta realizada (FEFO)"`). El
+  comportamiento no cambia: la consulta siempre ordenó por fecha de vencimiento, o sea que ya
+  era FEFO —*first expired, first out*— y no FIFO. Se consume primero el lote que vence antes,
+  no el que entró antes, que es lo que corresponde en un minimarket. Los movimientos ya escritos
+  conservan el texto viejo: el kardex es append-only.
+- **El error de `POST /api/inventario/v1/controlar` sobre un producto con lotes ahora dice por
+  dónde sí se ajusta,** en vez de describir el problema y dejar al usuario sin camino.
+- **La baja de un producto también da de baja sus precios de referencia,** igual que ya hacía
+  con su stock y sus lotes. Si sobrevivían, el índice único las seguía contando y volver a
+  cargar el mismo par producto-proveedor chocaba contra una fila de un producto que ya no
+  existe.
+- **La baja de un proveedor NO borra sus precios de referencia,** y es a propósito: la baja es
+  reversible con `/restaurar`, así que perder el catálogo en cada una sería destructivo. Las
+  referencias se siguen mostrando con `deletedAt` cargado. Lo que sí se rechaza es cargar una
+  referencia **nueva** a un proveedor dado de baja.
+- **El techo del tamaño de página vive en `shared/Paginacion`.** Estaba declarado como constante
+  privada en cinco controladores, y esta versión lo habría llevado a nueve: basta con que una
+  quede desactualizada para que dos listados de la misma API acepten tamaños distintos.
+
+### Rendimiento
+
+- **`GET /api/reportes/v1/inventario` dejó de traerse el sistema entero.** Pedía el catálogo
+  completo con `PageRequest.of(0, Integer.MAX_VALUE)` —resolviendo además la categoría de cada
+  fila— y encima las existencias de **todos** los productos. Ahora pagina y resuelve las
+  existencias solo de los productos de la página, con `InventarioApi.getExistenciasPorProductos`,
+  que son las mismas dos consultas agregadas acotadas con un `IN`.
+- **Los listados de lotes resuelven los nombres de producto en un solo pedido por página**, no
+  uno por fila: el mapa se arma con el contenido de la página y recién después se mapea.
+- **La última compra por proveedor sale de una subconsulta correlacionada** sobre el máximo de
+  `created_at`, no trayendo el historial completo del producto para descartar en memoria. Un
+  producto que se compra hace años tiene cientos de líneas y solo interesa la última de cada
+  proveedor.
+
+### Correcciones
+
+- **Cambiar `manejaLotes` con existencias cargadas hacía desaparecer la mercadería.** Ver
+  *Cambios que rompen compatibilidad*.
+- **El alta creaba una fila de `stock` inútil para los productos con lotes.** Ver *Cambios que
+  rompen compatibilidad* y la migración `09`.
+- **El orden de los proveedores que solo aparecen en el historial es estable.** Salía de un
+  `HashMap`, así que cambiaba entre dos llamadas iguales.
+- **El historial de cortes ordena por `fecha_cierre` con un índice que lo acompaña.** El único
+  que había ordenaba por `created_at`, que no es el mismo orden: un turno puede abrirse antes
+  que otro y cerrarse después.
+- **La matriz de permisos de `docs/api-endpoints.md` decía que todo inventario era para
+  `EMPLEADO`.** Era inexacto desde la 0.4.0: `/controlar` y `DELETE /stock/**` son de ADMIN.
+
+### Base de datos
+
+- **`09_stock_de_productos_con_lotes.sql` — baja de las filas de `stock` huérfanas.** Da de baja
+  lógica las filas en cero de productos que manejan lotes, que son las que dejó el alta vieja.
+  Solo toca las que están en **cero**: una fila con unidades es un dato real que se perdería de
+  vista, y además significa que en algún momento se cambió `manejaLotes` con existencias
+  cargadas —justo lo que esta versión pasa a rechazar—, así que el script las lista aparte para
+  revisarlas a mano.
+- **`10_producto_proveedor.sql` — tabla nueva del catálogo de precios de referencia.** Un precio
+  activo por par `(id_producto, id_proveedor)`, con el mismo patrón de columna generada que
+  `uk_stock_producto_activo`: borrar la referencia libera el par. `productos.id_proveedor` **no
+  se toca**, sigue siendo el proveedor habitual; son dos datos distintos.
+  - `precio_referencia` es `DECIMAL(12,2)` y no `FLOAT`, a diferencia del resto de los importes
+    del sistema. Eso es deuda conocida; una columna nueva no tiene por qué nacer con el
+    problema, y esta no se suma con ninguna otra.
+- **`11_indice_cierre_sesiones.sql` — índice para el historial de cortes paginado.**
+  `ix_sesiones_estado_cierre (estado, deleted_at, fecha_cierre)`. El índice viejo se conserva:
+  lo usan las otras consultas por estado, que siguen ordenando por `created_at`.
+- Aplicar en orden y con la aplicación detenida. `00_init_limpio.sql` ya trae la tabla y el
+  índice nuevos: una instalación nueva no necesita las migraciones.
+
 ## 0.4.0 (2026-09-04)
 
 Cierre del alta por invitación y limpieza de los límites entre los módulos `auth` y `usuarios`,

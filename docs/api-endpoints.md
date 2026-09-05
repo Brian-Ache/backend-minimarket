@@ -63,7 +63,8 @@ Errores de validación (`400`):
 |---|:---:|:---:|:---:|
 | Vender, cobrar, comprar | ✅ | ✅ | ✅ |
 | Abrir caja, movimientos manuales | ✅ | ✅ | ✅ |
-| Inventario: stock, lotes, ajustes | ✅ | ✅ | ✅ |
+| Inventario: movimientos de stock y alta de lotes | ✅ | ✅ | ✅ |
+| Inventario: ajuste contra conteo físico (`/controlar`, `/lotes/ajustar`) y baja de la fila de stock | ✅ | ✅ | ❌ |
 | Consultar catálogo (GET productos/categorías/proveedores) | ✅ | ✅ | ✅ |
 | Ver y editar su propio usuario, cambiar su contraseña | ✅ | ✅ | ✅ |
 | Crear/editar/borrar productos, categorías y proveedores | ✅ | ✅ | ❌ |
@@ -333,7 +334,13 @@ cuentas dadas de baja, que vienen con `deletedAt` cargado.
 Es cómo el front encuentra una cuenta para
 [restaurarla](#post-apiusersv1idrestaurar): en el listado normal no aparecen.
 
-**Response `200`:** `[ ...UsuarioResponse ]`
+**Query params:** `?incluirBajas=false&page=0&size=20` — `page` arranca en 0, `size` va de 1 a
+100.
+
+**Response `200`:** `Page<UsuarioResponse>` (`content`, `totalElements`, `totalPages`, `number`,
+`size`)
+
+Ordena por `username`, con el `id` como desempate.
 
 ---
 
@@ -502,13 +509,32 @@ endpoint que devuelve cuentas dadas de baja.
   "costo": "float (>= 0, opcional)",
   "margen": "float (>= 0, opcional)",
   "idCategoria": "UUID (opcional)",
-  "idProveedor": "UUID (opcional)"
+  "idProveedor": "UUID (opcional)",
+  "cantidadInicial": "int (>= 0, opcional, default 0)",
+  "loteInicial": {
+    "numeroLote": "string (opcional)",
+    "fechaVencimiento": "date (obligatoria dentro de loteInicial)"
+  }
 }
 ```
 
-**Response `200`:** `{ ...ProductoResponse }`
+El alta carga las existencias iniciales en la misma transacción, así que no hace falta una
+segunda llamada. De dónde salen depende de `manejaLotes`:
 
-**Error `400`:** si el barcode ya existe, o la categoría/proveedor no existen (o están dados de baja)
+| `manejaLotes` | `cantidadInicial` | Qué crea |
+|---|---|---|
+| `false` | `0` | Fila de stock en 0, sin movimiento |
+| `false` | `> 0` | Fila de stock con la cantidad + movimiento `AJUSTE` "Carga inicial de stock" |
+| `true` | `0` | Nada: el producto nace vacío y **no lleva fila de stock** |
+| `true` | `> 0` | El lote de `loteInicial` + movimiento `AJUSTE` con `idLote`. **Sin fila de stock** |
+
+**Response `200`:** `{ ...ProductoResponse }` — sin las existencias: se consultan con
+`GET /api/inventario/v1/stock/{idProducto}` o con el listado de lotes.
+
+**Error `400`:** si el barcode ya existe; si la categoría o el proveedor no existen (o están
+dados de baja); si `manejaLotes` es `false` y viene `loteInicial`; si `manejaLotes` es `true`
+con `cantidadInicial > 0` y sin `loteInicial`; o si viene `loteInicial` con `cantidadInicial`
+en 0 (un lote sin unidades no se crea)
 
 ---
 
@@ -559,11 +585,79 @@ Reemplazo total: el body es la representación completa del producto. Los campos
 se omitan o vengan en `null` **se borran** (es la forma de desasignar categoría, proveedor,
 costo o margen).
 
-**Request:** mismo body que POST
+**Request:** mismo body que POST, sin `cantidadInicial` ni `loteInicial`: si vienen se ignoran.
+Corregir existencias es un ajuste de stock y tiene que quedar en el kardex como tal, no
+escondido en una edición de catálogo.
 
 **Response `200`:** `{ ...ProductoResponse }`
 
+**Error `400`:** si el barcode ya existe, si la categoría o el proveedor no existen, o si se
+cambia `manejaLotes` con el producto teniendo existencias. Ese cambio mueve la fuente de las
+existencias —la tabla `stock` para los productos comunes, la suma de lotes para los que manejan
+lotes—, así que con unidades cargadas las hacía desaparecer de toda la aplicación sin dejar
+movimiento. Hay que descargarlas primero, con una venta o un ajuste.
+
 **Error `404`:** el producto no existe o está dado de baja
+
+---
+
+### `GET /api/productos/v1/{id}/proveedores`
+
+Catálogo de precios de referencia del producto: lo que **cada proveedor lista** por él. Se carga
+y se corrige siempre a mano; no es lo que se pagó la última vez ni influye en ninguna compra.
+
+Del más barato al más caro.
+
+**Response `200`:**
+```json
+[
+  {
+    "proveedor": { "...ProveedorResponse" },
+    "precioReferencia": "decimal",
+    "actualizado": "datetime"
+  }
+]
+```
+
+Un proveedor dado de baja **conserva** sus precios y sigue apareciendo, con `deletedAt` cargado:
+la baja es reversible y perder el catálogo en cada una sería destructivo.
+
+> Para verlo junto con lo que realmente se pagó está
+> [`GET /api/compras/v1/producto/{idProducto}/proveedores`](#get-apicomprasv1productoidproductoproveedores).
+
+---
+
+### `PUT /api/productos/v1/{id}/proveedores/{idProveedor}`
+
+Carga o corrige el precio de referencia de ese proveedor. **Solo ADMIN.**
+
+Es un **upsert**: si el par ya existía reescribe el precio, si no lo crea. El front no tiene por
+qué saber de antemano cuál de los dos casos es.
+
+**Request:**
+```json
+{ "precioReferencia": "decimal (>= 0, hasta 2 decimales)" }
+```
+
+**Response `200`:** `{ ...PrecioReferenciaResponse }`
+
+**Error `400`:** el proveedor no existe o está dado de baja — una referencia **nueva** a alguien
+con quien no se puede operar no tiene sentido (las que ya existían sí sobreviven a su baja)
+
+**Error `403`:** sin rol ADMIN
+
+**Error `404`:** el producto no existe
+
+---
+
+### `DELETE /api/productos/v1/{id}/proveedores/{idProveedor}`
+
+Saca al proveedor del catálogo de referencia del producto. **Solo ADMIN.** Baja lógica, y libera
+el par para volver a cargarlo más adelante.
+
+**Response `204`**
+
+**Error `404`:** el producto no tiene un precio de referencia de ese proveedor
 
 ---
 
@@ -619,7 +713,11 @@ queda liberado: se puede volver a crear una con ese mismo nombre.
 
 ### `GET /api/categorias/v1`
 
-**Response `200`:** `[ ...CategoriaResponse ]`
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+**Response `200`:** `Page<CategoriaResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
+Ordena por nombre, con el `id` como desempate para que la paginación sea estable.
 
 ---
 
@@ -683,12 +781,17 @@ Los campos se recortan antes de guardarse.
 
 ### `GET /api/proveedores/v1`
 
-**Query params:** `?incluirBajas=false`
+**Query params:** `?incluirBajas=false&page=0&size=20` — `page` arranca en 0, `size` va de 1 a
+100.
 
 Con `incluirBajas=true` suma los proveedores dados de baja, que vienen con `deletedAt` cargado.
 Es cómo el front encuentra el que hay que restaurar: en el listado normal no aparecen.
 
-**Response `200`:** `[ ...ProveedorResponse ]`
+**Response `200`:** `Page<ProveedorResponse>` (`content`, `totalElements`, `totalPages`,
+`number`, `size`)
+
+Ordena por nombre, con el `id` como desempate: dos proveedores pueden compartir nombre si uno
+está dado de baja.
 
 ---
 
@@ -752,7 +855,7 @@ de productos.
 
 ### `POST /api/ventas/v1`
 
-Registra una venta con sus detalles. Si el producto maneja lotes, descuenta del lote más próximo a vencer (FIFO). Si no, descuenta del stock global.
+Registra una venta con sus detalles. Si el producto maneja lotes, descuenta del lote más próximo a vencer (FEFO: first expired, first out). Si no, descuenta del stock global.
 
 **Request:**
 ```json
@@ -924,7 +1027,7 @@ iguales, la consulta no devolvería nada y parecería que no hubo ventas
 
 Anula la venta: la marca como eliminada junto a sus detalles y **devuelve la mercadería al
 stock**. Si el producto maneja lotes, repone en cada lote exactamente la cantidad que se le
-descontó, incluso cuando el FIFO repartió una línea entre varios. Los movimientos originales
+descontó, incluso cuando el FEFO repartió una línea entre varios. Los movimientos originales
 no se borran: la reversa queda registrada como un movimiento `AJUSTE` adicional.
 
 **Solo ADMIN.**
@@ -1035,6 +1138,47 @@ paginación sea estable cuando varias compras comparten fecha o importe.
 `size`)
 
 **Error `400`:** `page` negativo, o `size` fuera de 1..100
+
+---
+
+### `GET /api/compras/v1/producto/{idProducto}/proveedores`
+
+A quién se le puede comprar este producto y a cuánto: cruza el **precio de referencia** que cada
+proveedor lista —cargado a mano desde el catálogo— con **lo que realmente se le pagó** la última
+vez.
+
+Es de consulta y no interviene en el alta de la compra: a quién comprarle sigue siendo criterio
+del usuario.
+
+**Response `200`:**
+```json
+[
+  {
+    "proveedor": { "...ProveedorResponse" },
+    "precioReferencia": "decimal (null si nunca se cargó)",
+    "ultimaCompra": {
+      "fecha": "datetime",
+      "precioUnitario": "float",
+      "tipoComprobante": "string",
+      "nroComprobante": "string"
+    }
+  }
+]
+```
+
+`ultimaCompra` es `null` si a ese proveedor nunca se le compró el producto. Las compras anuladas
+no cuentan: si la última se anuló, vale la anterior.
+
+**Orden:** primero los del catálogo de referencia, del más barato al más caro; después, por
+nombre, los que solo aparecen en el historial de compras y nunca tuvieron un precio cargado.
+
+Sin paginar a propósito: la cantidad de proveedores de un producto es del orden de la decena.
+
+> Vive en compras y no en productos ni en proveedores porque es el único módulo que ya depende de
+> los dos. El catálogo de referencia, que es donde se cargan los precios, lo tiene productos:
+> [`GET /api/productos/v1/{id}/proveedores`](#get-apiproductosv1idproveedores).
+
+**Error `404`:** el producto no existe
 
 ---
 
@@ -1309,9 +1453,12 @@ Corte por ID. Valida que la sesión esté cerrada.
 
 El desglose (`resumen`) de cada corte queda congelado al cerrarlo, no se recalcula.
 
-Historial de todos los cortes realizados.
+Historial de cortes, del más reciente al más viejo, con el `id` como desempate.
 
-**Response `200`:** `[ ...CorteResponse ]`
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+**Response `200`:** `Page<CorteResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
 
 ---
 
@@ -1327,21 +1474,10 @@ Historial de todos los cortes realizados.
 > El detalle de una venta o una compra se guarda y se devuelve en el orden en que se cargó: el
 > orden de bloqueo es interno y no cambia el comprobante.
 
-### `POST /api/inventario/v1/stock`
-
-Crea registro de stock para un producto.
-
-**Request:**
-```json
-{
-  "idProducto": "UUID",
-  "cantidad": "int"
-}
-```
-
-**Response `200`:** `{ "idProducto": "UUID", "cantidad": "int" }`
-
----
+> **`POST /api/inventario/v1/stock` ya no existe.** La fila de stock la crea el alta del
+> producto, junto con sus existencias iniciales: ver `POST /api/productos/v1`. El endpoint era
+> además inalcanzable, porque el alta siempre había creado esa fila y respondía
+> `400 El producto ya tiene stock inicializado`.
 
 ### `GET /api/inventario/v1/stock/{idProducto}`
 
@@ -1430,7 +1566,7 @@ operación que puede hacer desaparecer un faltante, así que va con el resto de 
 
 Si el producto todavía no tiene fila de stock, la crea: un producto sin fila es stock 0, igual
 que en `GET /stock/{idProducto}`. **No aplica a productos que manejan lotes**, cuya existencia
-es la suma de sus lotes.
+es la suma de sus lotes: esos se ajustan con `POST /api/inventario/v1/lotes/ajustar`.
 
 **Request:**
 ```json
@@ -1502,11 +1638,79 @@ Crea un lote. Valida que `producto.manejaLotes == true`.
 
 ---
 
-### `GET /api/inventario/v1/lotes`
+### `POST /api/inventario/v1/lotes/ajustar`
 
-Todos los lotes activos con estado recalculado.
+Conteo físico de un producto que maneja lotes, repartido por lote. Es el equivalente de
+`/controlar` para estos productos. **Solo ADMIN**, por el mismo motivo.
+
+Hace falta porque el consumo es **FEFO** —se descuenta primero el lote que vence antes—, pero en
+la góndola el cliente agarra cualquier envase: con el tiempo el total puede seguir siendo
+correcto y el reparto por lote no serlo.
+
+**El ajuste es parcial:** solo se tocan los lotes que vienen en `conteos`; los demás quedan como
+estaban. Un conteo incompleto no borra existencias que nadie miró.
+
+**Request:**
+```json
+{
+  "idProducto": "UUID",
+  "conteos": [
+    { "idLote": "UUID", "cantidadReal": "int (>= 0)" }
+  ],
+  "motivo": "string (opcional)"
+}
+```
+
+**Response `200`:** `[ ...LoteResponse ]` — todos los lotes del producto, ya actualizados
+
+Cada lote con diferencia deja un movimiento `AJUSTE` con su `idLote` y la diferencia firmada. Un
+conteo que no encontró ninguna diferencia deja **un solo** movimiento en 0 y sin `idLote`: lo que
+se registra es que alguien contó, no solo que hubo que corregir.
+
+Acepta cualquier lote activo del producto, incluido uno vencido — si no, un error de carga sobre
+un lote vencido no tendría forma de corregirse. Para descartar mercadería vencida corresponde una
+merma (`PUT /stock/disminuir` con `tipo` `MERMA`), no un ajuste de conteo.
+
+**Error `400`:** el producto no maneja lotes (se ajusta por `/controlar`); un `idLote` que no
+existe, está dado de baja o es de otro producto; o el mismo lote contado más de una vez. La
+validación es previa a la escritura: un request con un lote ajeno en la última línea no deja
+aplicadas las anteriores
+
+**Error `403`:** sin rol ADMIN
+
+**Error `404`:** el producto no existe
+
+---
+
+### `GET /api/inventario/v1/lotes/ajustables/{idProducto}`
+
+Los lotes que conviene ofrecer en la pantalla de ajuste: los que hoy siguen en la góndola.
+
+Deja afuera los **vencidos** —lo que corresponde ahí es una merma— y los que están en **cero
+desde hace más de 30 días** (`EstadoLote.DIAS_LOTE_AGOTADO`), que ya no están físicamente y solo
+alargan una lista que crece con cada compra.
+
+Es un filtro de la lista, no del ajuste: `POST /lotes/ajustar` acepta cualquier lote activo.
 
 **Response `200`:** `[ ...LoteResponse ]`
+
+**Error `400`:** el producto no maneja lotes
+
+**Error `404`:** el producto no existe
+
+---
+
+### `GET /api/inventario/v1/lotes`
+
+Lotes activos con estado recalculado.
+
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+**Response `200`:** `Page<LoteResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
+Los cinco listados de lotes ordenan igual: por vencimiento ascendente —el que vence antes
+primero, que es el que hay que mirar— con el `id` como desempate, porque una compra entera
+comparte fecha de vencimiento.
 
 ---
 
@@ -1514,7 +1718,10 @@ Todos los lotes activos con estado recalculado.
 
 Filtra por estado: `VIGENTE`, `PROXIMO`, `VENCIDO`, `SIN_FECHA`.
 
-**Response `200`:** `[ ...LoteResponse ]`
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+**Response `200`:** `Page<LoteResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
 
 ---
 
@@ -1524,7 +1731,10 @@ Filtra por estado: `VIGENTE`, `PROXIMO`, `VENCIDO`, `SIN_FECHA`.
 
 Shorthands para filtrar por estado.
 
-**Response `200`:** `[ ...LoteResponse ]`
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+**Response `200`:** `Page<LoteResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
 
 ---
 
@@ -1630,10 +1840,16 @@ en cero, así los dos reportes del mismo período devuelven arrays del mismo lar
 
 ### `GET /api/reportes/v1/inventario`
 
-Stock actual de todos los productos. Para los productos que manejan lotes, `stockActual` es la
+Stock actual del catálogo, paginado. Para los productos que manejan lotes, `stockActual` es la
 suma de sus lotes activos (antes salía siempre en 0, porque solo se miraba la tabla `stock`).
 
-**Response `200`:**
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+Mismo orden que el catálogo (`updatedAt DESC`, `id ASC`): es la misma consulta, así que la
+paginación se comporta igual en los dos listados. Las existencias se resuelven **solo para los
+productos de la página**, en dos consultas agregadas.
+
+**Response `200`:** `Page<ReporteInventarioItem>`, con `content`:
 ```json
 [
   {
