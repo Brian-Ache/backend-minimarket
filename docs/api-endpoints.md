@@ -1219,6 +1219,11 @@ suma de los saldos de apertura de las sesiones de ese día.
 
 Realiza el corte de caja: cierra la sesión activa, calcula saldo esperado y diferencia.
 
+El corte se archiva con la **fecha de apertura del turno**, no con la del día en que se cierra:
+un turno que abre a las 22:00 y cierra a las 02:00 queda fechado el día que abrió. Y se toma el
+turno con la fila bloqueada, así que dos cierres simultáneos no pueden pisarse: el segundo
+encuentra la sesión ya cerrada y recibe `400`.
+
 **Request:**
 ```json
 {

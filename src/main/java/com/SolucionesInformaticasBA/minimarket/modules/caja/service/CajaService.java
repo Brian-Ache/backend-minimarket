@@ -153,7 +153,9 @@ public class CajaService implements CajaApi {
     public ResumenCajaResponse getResumenSesion() {
         SesionCaja sesion = obtenerSesionActiva();
         return calcularResumen(
-            LocalDate.now(),
+            // La fecha del turno es la de su apertura, no la de hoy: un turno que abre a las
+            // 22:00 y cierra a las 02:00 se informaba con el día siguiente.
+            sesion.getFechaApertura().toLocalDate(),
             sesion.getSaldoInicial(),
             movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId()));
     }
@@ -225,10 +227,16 @@ public class CajaService implements CajaApi {
     @Override
     @Transactional
     public CorteResponse realizarCorte(UUID idUsuario, CorteRequest request) {
-        SesionCaja sesion = obtenerSesionActiva();
+        // Con el lock de la fila tomado: sin él, dos cierres simultáneos leían el turno abierto
+        // los dos y el segundo pisaba el saldo real, la diferencia y el desglose del primero,
+        // que además ya le había devuelto al usuario un corte que no quedó guardado.
+        SesionCaja sesion = sesionCajaRepository.findAbiertaParaActualizar()
+            .orElseThrow(() -> new BadRequestException("No hay una sesión de caja abierta"));
 
         ResumenCajaResponse resumen = calcularResumen(
-            LocalDate.now(),
+            // El corte es un documento contable y esta fecha queda archivada: va la del turno,
+            // no la del día en que se lo cierra.
+            sesion.getFechaApertura().toLocalDate(),
             sesion.getSaldoInicial(),
             movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId()));
 
