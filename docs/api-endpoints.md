@@ -1137,12 +1137,15 @@ Registra un movimiento manual de salida (ej: "compra de café para el personal")
 **Request:**
 ```json
 {
-  "monto": "float (>= 0)",
+  "monto": "float (> 0)",
   "motivo": "string (max 255, opcional)"
 }
 ```
 
 **Response `200`:** `{ ...MovimientoCajaResponse }`
+
+**Error `400`:** el monto supera el efectivo que hay en el turno — de la caja no puede salir
+plata que no está
 
 ---
 

@@ -96,6 +96,16 @@ public class CajaService implements CajaApi {
     @Transactional
     public MovimientoCajaResponse registrarSalidaManual(UUID idUsuario, MovimientoCajaRequest request) {
         SesionCaja sesion = obtenerSesionActiva();
+
+        // De la caja no puede salir plata que no está. Sin esto se podían sacar $50.000 de una
+        // caja con $3.000 y el arqueo informaba un saldo esperado negativo, que físicamente no
+        // significa nada.
+        float disponible = saldoEsperadoDe(sesion);
+        if (request.getMonto() > disponible) {
+            throw new BadRequestException("No hay efectivo suficiente en la caja: el turno tiene "
+                + disponible + " y se intentan retirar " + request.getMonto());
+        }
+
         MovimientoCaja movimiento = MovimientoCaja.builder()
             .idSesion(sesion.getId())
             .tipo(TipoMovimientoCaja.SALIDA)
@@ -303,6 +313,18 @@ public class CajaService implements CajaApi {
             .stream()
             .map(s -> toCorteResponse(s, null, s.getSaldoFinal()))
             .toList();
+    }
+
+    /**
+     * Cuánto hay en la caja del turno ahora mismo: el saldo con el que abrió más lo que entró,
+     * menos lo que salió.
+     */
+    private float saldoEsperadoDe(SesionCaja sesion) {
+        return calcularResumen(
+            sesion.getFechaApertura().toLocalDate(),
+            sesion.getSaldoInicial(),
+            movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId()))
+            .getSaldoEsperado();
     }
 
     // findTop en lugar de findBy: si por una carrera quedaran dos sesiones abiertas,
