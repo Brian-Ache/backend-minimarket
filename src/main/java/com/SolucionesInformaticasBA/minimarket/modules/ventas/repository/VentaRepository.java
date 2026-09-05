@@ -64,4 +64,20 @@ public interface VentaRepository extends JpaRepository<Venta, UUID> {
     List<Venta> findCobradasEnRango(@Param("desde") LocalDateTime desde, @Param("hasta") LocalDateTime hasta);
 
     List<Venta> findByIdSesionAndCobradaTrueAndDeletedAtIsNull(UUID idSesion);
+
+    /**
+     * Ventas que siguen sin cobrar desde antes del límite: son las que están reteniendo stock
+     * sin que nadie haya cerrado la operación.
+     *
+     * <p>Contempla {@code cobrada IS NULL} además de {@code false}: la columna es nullable y el
+     * resto del código trata el null como "no cobrada", así que una fila vieja sin el valor
+     * cargado tiene que entrar igual.
+     */
+    @Query("""
+            SELECT v.id FROM Venta v
+             WHERE v.deletedAt IS NULL
+               AND (v.cobrada IS NULL OR v.cobrada = false)
+               AND v.createdAt < :limite
+            """)
+    List<UUID> findReservasVencidas(@Param("limite") LocalDateTime limite);
 }

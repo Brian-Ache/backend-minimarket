@@ -29,6 +29,12 @@ public interface VentasApi {
     /** Solo ventas cobradas, filtradas por fecha de cobro. Es la fuente de todo reporte de dinero. */
     List<VentaResponse> getByFechaCobradas(LocalDateTime desde, LocalDateTime hasta);
     void delete(UUID id);
+
+    /**
+     * Anula una venta que quedó sin cobrar más tiempo del permitido, devolviendo su mercadería
+     * al stock. La dispara el barrido de reservas vencidas, no una persona.
+     */
+    void anularPorReservaVencida(UUID id);
     CobrarVentaResponse cobrar(UUID idVenta, UUID idUsuario, CobrarVentaRequest request);
     ResumenDiarioResponse getResumenDiario(LocalDate fecha);
     ResumenDiarioResponse getResumenPorSesion(UUID idSesion);

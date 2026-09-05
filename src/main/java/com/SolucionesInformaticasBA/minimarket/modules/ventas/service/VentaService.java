@@ -263,7 +263,29 @@ public class VentaService implements VentasApi {
                 "No se puede anular una venta ya cobrada. Registrá una devolución.");
         }
 
-        UUID idUsuario = SecurityUtils.getCurrentUserId();
+        anular(venta, SecurityUtils.getCurrentUserId());
+    }
+
+    /**
+     * Libera la reserva de stock de una venta que quedó sin cobrar más tiempo del permitido.
+     *
+     * <p>Es la misma anulación que la manual, con dos diferencias: la dispara el sistema, así
+     * que el movimiento de reversa queda sin usuario, y es idempotente —si la venta ya se
+     * cobró o ya se anuló entre que el barrido la eligió y llegó acá, no hace nada—, porque el
+     * que la llama es un job y no una persona a la que avisarle.
+     */
+    @Override
+    @Transactional
+    public void anularPorReservaVencida(UUID id) {
+        Venta venta = ventaRepository.findByIdAndDeletedAtIsNull(id).orElse(null);
+        if (venta == null || Boolean.TRUE.equals(venta.getCobrada())) {
+            return;
+        }
+        anular(venta, null);
+    }
+
+    /** @param idUsuario quién anula; null cuando la anulación la dispara el sistema. */
+    private void anular(Venta venta, UUID idUsuario) {
         LocalDateTime ahora = LocalDateTime.now();
 
         revertirStock(venta, idUsuario);
@@ -271,7 +293,8 @@ public class VentaService implements VentasApi {
         venta.setDeletedAt(ahora);
         ventaRepository.save(venta);
 
-        List<DetalleVenta> detalles = detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(id);
+        List<DetalleVenta> detalles =
+            detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(venta.getId());
         for (DetalleVenta d : detalles) {
             d.setDeletedAt(ahora);
         }

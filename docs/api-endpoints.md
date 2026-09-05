@@ -788,6 +788,12 @@ Registra una venta con sus detalles. Si el producto maneja lotes, descuenta del 
 
 **Error `400`:** stock insuficiente · sin detalles · cantidad <= 0
 
+> **La venta descuenta el stock al armarse, no al cobrarse.** Una venta que queda sin cobrar
+> retiene esa mercadería, así que un barrido periódico anula las que superan la ventana
+> configurada en `ventas.reserva-stock.minutos` (por defecto 120) y devuelve el stock, dejando
+> el movimiento de reversa registrado. En `0` el barrido queda apagado y las ventas sin cobrar
+> viven indefinidamente.
+
 ---
 
 ### `POST /api/ventas/v1/{id}/cobrar`
