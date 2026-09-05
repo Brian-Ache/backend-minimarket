@@ -1177,7 +1177,7 @@ el `id` como desempate: los movimientos automáticos de una misma operación com
   "tipo": "ENTRADA | SALIDA",
   "monto": "float",
   "motivo": "string | null",
-  "origen": "VENTA | COMPRA | MANUAL | REVERSA",
+  "origen": "MANUAL | VENTA | COMPRA | REVERSA | RETIRO",
   "idReferencia": "UUID | null",
   "fecha": "datetime"
 }
@@ -1185,6 +1185,10 @@ el `id` como desempate: los movimientos automáticos de una misma operación com
 
 **Errores `400`:** viene una sola de las dos fechas · `desde` no es anterior a `hasta` · no hay
 turno abierto y tampoco se mandó rango · `page` negativo o `size` fuera de 1..100
+
+> `origen` dice qué generó el movimiento: `MANUAL` lo carga una persona, `VENTA` y `COMPRA` los
+> escribe el sistema al registrar el comprobante, `REVERSA` es la contrapartida de una anulación
+> y `RETIRO` lo que se saca de la caja al cerrar el turno.
 
 ---
 

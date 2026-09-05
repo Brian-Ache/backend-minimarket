@@ -26,6 +26,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.ResumenCajaR
 import com.SolucionesInformaticasBA.minimarket.modules.caja.entity.MovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.entity.SesionCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.EstadoSesion;
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.TipoMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.repository.MovimientoCajaRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.repository.SesionCajaRepository;
@@ -139,13 +140,13 @@ class CajaServiceCorteTest {
     private MovimientoCaja entrada(float monto) {
         return MovimientoCaja.builder()
                 .id(UUID.randomUUID()).idSesion(ID_SESION).tipo(TipoMovimientoCaja.ENTRADA)
-                .monto(monto).origen("VENTA").idUsuario(ID_USUARIO).build();
+                .monto(monto).origen(OrigenMovimientoCaja.VENTA).idUsuario(ID_USUARIO).build();
     }
 
     private MovimientoCaja salida(float monto) {
         return MovimientoCaja.builder()
                 .id(UUID.randomUUID()).idSesion(ID_SESION).tipo(TipoMovimientoCaja.SALIDA)
-                .monto(monto).origen("COMPRA").idUsuario(ID_USUARIO).build();
+                .monto(monto).origen(OrigenMovimientoCaja.COMPRA).idUsuario(ID_USUARIO).build();
     }
 
     private CorteRequest corteCon(float saldoReal) {

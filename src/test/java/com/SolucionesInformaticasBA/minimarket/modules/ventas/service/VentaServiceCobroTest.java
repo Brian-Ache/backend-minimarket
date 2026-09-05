@@ -23,6 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageRequest;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.LoteRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.MovimientoStockRepository;
@@ -115,7 +116,8 @@ class VentaServiceCobroTest {
 
         assertEquals(500f, response.getCambio());
         assertEquals(2000f, response.getVenta().getMontoRecibido());
-        verify(cajaApi).registrarEntradaAutomatica(ID_SESION, ID_USUARIO, 1500f, "VENTA", ID_VENTA);
+        verify(cajaApi).registrarEntradaAutomatica(
+                ID_SESION, ID_USUARIO, 1500f, OrigenMovimientoCaja.VENTA, ID_VENTA);
     }
 
     @Test

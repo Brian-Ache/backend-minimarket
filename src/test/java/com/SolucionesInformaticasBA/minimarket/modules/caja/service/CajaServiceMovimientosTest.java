@@ -27,6 +27,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.MovimientoCa
 import com.SolucionesInformaticasBA.minimarket.modules.caja.entity.MovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.entity.SesionCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.EstadoSesion;
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.TipoMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.repository.MovimientoCajaRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.repository.SesionCajaRepository;
@@ -116,7 +117,7 @@ class CajaServiceMovimientosTest {
                 .idSesion(ID_SESION)
                 .tipo(TipoMovimientoCaja.ENTRADA)
                 .monto(500f)
-                .origen("VENTA")
+                .origen(OrigenMovimientoCaja.VENTA)
                 .idUsuario(UUID.randomUUID())
                 .build();
     }

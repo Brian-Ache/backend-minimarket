@@ -22,6 +22,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.SesionCajaRe
 import com.SolucionesInformaticasBA.minimarket.modules.caja.entity.MovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.entity.SesionCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.EstadoSesion;
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.TipoMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.repository.MovimientoCajaRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.repository.SesionCajaRepository;
@@ -34,10 +35,6 @@ import lombok.AllArgsConstructor;
 @Service
 @AllArgsConstructor
 public class CajaService implements CajaApi {
-
-    /** Origen del movimiento con el que se saca de la caja lo que no queda para el turno siguiente. */
-    private static final String ORIGEN_RETIRO = "RETIRO";
-
     private final SesionCajaRepository sesionCajaRepository;
     private final MovimientoCajaRepository movimientoCajaRepository;
 
@@ -95,7 +92,7 @@ public class CajaService implements CajaApi {
             .monto(request.getMonto())
             .motivo(request.getMotivo())
             .idUsuario(idUsuario)
-            .origen("MANUAL")
+            .origen(OrigenMovimientoCaja.MANUAL)
             .build();
         return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
@@ -120,7 +117,7 @@ public class CajaService implements CajaApi {
             .monto(request.getMonto())
             .motivo(request.getMotivo())
             .idUsuario(idUsuario)
-            .origen("MANUAL")
+            .origen(OrigenMovimientoCaja.MANUAL)
             .build();
         return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
@@ -128,7 +125,7 @@ public class CajaService implements CajaApi {
     @Override
     @Transactional
     public MovimientoCajaResponse registrarEntradaAutomatica(
-            UUID idSesion, UUID idUsuario, float monto, String origen, UUID idReferencia) {
+            UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia) {
         MovimientoCaja movimiento = MovimientoCaja.builder()
             .idSesion(idSesion)
             .tipo(TipoMovimientoCaja.ENTRADA)
@@ -143,7 +140,7 @@ public class CajaService implements CajaApi {
     @Override
     @Transactional
     public MovimientoCajaResponse registrarSalidaAutomatica(
-            UUID idSesion, UUID idUsuario, float monto, String origen, UUID idReferencia) {
+            UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia) {
         MovimientoCaja movimiento = MovimientoCaja.builder()
             .idSesion(idSesion)
             .tipo(TipoMovimientoCaja.SALIDA)
@@ -225,16 +222,16 @@ public class CajaService implements CajaApi {
     private ResumenCajaResponse calcularResumen(
             LocalDate fecha, float saldoInicial, List<MovimientoCaja> movimientos) {
         List<MovimientoCaja> ventas = movimientos.stream()
-            .filter(m -> "VENTA".equals(m.getOrigen()) && m.getTipo() == TipoMovimientoCaja.ENTRADA)
+            .filter(m -> m.getOrigen() == OrigenMovimientoCaja.VENTA && m.getTipo() == TipoMovimientoCaja.ENTRADA)
             .toList();
         List<MovimientoCaja> compras = movimientos.stream()
-            .filter(m -> "COMPRA".equals(m.getOrigen()) && m.getTipo() == TipoMovimientoCaja.SALIDA)
+            .filter(m -> m.getOrigen() == OrigenMovimientoCaja.COMPRA && m.getTipo() == TipoMovimientoCaja.SALIDA)
             .toList();
         List<MovimientoCaja> entradasManuales = movimientos.stream()
-            .filter(m -> "MANUAL".equals(m.getOrigen()) && m.getTipo() == TipoMovimientoCaja.ENTRADA)
+            .filter(m -> m.getOrigen() == OrigenMovimientoCaja.MANUAL && m.getTipo() == TipoMovimientoCaja.ENTRADA)
             .toList();
         List<MovimientoCaja> salidasManuales = movimientos.stream()
-            .filter(m -> "MANUAL".equals(m.getOrigen()) && m.getTipo() == TipoMovimientoCaja.SALIDA)
+            .filter(m -> m.getOrigen() == OrigenMovimientoCaja.MANUAL && m.getTipo() == TipoMovimientoCaja.SALIDA)
             .toList();
 
         float totalVentas = (float) ventas.stream().mapToDouble(MovimientoCaja::getMonto).sum();
@@ -320,7 +317,7 @@ public class CajaService implements CajaApi {
                 .monto(request.getMontoRetirado())
                 .motivo("Retiro al cerrar el turno")
                 .idUsuario(idUsuario)
-                .origen(ORIGEN_RETIRO)
+                .origen(OrigenMovimientoCaja.RETIRO)
                 .idReferencia(cerrada.getId())
                 .build());
         }
@@ -404,7 +401,7 @@ public class CajaService implements CajaApi {
             .tipo(m.getTipo().name())
             .monto(m.getMonto())
             .motivo(m.getMotivo())
-            .origen(m.getOrigen())
+            .origen(m.getOrigen() != null ? m.getOrigen().name() : null)
             .idReferencia(m.getIdReferencia())
             .fecha(m.getCreatedAt())
             .build();

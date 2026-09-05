@@ -17,6 +17,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.Lote;
@@ -425,7 +426,7 @@ public class VentaService implements VentasApi {
             UUID idSesion = cajaApi.getIdSesionActiva();
             venta.setIdSesion(idSesion);
             cajaApi.registrarEntradaAutomatica(
-                idSesion, idUsuario, venta.getTotal(), "VENTA", venta.getId());
+                idSesion, idUsuario, venta.getTotal(), OrigenMovimientoCaja.VENTA, venta.getId());
         } else {
             // La venta con tarjeta o transferencia igual pertenece al turno: se la asocia
             // para poder reportarla en el cierre, pero sin generar movimiento de caja.

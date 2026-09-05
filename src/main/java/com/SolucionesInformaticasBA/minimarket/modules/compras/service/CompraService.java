@@ -16,6 +16,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.CompraApi;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.*;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.entity.*;
@@ -151,7 +152,8 @@ public class CompraService implements CompraApi {
         if (request.isPagoEnEfectivo()) {
             UUID idSesion = cajaApi.getIdSesionActiva();
             compra.setIdSesion(idSesion);
-            cajaApi.registrarSalidaAutomatica(idSesion, idUsuario, total, "COMPRA", compra.getId());
+            cajaApi.registrarSalidaAutomatica(
+                idSesion, idUsuario, total, OrigenMovimientoCaja.COMPRA, compra.getId());
         }
 
         compra = compraRepository.saveAndFlush(compra);
@@ -242,7 +244,7 @@ public class CompraService implements CompraApi {
                 "No se puede anular: la compra se pagó en un turno de caja que ya fue cerrado");
         }
         cajaApi.registrarEntradaAutomatica(
-            sesionActiva, idUsuario, compra.getTotal(), "REVERSA", compra.getId());
+            sesionActiva, idUsuario, compra.getTotal(), OrigenMovimientoCaja.REVERSA, compra.getId());
     }
 
     /** Saca del stock lo que ingresó la compra, usando los movimientos que la referencian. */

@@ -28,6 +28,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.entity.Compra;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.repository.CompraRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.repository.DetalleCompraRepository;
@@ -92,7 +93,8 @@ class CompraServiceAnulacionTest {
 
         ArgumentCaptor<UUID> usuario = ArgumentCaptor.forClass(UUID.class);
         verify(cajaApi).registrarEntradaAutomatica(
-                eq(ID_SESION), usuario.capture(), anyFloat(), eq("REVERSA"), eq(ID_COMPRA));
+                eq(ID_SESION), usuario.capture(), anyFloat(),
+                eq(OrigenMovimientoCaja.REVERSA), eq(ID_COMPRA));
         assertEquals(ID_DEL_JWT, usuario.getValue());
     }
 

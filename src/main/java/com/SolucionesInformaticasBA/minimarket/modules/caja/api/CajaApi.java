@@ -16,6 +16,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.MovimientoCa
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.MovimientoCajaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.ResumenCajaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.SesionCajaResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 
 public interface CajaApi {
     SesionCajaResponse abrirSesion(UUID idUsuario, AbrirSesionRequest request);
@@ -36,8 +37,8 @@ public interface CajaApi {
     MovimientoCajaResponse registrarEntradaManual(UUID idUsuario, MovimientoCajaRequest request);
     MovimientoCajaResponse registrarSalidaManual(UUID idUsuario, MovimientoCajaRequest request);
 
-    MovimientoCajaResponse registrarEntradaAutomatica(UUID idSesion, UUID idUsuario, float monto, String origen, UUID idReferencia);
-    MovimientoCajaResponse registrarSalidaAutomatica(UUID idSesion, UUID idUsuario, float monto, String origen, UUID idReferencia);
+    MovimientoCajaResponse registrarEntradaAutomatica(UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia);
+    MovimientoCajaResponse registrarSalidaAutomatica(UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia);
 
     /**
      * Movimientos del turno abierto —sin fechas— o de un rango. El rango es semiabierto y las
