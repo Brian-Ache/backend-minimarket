@@ -1,4 +1,4 @@
-# Arquitectura — backend-minimarket v0.3.0
+# Arquitectura — backend-minimarket v0.5.0
 
 Backend de un punto de venta para minimarket: catálogo, ventas con cobro, compras a proveedores,
 inventario con lotes, caja con arqueo y reportes.
@@ -116,10 +116,22 @@ Logout -> revoca el refresh token (idempotente)
 - **Baja y bloqueo:** ambos revocan las sesiones del usuario y su JWT deja de servir en la
   request siguiente, porque el filtro consulta el estado en cada llamada. La diferencia es que
   el bloqueo es reversible y conserva la cuenta.
-- **Alta por invitación:** el administrador carga los datos, la cuenta nace `PENDIENTE` con una
-  contraseña aleatoria que nadie conoce, y la persona define la suya desde el enlace que le
-  llega por mail (token `INVITATION`, 72 h, de un solo uso). Si el mail no sale, el alta se
-  revierte: no queda una cuenta muerta ocupando ese email.
+- **Restauración:** una baja también se revierte, con una invitación nueva. Siempre sobre la
+  fila original: el id del usuario es permanente —lo referencian ventas, compras, movimientos
+  de caja y de stock con `ON DELETE RESTRICT`—, así que un alta nueva con el mismo email
+  partiría su historial en dos. El email y el username siguen reservados durante la baja,
+  porque las unique keys no miran `deleted_at`; de ahí que restaurar nunca pueda colisionar, y
+  que reusar el email de alguien dado de baja no sea posible sin restaurarlo.
+- **Alta por invitación, la única que hay:** el administrador carga los datos, la cuenta nace
+  `PENDIENTE` con una contraseña aleatoria que nadie conoce, y la persona define la suya desde
+  el enlace que le llega por mail (token `INVITATION`, 72 h, de un solo uso). No hay
+  autorregistro ni alta directa: quien invita nunca conoce la credencial del invitado. Si el
+  mail no sale, el alta se revierte: no queda una cuenta muerta ocupando ese email.
+- **Reseteo de contraseña sobre una cuenta pendiente:** además de cambiar la contraseña, la
+  activa. El token del reseteo llega al email de la cuenta, que es la misma prueba de identidad
+  que pide la invitación; si no la activara, quien lo usa en vez de aceptar la invitación
+  quedaría con una contraseña válida y sin poder entrar. Por lo mismo, la invitación deja de
+  valer apenas la cuenta sale de `PENDIENTE`.
 - **Configuración obligatoria:** `JWT_SECRET`. Sin él la app no arranca.
 - **Mails** (`shared/mail/EmailService`): invitaciones y reseteo de contraseña. **Sin
   `MAIL_HOST` no se manda nada** — el mail queda en el log con el enlace incluido, que es como
@@ -136,26 +148,28 @@ Logout -> revoca el refresh token (idempotente)
 
 | Operación | SUPERADMIN | ADMIN | EMPLEADO |
 |---|:---:|:---:|:---:|
-| Vender, cobrar, comprar, mover caja e inventario | ✅ | ✅ | ✅ |
+| Vender, cobrar, comprar, mover stock y caja | ✅ | ✅ | ✅ |
 | Consultar catálogo · ver y editar su propio usuario | ✅ | ✅ | ✅ |
 | Escritura de catálogo · anular ventas y compras · corte de caja · reportes | ✅ | ✅ | ❌ |
+| Ajuste de inventario contra conteo físico (`/controlar`, `/lotes/ajustar`) | ✅ | ✅ | ❌ |
 | Alta, bloqueo y baja de EMPLEADO | ✅ | ✅ | ❌ |
 | Alta, bloqueo y baja de ADMIN | ✅ | ❌ | ❌ |
 
 ## Modelo de Datos
 
-15 tablas. Convenciones transversales: PK `UUID` (`BINARY(16)`), borrado lógico con `deleted_at`
+16 tablas. Convenciones transversales: PK `UUID` (`BINARY(16)`), borrado lógico con `deleted_at`
 (NULL = activo) y auditoría `created_at` / `updated_at`.
 
 | Tabla | Propósito |
 |---|---|
 | `usuarios` | Usuarios del sistema (SUPERADMIN / ADMIN / EMPLEADO), con estado de cuenta |
-| `auth_tokens` | Tokens de un solo uso: invitación, verificación y reseteo de contraseña |
+| `auth_tokens` | Tokens de un solo uso: invitación y reseteo de contraseña |
 | `refresh_tokens` | Sesiones activas (hash del refresh token) |
 | `categorias` | Categorías de producto |
 | `proveedores` | Proveedores |
 | `productos` | Catálogo. El stock **no** vive acá |
-| `stock` | Existencias agregadas por producto (una fila activa por producto) |
+| `producto_proveedor` | Precio de referencia de cada proveedor por producto (catálogo de consulta) |
+| `stock` | Existencias agregadas por producto (una fila activa; los que manejan lotes no llevan) |
 | `lote` | Lotes con vencimiento, para productos con `maneja_lotes` |
 | `movimientos_stock` | Kardex: toda entrada y salida, con `id_referencia` al comprobante |
 | `ventas` | Cabecera de venta |
@@ -176,8 +190,9 @@ Usuario --+-- Venta / Compra / MovimientoStock / MovimientoCaja
           +-- SesionCaja (apertura y cierre)
           +-- AuthToken / RefreshToken (ON DELETE CASCADE)
 
-Producto --+-- Stock            (1 fila activa)
+Producto --+-- Stock            (1 fila activa, solo si NO maneja lotes)
            +-- Lote             (N, con vencimiento)
+           +-- ProductoProveedor (N, precio de referencia por proveedor)
            +-- MovimientoStock
            +-- DetalleVenta     (nullable: los ítems MANUAL no tienen producto)
            +-- DetalleCompra
@@ -194,8 +209,15 @@ una venta o a una compra según el origen), por eso no llevan FK.
 ### Decisiones de modelado
 
 - **El stock tiene dos fuentes según el producto:** la tabla `stock` para los comunes y la suma
-  de lotes activos para los que manejan lotes. Las ventas de estos últimos consumen por FIFO
-  según fecha de vencimiento.
+  de lotes activos para los que manejan lotes. Un producto con lotes **no lleva fila de `stock`**:
+  esa fila no la lee nadie y no se actualiza cuando entra o sale mercadería por lote. Las ventas
+  de estos productos consumen por **FEFO** —*first expired, first out*—, o sea el lote que vence
+  antes, que no es lo mismo que el que entró antes.
+- **El precio de referencia de un proveedor no es lo que se le pagó.** `producto_proveedor` es un
+  catálogo de consulta que se carga a mano; lo que realmente se pagó sale del historial de
+  compras. La vista que los cruza vive en `compras`, el único módulo que ya depende de productos
+  y de proveedores; el catálogo lo tiene `productos`, porque `productos -> proveedores` ya existe
+  y colgarlo del otro lado cerraría un ciclo.
 - **`movimientos_stock` es la fuente de verdad de la trazabilidad.** Nunca se borra un
   movimiento: anular un comprobante genera movimientos de reversa que referencian al original.
   Es lo que permite reponer cada lote en la cantidad exacta que se le sacó.
@@ -206,9 +228,30 @@ una venta o a una compra según el origen), por eso no llevan FK.
 - **El corte de caja se congela al cerrarlo.** Es un documento contable: se guarda como quedó y
   no se recalcula.
 
+### Concurrencia
+
+Todo lo que lee una cantidad para después reescribirla toma el lock de la fila
+(`SELECT ... FOR UPDATE`): sin eso, dos operaciones simultáneas sobre el mismo producto parten
+del mismo valor leído, la segunda pisa a la primera y se vende de más sin que quede registrado.
+Son tres puertas y una sola por recurso:
+
+| Recurso | Consulta |
+|---|---|
+| Fila de `stock` de un producto | `StockRepository.findByIdProductoParaActualizar` |
+| Lotes de un producto | `LoteRepository.findParaDescuentoFefo` |
+| Sesión de caja abierta | `SesionCajaRepository.findAbiertaParaActualizar` |
+
+`findParaDescuentoFefo` es la **única** puerta para bloquear los lotes de un producto, y su orden
+—`fechaVencimiento ASC, id ASC`— es parte del contrato: todas las transacciones los toman en esa
+secuencia, así que no puede haber ciclo entre ellas. Las operaciones que recorren lotes sueltos
+—la reversa de una venta o de una compra, el ajuste manual por lote— hacen antes una pasada que
+los bloquea a todos por esta consulta, en vez de tomarlos uno por uno en el orden en que
+aparecen. Cuando además hay que bloquear stock y lotes del mismo producto, el orden es siempre
+stock primero.
+
 ## Flujos principales
 
-**Venta.** Se crea con sus líneas y descuenta stock en el momento (FIFO por lote si
+**Venta.** Se crea con sus líneas y descuenta stock en el momento (FEFO por lote si
 corresponde). Queda `cobrada = false` hasta el cobro, que registra medio de pago y monto. Solo
 el pago **en efectivo** asocia la venta al turno de caja y genera la entrada; tarjeta y
 transferencia quedan registradas pero fuera del arqueo. Anular una venta no cobrada devuelve la
@@ -244,6 +287,8 @@ Todas las rutas son `/{recurso}/v1/...` y requieren `Authorization: Bearer <toke
 El detalle de cada endpoint —request, response y errores— está en
 [`docs/api-endpoints.md`](docs/api-endpoints.md). Swagger UI en `/swagger-ui/index.html`.
 
+El resto de la documentación está indexado en [`docs/README.md`](docs/README.md).
+
 ### Manejo de errores
 
 `GlobalExceptionHandler` traduce las excepciones a un cuerpo uniforme
@@ -268,10 +313,15 @@ Scripts en `script/database/`:
 | `00_init_limpio.sql` | Esquema final autocontenido para una base nueva |
 | `01_seed.sql` | Datos de desarrollo (admin, catálogo de ejemplo) |
 | `02_parche_migraciones.sql` | Parche acumulado para una base existente anterior al esquema final |
+| `02_seed_productos.sql`, `03_seed_stock.sql` | Datos de prueba opcionales: catálogo con existencias |
+| `04` a `11` | Migraciones numeradas, una por cambio de esquema. Ver el `CHANGELOG` de cada versión |
 
 El esquema está alineado con las entidades: la app puede arrancar con
-`spring.jpa.hibernate.ddl-auto=validate` y no reporta discrepancias. El parche se aplica a mano;
-incorporar Flyway es trabajo pendiente.
+`spring.jpa.hibernate.ddl-auto=validate` y no reporta discrepancias. Las migraciones numeradas se
+aplican **a mano, en orden y con la aplicación detenida**; cada una abre con una consulta
+informativa de los datos que podrían frenar el `ALTER` y cierra con una de verificación. Una
+instalación nueva no las necesita: `00_init_limpio.sql` ya las trae incorporadas. Incorporar
+Flyway es trabajo pendiente.
 
 Configuración por variables de entorno (ver `.env.example`): `DB_URL`, `DB_USERNAME`,
 `DB_PASSWORD`, `JWT_SECRET` (obligatoria), `JWT_EXPIRATION_HOURS`, `SERVER_PORT`,
@@ -290,9 +340,10 @@ Configuración por variables de entorno (ver `.env.example`): `DB_URL`, `DB_USER
 
 ## Estado y deuda conocida
 
-- **No hay tests automatizados** más allá de la carga de contexto. Es la deuda más importante:
-  toda la verificación de la v0.2.0 fue manual.
-- Los listados de ventas y compras **no están paginados**.
+- **Los tests son unitarios y con mocks**: 258 en 37 archivos (JUnit 5 + Mockito), un archivo
+  por área de un servicio. No hay tests de integración contra una base real —
+  `MinimarketApplicationTests.contextLoads` es el único que necesita MySQL levantado—, así que
+  las consultas JPQL y los índices se verifican a mano.
 - Las migraciones se aplican a mano (falta Flyway).
 - **Los importes usan `float`.** Para dinero corresponde `DECIMAL` + `BigDecimal`; mientras
   siga así, los totales acumulan error de redondeo.

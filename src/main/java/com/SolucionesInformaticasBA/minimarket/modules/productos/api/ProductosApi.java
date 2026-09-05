@@ -1,16 +1,38 @@
 package com.SolucionesInformaticasBA.minimarket.modules.productos.api;
 
+import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
+import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.PrecioReferenciaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
 
 public interface ProductosApi {
     ProductoResponse crear(UUID idUsuario, ProductoRequest request);
     ProductoResponse getById(UUID id);
+
+    /**
+     * Nombres de los productos pedidos, para listados de otros módulos que muestran el nombre
+     * junto a sus propios datos. Evita traerse el catálogo entero solo para eso.
+     *
+     * <p>Incluye los productos dados de baja: un lote o un movimiento viejo tiene que poder
+     * seguir diciendo de qué producto era. El valor puede ser null si la fila no tiene nombre
+     * cargado, y los ids que no existen no aparecen en el mapa.
+     */
+    Map<UUID, String> getNombresPorId(Collection<UUID> ids);
+
+    /**
+     * Barcodes de los productos pedidos, con las mismas reglas que {@link #getNombresPorId}:
+     * en una sola consulta, incluyendo los productos dados de baja, con valor null si la fila
+     * no tiene barcode cargado y sin entrada para los ids que no existen.
+     */
+    Map<UUID, String> getBarcodesPorId(Collection<UUID> ids);
     Page<ProductoResponse> getAll(Pageable pageable);
     Page<ProductoResponse> getByCategoria(UUID idCategoria, Pageable pageable);
     Page<ProductoResponse> getByProveedor(UUID idProveedor, Pageable pageable);
@@ -23,4 +45,25 @@ public interface ProductosApi {
     ProductoResponse update(UUID idProducto, ProductoRequest request);
     void delete(UUID id);
     boolean existsById(UUID id);
+
+    /**
+     * Catálogo de precios de referencia del producto: lo que cada proveedor lista por él,
+     * cargado siempre a mano. De la más barata a la más cara.
+     *
+     * <p>No es lo que se pagó la última vez —eso sale del historial de compras— ni influye en
+     * ninguna compra. Es el dato que se consulta al momento de comprar, y lo usa el módulo de
+     * compras para armar la vista combinada de
+     * {@code GET /api/compras/v1/producto/{idProducto}/proveedores}.
+     */
+    List<PrecioReferenciaResponse> getProveedoresDeProducto(UUID idProducto);
+
+    /**
+     * Alta o corrección del precio de referencia de un proveedor. Es un upsert: si el par ya
+     * existía reescribe el precio, y si no lo crea.
+     */
+    PrecioReferenciaResponse guardarPrecioReferencia(UUID idProducto, UUID idProveedor,
+                                                     BigDecimal precioReferencia);
+
+    /** Saca al proveedor del catálogo de referencia del producto. Baja lógica. */
+    void borrarPrecioReferencia(UUID idProducto, UUID idProveedor);
 }

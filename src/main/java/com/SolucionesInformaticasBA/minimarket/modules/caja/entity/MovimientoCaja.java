@@ -6,6 +6,7 @@ import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.TipoMovimientoCaja;
 
 import jakarta.persistence.Column;
@@ -50,8 +51,9 @@ public class MovimientoCaja {
     @Column(name = "id_usuario", nullable = false)
     private UUID idUsuario;
 
+    @Enumerated(EnumType.STRING)
     @Column(length = 20)
-    private String origen;
+    private OrigenMovimientoCaja origen;
 
     @Column(name = "id_referencia")
     private UUID idReferencia;

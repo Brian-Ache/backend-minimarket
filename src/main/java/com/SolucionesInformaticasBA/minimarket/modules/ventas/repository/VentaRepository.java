@@ -1,5 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.repository;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -18,7 +20,17 @@ public interface VentaRepository extends JpaRepository<Venta, UUID> {
 
     Optional<Venta> findByIdAndCobradaFalseAndDeletedAtIsNull(UUID id);
 
-    List<Venta> findByIdUsuarioAndDeletedAtIsNull(UUID idUsuario);
+    /**
+     * Listado paginado, opcionalmente acotado a un usuario. Con {@code idUsuario} en null trae
+     * las de todos: es lo que ve un administrador, mientras que un empleado siempre viaja con
+     * su propio id.
+     */
+    @Query("""
+            SELECT v FROM Venta v
+             WHERE v.deletedAt IS NULL
+               AND (:idUsuario IS NULL OR v.idUsuario = :idUsuario)
+            """)
+    Page<Venta> findFiltradas(@Param("idUsuario") UUID idUsuario, Pageable pageable);
 
     // Rango semiabierto [desde, hasta): Between es inclusivo en ambos extremos, así que una
     // venta justo en el límite se contaba en dos períodos consecutivos.
@@ -28,6 +40,17 @@ public interface VentaRepository extends JpaRepository<Venta, UUID> {
                AND v.deletedAt IS NULL
             """)
     List<Venta> findEnRango(@Param("desde") LocalDateTime desde, @Param("hasta") LocalDateTime hasta);
+
+    // Mismo rango semiabierto, paginado y con el mismo filtro opcional por usuario.
+    @Query("""
+            SELECT v FROM Venta v
+             WHERE v.createdAt >= :desde AND v.createdAt < :hasta
+               AND v.deletedAt IS NULL
+               AND (:idUsuario IS NULL OR v.idUsuario = :idUsuario)
+            """)
+    Page<Venta> findEnRango(@Param("idUsuario") UUID idUsuario,
+                            @Param("desde") LocalDateTime desde, @Param("hasta") LocalDateTime hasta,
+                            Pageable pageable);
 
     /**
      * Ventas efectivamente cobradas en el período, filtradas por <b>fecha de cobro</b>.
@@ -41,4 +64,20 @@ public interface VentaRepository extends JpaRepository<Venta, UUID> {
     List<Venta> findCobradasEnRango(@Param("desde") LocalDateTime desde, @Param("hasta") LocalDateTime hasta);
 
     List<Venta> findByIdSesionAndCobradaTrueAndDeletedAtIsNull(UUID idSesion);
+
+    /**
+     * Ventas que siguen sin cobrar desde antes del límite: son las que están reteniendo stock
+     * sin que nadie haya cerrado la operación.
+     *
+     * <p>Contempla {@code cobrada IS NULL} además de {@code false}: la columna es nullable y el
+     * resto del código trata el null como "no cobrada", así que una fila vieja sin el valor
+     * cargado tiene que entrar igual.
+     */
+    @Query("""
+            SELECT v.id FROM Venta v
+             WHERE v.deletedAt IS NULL
+               AND (v.cobrada IS NULL OR v.cobrada = false)
+               AND v.createdAt < :limite
+            """)
+    List<UUID> findReservasVencidas(@Param("limite") LocalDateTime limite);
 }

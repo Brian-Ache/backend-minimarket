@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -21,6 +22,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -35,6 +39,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.repository.UsuarioRepository;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ForbiddenException;
+import com.SolucionesInformaticasBA.minimarket.shared.mail.EmailException;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -101,10 +106,10 @@ class UsuarioServiceInvitacionTest {
     @DisplayName("si el username derivado está tomado, se desambigua con un sufijo")
     void usernameDerivadoConColision() {
         autenticar(usuario(Rol.ADMIN));
-        when(userRepository.existsByEmailAndDeletedAtIsNull(anyString())).thenReturn(false);
-        when(userRepository.existsByUsernameAndDeletedAtIsNull("ana")).thenReturn(true);
-        when(userRepository.existsByUsernameAndDeletedAtIsNull("ana2")).thenReturn(true);
-        when(userRepository.existsByUsernameAndDeletedAtIsNull("ana3")).thenReturn(false);
+        when(userRepository.findByEmail(anyString())).thenReturn(Optional.empty());
+        when(userRepository.existsByUsername("ana")).thenReturn(true);
+        when(userRepository.existsByUsername("ana2")).thenReturn(true);
+        when(userRepository.existsByUsername("ana3")).thenReturn(false);
         guardaYDevuelve();
 
         var response = service.invitar(request("ana@ejemplo.com", null, null));
@@ -116,8 +121,8 @@ class UsuarioServiceInvitacionTest {
     @DisplayName("un username explícito ya tomado es 400, no se desambigua por su cuenta")
     void usernameExplicitoDuplicado() {
         autenticar(usuario(Rol.ADMIN));
-        when(userRepository.existsByEmailAndDeletedAtIsNull(anyString())).thenReturn(false);
-        when(userRepository.existsByUsernameAndDeletedAtIsNull("anap")).thenReturn(true);
+        when(userRepository.findByEmail(anyString())).thenReturn(Optional.empty());
+        when(userRepository.existsByUsername("anap")).thenReturn(true);
 
         assertThatThrownBy(() -> service.invitar(request("ana@ejemplo.com", "anap", null)))
                 .isInstanceOf(BadRequestException.class)
@@ -130,13 +135,43 @@ class UsuarioServiceInvitacionTest {
     @DisplayName("el email duplicado corta antes de mandar nada")
     void emailDuplicado() {
         autenticar(usuario(Rol.ADMIN));
-        when(userRepository.existsByEmailAndDeletedAtIsNull("ana@ejemplo.com")).thenReturn(true);
+        when(userRepository.findByEmail("ana@ejemplo.com")).thenReturn(Optional.of(usuario(Rol.EMPLEADO)));
 
         assertThatThrownBy(() -> service.invitar(request("ana@ejemplo.com", null, null)))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessageContaining("email ya está registrado");
 
         verify(authApi, never()).enviarInvitacion(any(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("el email de una cuenta dada de baja se rechaza con su propio mensaje")
+    void emailDeCuentaDadaDeBaja() {
+        autenticar(usuario(Rol.ADMIN));
+        Usuario baja = usuario(Rol.EMPLEADO);
+        baja.setDeletedAt(LocalDateTime.now());
+        when(userRepository.findByEmail("ana@ejemplo.com")).thenReturn(Optional.of(baja));
+
+        // La unique key de la tabla no sabe de deleted_at: si esto no cortara acá, el alta
+        // pasaría la validación y reventaría en el INSERT con un 409 genérico.
+        assertThatThrownBy(() -> service.invitar(request("ana@ejemplo.com", null, null)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("cuenta dada de baja");
+
+        verify(userRepository, never()).saveAndFlush(any());
+        verify(authApi, never()).enviarInvitacion(any(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("el username de una cuenta dada de baja sigue ocupado")
+    void usernameDeCuentaDadaDeBaja() {
+        autenticar(usuario(Rol.ADMIN));
+        when(userRepository.findByEmail(anyString())).thenReturn(Optional.empty());
+        when(userRepository.existsByUsername("anap")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.invitar(request("ana@ejemplo.com", "anap", null)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("ya está en uso");
     }
 
     @Test
@@ -248,10 +283,187 @@ class UsuarioServiceInvitacionTest {
     }
 
     @Test
+    @DisplayName("una invitación de una cuenta que ya se activó por otro camino no vale")
+    void invitacionDeCuentaYaActivaNoVale() {
+        // Se activó reseteando la contraseña en vez de aceptar la invitación. El enlace que
+        // le quedaba vivo no puede servir para cambiarle la contraseña sin conocer la actual.
+        Usuario yaActivo = registrar(usuario(Rol.EMPLEADO));
+
+        assertThatThrownBy(() -> service.establecerPasswordInicial(yaActivo.getId(), "MiPassword1!", null))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("ya no es válida");
+
+        verify(userRepository, never()).save(any());
+    }
+
+    // --- Restauración de una cuenta dada de baja ---------------------------------------------
+
+    @Test
+    @DisplayName("restaurar revive la fila original y le manda una invitación nueva")
+    void restaurarRevivePendiente() {
+        Usuario baja = usuario(Rol.EMPLEADO);
+        baja.setDeletedAt(LocalDateTime.now());
+        registrar(baja);
+        autenticar(usuario(Rol.ADMIN));
+        when(passwordEncoder.encode(anyString())).thenReturn("hash-inutilizable");
+        when(userRepository.saveAndFlush(any(Usuario.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var response = service.restaurar(baja.getId());
+
+        assertThat(response.getEstado()).isEqualTo(EstadoUsuario.PENDIENTE);
+        assertThat(response.getDeletedAt()).isNull();
+        assertThat(response.getId()).isEqualTo(baja.getId());
+        verify(authApi).enviarInvitacion(baja.getId(), baja.getEmail(), baja.getNombre());
+    }
+
+    @Test
+    @DisplayName("la contraseña anterior no revive con la cuenta")
+    void restaurarInvalidaLaPasswordVieja() {
+        Usuario baja = usuario(Rol.EMPLEADO);
+        baja.setDeletedAt(LocalDateTime.now());
+        baja.setHashPassword("hash-viejo");
+        registrar(baja);
+        autenticar(usuario(Rol.ADMIN));
+        when(passwordEncoder.encode(anyString())).thenReturn("hash-inutilizable");
+        when(userRepository.saveAndFlush(any(Usuario.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.restaurar(baja.getId());
+
+        assertThat(baja.getHashPassword()).isEqualTo("hash-inutilizable");
+    }
+
+    @Test
+    @DisplayName("no se restaura una cuenta que no está dada de baja")
+    void restaurarCuentaEnPie() {
+        Usuario enPie = registrar(usuario(Rol.EMPLEADO));
+        autenticar(usuario(Rol.ADMIN));
+
+        assertThatThrownBy(() -> service.restaurar(enPie.getId()))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("no está dado de baja");
+
+        verify(authApi, never()).enviarInvitacion(any(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("si el mail de la restauración falla, la cuenta no revive")
+    void restaurarConMailCaido() {
+        Usuario baja = usuario(Rol.EMPLEADO);
+        baja.setDeletedAt(LocalDateTime.now());
+        registrar(baja);
+        autenticar(usuario(Rol.ADMIN));
+        when(passwordEncoder.encode(anyString())).thenReturn("hash-inutilizable");
+        when(userRepository.saveAndFlush(any(Usuario.class))).thenAnswer(inv -> inv.getArgument(0));
+        doThrow(new EmailException("SMTP caído", null))
+                .when(authApi).enviarInvitacion(any(), anyString(), anyString());
+
+        // Propaga para que la transacción se vaya abajo: revivir una cuenta a la que nadie
+        // puede entrar es peor que dejarla dada de baja.
+        assertThatThrownBy(() -> service.restaurar(baja.getId()))
+                .isInstanceOf(EmailException.class);
+    }
+
+    @Test
+    @DisplayName("el email de una cuenta pendiente dice que hay que reenviar, no invitar de nuevo")
+    void emailConInvitacionPendiente() {
+        autenticar(usuario(Rol.ADMIN));
+        when(userRepository.findByEmail("ana@ejemplo.com")).thenReturn(Optional.of(pendiente()));
+
+        assertThatThrownBy(() -> service.invitar(request("ana@ejemplo.com", null, null)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("reenviásela");
+    }
+
+    @Test
+    @DisplayName("no se ofrece restaurar una cuenta sobre la que el actor no manda")
+    void bajaDeOtroAdminNoOfreceRestaurar() {
+        autenticar(usuario(Rol.ADMIN));
+        Usuario bajaAdmin = usuario(Rol.ADMIN);
+        bajaAdmin.setDeletedAt(LocalDateTime.now());
+        when(userRepository.findByEmail("ana@ejemplo.com")).thenReturn(Optional.of(bajaAdmin));
+
+        // El hecho se informa igual; la instrucción no, porque restaurar a un par da 403.
+        assertThatThrownBy(() -> service.invitar(request("ana@ejemplo.com", null, null)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("El email pertenece a una cuenta dada de baja");
+    }
+
+    @Test
+    @DisplayName("tampoco se ofrece reenviarle la invitación a un par")
+    void pendienteDeOtroAdminNoOfreceReenviar() {
+        autenticar(usuario(Rol.ADMIN));
+        Usuario pendienteAdmin = usuario(Rol.ADMIN);
+        pendienteAdmin.setEstado(EstadoUsuario.PENDIENTE);
+        when(userRepository.findByEmail("ana@ejemplo.com")).thenReturn(Optional.of(pendienteAdmin));
+
+        assertThatThrownBy(() -> service.invitar(request("ana@ejemplo.com", null, null)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Ese email ya tiene una invitación pendiente");
+    }
+
+    @Test
+    @DisplayName("el SUPERADMIN sí ve la salida sobre la cuenta de un ADMIN")
+    void superadminVeLaSalidaSobreUnAdmin() {
+        autenticar(usuario(Rol.SUPERADMIN));
+        Usuario bajaAdmin = usuario(Rol.ADMIN);
+        bajaAdmin.setDeletedAt(LocalDateTime.now());
+        when(userRepository.findByEmail("ana@ejemplo.com")).thenReturn(Optional.of(bajaAdmin));
+
+        assertThatThrownBy(() -> service.invitar(request("ana@ejemplo.com", null, null)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("restaurala");
+    }
+
+    @Test
+    @DisplayName("el listado con bajas las trae con deletedAt, para poder distinguirlas")
+    void listadoConBajas() {
+        Usuario baja = usuario(Rol.EMPLEADO);
+        baja.setDeletedAt(LocalDateTime.now());
+        Pageable pageable = PageRequest.of(0, 20);
+        when(userRepository.findAll(pageable)).thenReturn(
+                new PageImpl<>(java.util.List.of(usuario(Rol.ADMIN), baja), pageable, 2));
+
+        var todos = service.getAll(true, pageable).getContent();
+
+        assertThat(todos).hasSize(2);
+        assertThat(todos).filteredOn(u -> u.getDeletedAt() != null).hasSize(1);
+        verify(userRepository, never()).findAllByDeletedAtIsNull(pageable);
+    }
+
+    // --- Reseteo de contraseña como cierre alternativo del alta ------------------------------
+
+    @Test
+    @DisplayName("el reseteo activa una cuenta pendiente: el token viajó al mismo mail")
+    void resetActivaCuentaPendiente() {
+        Usuario invitado = registrar(pendiente());
+        when(passwordEncoder.encode("MiPassword1!")).thenReturn("hash-nuevo");
+
+        service.restablecerPassword(invitado.getId(), "MiPassword1!");
+
+        // Sin esto quedaría con contraseña válida y sin poder entrar: el login exige ACTIVO.
+        assertThat(invitado.getEstado()).isEqualTo(EstadoUsuario.ACTIVO);
+        assertThat(invitado.getHashPassword()).isEqualTo("hash-nuevo");
+    }
+
+    @Test
+    @DisplayName("el reseteo no destraba una cuenta bloqueada")
+    void resetNoDestrabaBloqueado() {
+        Usuario bloqueado = usuario(Rol.EMPLEADO);
+        bloqueado.setEstado(EstadoUsuario.BLOQUEADO);
+        registrar(bloqueado);
+        when(passwordEncoder.encode("MiPassword1!")).thenReturn("hash-nuevo");
+
+        service.restablecerPassword(bloqueado.getId(), "MiPassword1!");
+
+        assertThat(bloqueado.getEstado()).isEqualTo(EstadoUsuario.BLOQUEADO);
+        assertThat(bloqueado.getHashPassword()).isEqualTo("hash-nuevo");
+    }
+
+    @Test
     @DisplayName("el invitado puede elegir su propio nombre de usuario")
     void invitadoEligeSuUsername() {
         Usuario invitado = registrar(pendiente());
-        when(userRepository.existsByUsernameAndDeletedAtIsNull("ana.perez")).thenReturn(false);
+        when(userRepository.existsByUsername("ana.perez")).thenReturn(false);
         when(passwordEncoder.encode("MiPassword1!")).thenReturn("hash-nuevo");
 
         service.establecerPasswordInicial(invitado.getId(), "MiPassword1!", "ana.perez");
@@ -266,7 +478,7 @@ class UsuarioServiceInvitacionTest {
         Usuario invitado = registrar(pendiente());
         String derivado = invitado.getUsername();
         // Su propia fila ya ocupa ese nombre: sin la comparación previa, esto sería un 400.
-        when(userRepository.existsByUsernameAndDeletedAtIsNull(derivado)).thenReturn(true);
+        when(userRepository.existsByUsername(derivado)).thenReturn(true);
         when(passwordEncoder.encode("MiPassword1!")).thenReturn("hash-nuevo");
 
         service.establecerPasswordInicial(invitado.getId(), "MiPassword1!", derivado);
@@ -279,7 +491,7 @@ class UsuarioServiceInvitacionTest {
     @DisplayName("un username tomado por otro es 400, y acá no se desambigua con sufijo")
     void usernameElegidoDuplicado() {
         Usuario invitado = registrar(pendiente());
-        when(userRepository.existsByUsernameAndDeletedAtIsNull("tomado")).thenReturn(true);
+        when(userRepository.existsByUsername("tomado")).thenReturn(true);
 
         assertThatThrownBy(() -> service.establecerPasswordInicial(invitado.getId(), "MiPassword1!", "tomado"))
                 .isInstanceOf(BadRequestException.class)
@@ -326,8 +538,8 @@ class UsuarioServiceInvitacionTest {
     // --- Helpers ----------------------------------------------------------------------------
 
     private void sinDuplicados() {
-        when(userRepository.existsByEmailAndDeletedAtIsNull(anyString())).thenReturn(false);
-        when(userRepository.existsByUsernameAndDeletedAtIsNull(anyString())).thenReturn(false);
+        when(userRepository.findByEmail(anyString())).thenReturn(Optional.empty());
+        when(userRepository.existsByUsername(anyString())).thenReturn(false);
     }
 
     private void guardaYDevuelve() {

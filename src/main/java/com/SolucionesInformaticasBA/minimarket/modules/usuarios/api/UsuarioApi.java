@@ -4,19 +4,23 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.ActualizarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarPasswordRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarRolRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CrearUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.InvitarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
 
 public interface UsuarioApi {
 
-    /** Alta directa, con contraseña elegida por quien la crea. Ver también {@link #invitar}. */
-    UsuarioResponse crear(CrearUsuarioRequest request);
-
+    /**
+     * Única alta del sistema: crea la cuenta en estado PENDIENTE y dispara el mail con el que
+     * la persona define su propia contraseña. La contracara es
+     * {@link #establecerPasswordInicial}.
+     */
     UsuarioResponse invitar(InvitarUsuarioRequest request);
 
     void reenviarInvitacion(UUID id);
@@ -25,7 +29,12 @@ public interface UsuarioApi {
 
     UsuarioResponse getByEmail(String email);
 
-    List<UsuarioResponse> getAll();
+    /**
+     * @param incluirBajas suma las cuentas dadas de baja, que vienen con {@code deletedAt}
+     *        cargado. Es lo que le permite al administrador encontrar una para
+     *        {@link #restaurar}: son invisibles en el listado normal.
+     */
+    Page<UsuarioResponse> getAll(boolean incluirBajas, Pageable pageable);
 
     UsuarioResponse update(UUID id, ActualizarUsuarioRequest request);
 
@@ -36,6 +45,20 @@ public interface UsuarioApi {
     UsuarioResponse desbloquear(UUID id);
 
     void delete(UUID id);
+
+    /**
+     * Revive una cuenta dada de baja y le manda una invitación nueva: vuelve como PENDIENTE,
+     * con la contraseña anterior invalidada, y la persona define una nueva desde el mail.
+     *
+     * <p>Restaura la fila original en lugar de crear otra: el id del usuario es permanente
+     * —ventas, compras, movimientos de caja y de stock lo referencian con {@code ON DELETE
+     * RESTRICT}—, así que un alta nueva con el mismo email partiría su historial en dos. Por lo
+     * mismo nunca hay colisión que resolver: el email y el username siguieron reservados por
+     * las unique keys mientras la cuenta estaba de baja.
+     *
+     * <p>Rige la jerarquía de siempre: se restaura por debajo del propio nivel.
+     */
+    UsuarioResponse restaurar(UUID id);
 
     void changePassword(UUID id, CambiarPasswordRequest request);
 

@@ -87,8 +87,15 @@ CREATE TABLE IF NOT EXISTS categorias (
     created_at      DATETIME(6)  NOT NULL,
     updated_at      DATETIME(6)  NOT NULL,
     deleted_at      DATETIME(6)  NULL,
+    -- El nombre es unico solo entre las categorias activas: los NULL de un
+    -- indice unico no chocan entre si, asi que una categoria dada de baja
+    -- libera su nombre y se puede volver a crear. Mismo patron que
+    -- uk_productos_barcode_activo.
+    nombre_activo   VARCHAR(100)
+        GENERATED ALWAYS AS (IF(deleted_at IS NULL, nombre, NULL)) VIRTUAL,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_categorias_nombre (nombre),
+    UNIQUE KEY uk_categorias_nombre_activo (nombre_activo),
+    KEY ix_categorias_nombre (nombre),
     KEY ix_categorias_deleted_at (deleted_at)
 ) ENGINE = InnoDB;
 
@@ -121,7 +128,13 @@ CREATE TABLE IF NOT EXISTS productos (
     created_at      DATETIME(6)  NOT NULL,
     updated_at      DATETIME(6)  NOT NULL,
     deleted_at      DATETIME(6)  NULL,
+    -- El barcode es unico solo entre los productos activos: los NULL de un
+    -- indice unico no chocan entre si, asi que las filas borradas liberan el
+    -- codigo. Mismo patron que uk_stock_producto_activo.
+    barcode_activo  VARCHAR(255)
+        GENERATED ALWAYS AS (IF(deleted_at IS NULL, barcode, NULL)) VIRTUAL,
     PRIMARY KEY (id),
+    UNIQUE KEY uk_productos_barcode_activo (barcode_activo),
     KEY ix_productos_barcode (barcode),
     KEY ix_productos_categoria (id_categoria, deleted_at),
     KEY ix_productos_proveedor (id_proveedor, deleted_at),
@@ -215,6 +228,14 @@ CREATE TABLE IF NOT EXISTS sesiones_caja (
     saldo_final             FLOAT        NULL,           -- contado físicamente al cierre
     saldo_esperado          FLOAT        NULL,           -- calculado por el sistema
     diferencia              FLOAT        NULL,           -- saldo_final - saldo_esperado
+    -- Al cerrar, una parte del efectivo se retira y otra queda en la caja. El retiro
+    -- se registra ademas como movimiento SALIDA con origen RETIRO, para que el dia no
+    -- vuelva a sumar como apertura del turno siguiente la plata que nunca salio.
+    monto_retirado          FLOAT        NULL,
+    saldo_dejado            FLOAT        NULL,           -- saldo_final - monto_retirado
+    -- Cuanto se aparto lo contado al abrir de lo que dejo el cierre anterior. No
+    -- bloquea la apertura: deja el faltante o el sobrante registrado.
+    diferencia_apertura     FLOAT        NULL,
     -- Desglose del arqueo, congelado al cerrar. Un corte es un documento contable: se guarda
     -- como quedó y no se recalcula al consultarlo.
     total_ventas            FLOAT        NULL,
@@ -274,7 +295,7 @@ CREATE TABLE IF NOT EXISTS movimientos_caja (
     CONSTRAINT fk_mov_caja_usuario
         FOREIGN KEY (id_usuario) REFERENCES usuarios (id) ON DELETE RESTRICT,
     CONSTRAINT ck_mov_caja_origen
-        CHECK (origen IS NULL OR origen IN ('MANUAL','VENTA','COMPRA','REVERSA'))
+        CHECK (origen IS NULL OR origen IN ('MANUAL','VENTA','COMPRA','REVERSA','RETIRO'))
 ) ENGINE = InnoDB;
 
 -- =====================================================================
@@ -351,7 +372,19 @@ CREATE TABLE IF NOT EXISTS compras (
     created_at          DATETIME(6)  NOT NULL,
     updated_at          DATETIME(6)  NOT NULL,
     deleted_at          DATETIME(6)  NULL,
+    -- Un proveedor no repite numero dentro del mismo tipo de comprobante: su
+    -- factura 0001-00001234 y su remito 0001-00001234 son dos documentos, y dos
+    -- proveedores distintos pueden coincidir sin problema. CONCAT devuelve NULL
+    -- si falta el numero y el IF deja fuera a las anuladas; como los NULL no
+    -- chocan entre si en un indice unico, las dos exenciones salen solas.
+    comprobante_activo VARCHAR(72)
+        GENERATED ALWAYS AS (
+            IF(deleted_at IS NULL,
+               CONCAT(IFNULL(tipo_comprobante, ''), '|', nro_comprobante),
+               NULL)
+        ) VIRTUAL,
     PRIMARY KEY (id),
+    UNIQUE KEY uk_compras_proveedor_comprobante (id_proveedor, comprobante_activo),
     KEY ix_compras_fecha (created_at, deleted_at),
     KEY ix_compras_usuario (id_usuario, deleted_at),
     KEY ix_compras_proveedor (id_proveedor, deleted_at),

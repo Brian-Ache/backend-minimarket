@@ -11,9 +11,11 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.*;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.AuthToken;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.entity.RefreshToken;
 import com.SolucionesInformaticasBA.minimarket.modules.auth.enums.TokenType;
-import com.SolucionesInformaticasBA.minimarket.modules.auth.repository.*;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.repository.AuthTokensRepository;
+import com.SolucionesInformaticasBA.minimarket.modules.auth.repository.RefreshTokenRepository;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
@@ -25,19 +27,16 @@ public class TokenService {
 
     private static final long REFRESH_TOKEN_DURATION_HOURS = 720;
 
-    // Públicas porque el texto del mail avisa cuánto dura el enlace, y ese dato tiene que salir
-    // de la misma constante que lo calcula.
+    // Pública: el texto del mail necesita informar cuánto dura el enlace.
     public static final long PASSWORD_RESET_TOKEN_DURATION_HOURS = 1;
 
-    /**
-     * Más larga que las demás: la invitación le llega a alguien que no está esperando el mail y
-     * que puede leerlo recién al otro día. Tres días es margen suficiente sin dejar la puerta
-     * abierta indefinidamente; vencida, el administrador reenvía.
-     */
+    // Más larga que el resto: la invitación puede leerse recién al día siguiente.
     public static final long INVITATION_TOKEN_DURATION_HOURS = 72;
 
     private final AuthTokensRepository authTokensRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+
+    // Generación
 
     public String generatePasswordResetToken(UUID userId) {
         return createAuthToken(userId, TokenType.PASSWORD_RESET, PASSWORD_RESET_TOKEN_DURATION_HOURS);
@@ -47,27 +46,13 @@ public class TokenService {
         return createAuthToken(userId, TokenType.INVITATION, INVITATION_TOKEN_DURATION_HOURS);
     }
 
-    /**
-     * Invalida los tokens sin usar de un tipo. Se llama antes de emitir uno nuevo: si un
-     * administrador reenvía la invitación, el enlace anterior tiene que dejar de servir, porque
-     * si no cada reenvío deja otra puerta abierta hasta que expire.
-     */
-    @Transactional
-    public void invalidateAuthTokens(UUID userId, TokenType tokenType) {
-        List<AuthToken> tokens = authTokensRepository.findByUserIdAndTokenTypeAndUsedFalse(userId, tokenType);
-        tokens.forEach(token -> token.setUsed(true));
-        authTokensRepository.saveAll(tokens);
-    }
-
     public String generateRefreshToken(UUID userId) {
         String rawToken = generateRandomString();
-        String hashedToken = hashToken(rawToken);
-        LocalDateTime expiresAt = LocalDateTime.now().plusHours(REFRESH_TOKEN_DURATION_HOURS);
 
         RefreshToken refreshToken = RefreshToken.builder()
-                .tokenHash(hashedToken)
+                .tokenHash(hashToken(rawToken))
                 .userId(userId)
-                .expiresAt(expiresAt)
+                .expiresAt(LocalDateTime.now().plusHours(REFRESH_TOKEN_DURATION_HOURS))
                 .isActive(true)
                 .build();
 
@@ -75,34 +60,39 @@ public class TokenService {
         return rawToken;
     }
 
-    public AuthToken validateAuthToken(String rawToken, TokenType expectedType) {
-        String hashedToken = hashToken(rawToken);
+    // Validación
 
-        AuthToken authToken = authTokensRepository.findByTokenHashAndUsedFalse(hashedToken)
+    public AuthToken validateAuthToken(String rawToken, TokenType expectedType) {
+        AuthToken authToken = authTokensRepository.findByTokenHashAndUsedFalse(hashToken(rawToken))
                 .orElseThrow(() -> new BadRequestException("Token inválido o ya utilizado"));
 
         if (authToken.getTokenType() != expectedType) {
             throw new BadRequestException("Tipo de token incorrecto");
         }
-
         if (authToken.getExpiresAt().isBefore(LocalDateTime.now())) {
             throw new BadRequestException("Token expirado");
         }
-
         return authToken;
     }
 
     public RefreshToken validateRefreshToken(String rawToken) {
-        String hashedToken = hashToken(rawToken);
-
-        RefreshToken refreshToken = refreshTokenRepository.findByTokenHashAndIsActiveTrue(hashedToken)
+        RefreshToken refreshToken = refreshTokenRepository.findByTokenHashAndIsActiveTrue(hashToken(rawToken))
                 .orElseThrow(() -> new BadRequestException("Refresh token inválido o revocado"));
 
         if (refreshToken.getExpiresAt().isBefore(LocalDateTime.now())) {
             throw new BadRequestException("Refresh token expirado");
         }
-
         return refreshToken;
+    }
+
+    // Invalidación / revocación
+
+    // Invalida tokens sin usar de un tipo antes de emitir uno nuevo (p. ej. reenvío de invitación).
+    @Transactional
+    public void invalidateAuthTokens(UUID userId, TokenType tokenType) {
+        List<AuthToken> tokens = authTokensRepository.findByUserIdAndTokenTypeAndUsedFalse(userId, tokenType);
+        tokens.forEach(token -> token.setUsed(true));
+        authTokensRepository.saveAll(tokens);
     }
 
     @Transactional
@@ -113,10 +103,7 @@ public class TokenService {
         authTokensRepository.save(token);
     }
 
-    /**
-     * Revoca una sesión. Es idempotente a propósito: desloguear un token ya revocado,
-     * expirado o inexistente no es un error para el cliente.
-     */
+    // Idempotente a propósito: revocar un token ya inactivo o inexistente no es un error.
     @Transactional
     public void revokeRefreshToken(String rawToken) {
         refreshTokenRepository.findByTokenHashAndIsActiveTrue(hashToken(rawToken))
@@ -127,22 +114,22 @@ public class TokenService {
                 });
     }
 
-    /** Cierra todas las sesiones del usuario (cambio de contraseña, baja, etc.). */
+    // Cierra todas las sesiones del usuario (cambio de contraseña, baja, etc.).
     @Transactional
     public int revokeAllUserRefreshTokens(UUID userId) {
         return refreshTokenRepository.revokeAllByUserId(userId, LocalDateTime.now());
     }
 
+    // Helpers
+
     private String createAuthToken(UUID userId, TokenType tokenType, long durationHours) {
         String rawToken = generateRandomString();
-        String hashedToken = hashToken(rawToken);
-        LocalDateTime expiresAt = LocalDateTime.now().plusHours(durationHours);
 
         AuthToken authToken = AuthToken.builder()
                 .tokenType(tokenType)
-                .tokenHash(hashedToken)
+                .tokenHash(hashToken(rawToken))
                 .userId(userId)
-                .expiresAt(expiresAt)
+                .expiresAt(LocalDateTime.now().plusHours(durationHours))
                 .used(false)
                 .build();
 
@@ -159,8 +146,7 @@ public class TokenService {
     public String hashToken(String rawToken) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hashBytes = digest.digest(rawToken.getBytes());
-            return HexFormat.of().formatHex(hashBytes);
+            return HexFormat.of().formatHex(digest.digest(rawToken.getBytes()));
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("SHA-256 no disponible", e);
         }

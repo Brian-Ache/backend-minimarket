@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.dto;
 
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -13,6 +14,7 @@ public class ProveedorRequest {
     @Size(max = 50)
     private String telefono;
 
+    @Email(message = "El email del proveedor no tiene un formato válido")
     @Size(max = 100)
     private String email;
 

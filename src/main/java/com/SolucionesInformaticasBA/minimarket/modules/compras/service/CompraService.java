@@ -1,31 +1,39 @@
 package com.SolucionesInformaticasBA.minimarket.modules.compras.service;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.CompraApi;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.dto.*;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.entity.*;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.repository.*;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.LoteRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.LoteResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.Lote;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.MovimientoStock;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.EstadoLote;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.LoteRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
-import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.PrecioReferenciaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.entity.Producto;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.repository.ProductoRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.proveedores.api.ProveedoresApi;
@@ -62,14 +70,21 @@ public class CompraService implements CompraApi {
             throw new BadRequestException("El proveedor especificado no existe");
         }
 
+        exigirComprobanteLibre(request.getIdProveedor(),
+            normalizarTipoComprobante(request.getTipoComprobante()),
+            recortar(request.getNroComprobante()));
+
         // Igual que en ventas: se guarda primero para poder referenciar la compra en cada
         // movimiento de stock y hacer reversible la anulación.
         Compra compra = compraRepository.save(toCompraEntity(request, idUsuario));
 
-        List<DetalleCompra> detalles = new ArrayList<>();
-        float total = 0;
+        // Igual que en ventas: se procesa por orden de bloqueo y cada línea vuelve a su
+        // posición, así lo que se guarda y se devuelve sigue el orden en que se cargó.
+        List<DetalleCompraRequest> pedidos = request.getDetalle();
+        DetalleCompra[] procesados = new DetalleCompra[pedidos.size()];
 
-        for (DetalleCompraRequest d : request.getDetalle()) {
+        for (int i : ordenDeBloqueo(pedidos)) {
+            DetalleCompraRequest d = pedidos.get(i);
             Producto producto = productoRepository.findByIdAndDeletedAtIsNull(d.getIdProducto());
             if (producto == null) {
                 throw new ResourceNotFoundException("Producto no encontrado: " + d.getIdProducto());
@@ -84,20 +99,19 @@ public class CompraService implements CompraApi {
             }
             productoRepository.save(producto);
 
-            DetalleCompra detalle = toDetalleCompraEntity(d, producto, compra);
-            detalles.add(detalle);
-            total += detalle.getTotal();
+            procesados[i] = toDetalleCompraEntity(d, producto, compra);
 
             if (producto.isManejaLotes()) {
-                Lote lote = Lote.builder()
+                // Por la API de inventario y no escribiendo el lote a mano: las reglas del lote
+                // —fecha de vencimiento obligatoria, producto que efectivamente maneje lotes—
+                // viven ahí. Creándolo acá, una compra podía dejar lotes sin fecha, que quedan
+                // en estado SIN_FECHA y no aparecen en ningún control de vencimientos.
+                LoteResponse lote = inventarioApi.crear(LoteRequest.builder()
                     .idProducto(producto.getId())
                     .numeroLote(d.getNumeroLote())
                     .fechaVencimiento(d.getFechaVencimiento())
                     .cantidad(d.getCantidad())
-                    // Sin esto el lote quedaba con estado NULL hasta que alguien listara lotes.
-                    .estado(EstadoLote.calcularPara(d.getFechaVencimiento()))
-                    .build();
-                lote = loteRepository.save(lote);
+                    .build());
 
                 MovimientoStock m = MovimientoStock.builder()
                     .idProducto(producto.getId())
@@ -121,6 +135,15 @@ public class CompraService implements CompraApi {
             }
         }
 
+        List<DetalleCompra> detalles = new ArrayList<>(Arrays.asList(procesados));
+
+        // El total se suma en el orden en que se cargó la compra y no en el de bloqueo: con
+        // float, cambiar el orden de la suma puede correr el último centavo.
+        float total = 0;
+        for (DetalleCompra d : detalles) {
+            total += d.getTotal();
+        }
+
         compra.setTotal(total);
 
         for (DetalleCompra d : detalles) {
@@ -132,7 +155,8 @@ public class CompraService implements CompraApi {
         if (request.isPagoEnEfectivo()) {
             UUID idSesion = cajaApi.getIdSesionActiva();
             compra.setIdSesion(idSesion);
-            cajaApi.registrarSalidaAutomatica(idSesion, idUsuario, total, "COMPRA", compra.getId());
+            cajaApi.registrarSalidaAutomatica(
+                idSesion, idUsuario, total, OrigenMovimientoCaja.COMPRA, compra.getId());
         }
 
         compra = compraRepository.saveAndFlush(compra);
@@ -149,65 +173,142 @@ public class CompraService implements CompraApi {
         return toCompraResponse(compra, toDetalleCompraResponseList(detalles));
     }
 
-    public List<CompraResponse> getAll() {
-        return toCompraResponseList(
-            compraRepository.findAll().stream().filter(c -> c.getDeletedAt() == null).toList());
-    }
-
-    public List<CompraResponse> getByUsuario(UUID idUsuario) {
-        return toCompraResponseList(compraRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario));
-    }
-
-    public List<CompraResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta) {
-        return toCompraResponseList(compraRepository.findEnRango(desde, hasta));
-    }
+    /**
+     * Búsqueda paginada con todos los filtros opcionales. Los detalles de la página se traen
+     * con {@link #toCompraResponseList}, en una consulta y no una por compra.
+     */
     public Page<CompraResponse> getAllFiltered(UUID idProveedor, String tipoComprobante,
                                                LocalDateTime desde, LocalDateTime hasta,
                                                Pageable pageable) {
-        return compraRepository.findAllFiltered(idProveedor, tipoComprobante, desde, hasta, pageable)
-            .map(c -> {
-                List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-                return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-            });
+        // Mismo criterio que al guardar: si no, filtrar por "factura" no encontraba nada.
+        Page<Compra> compras = compraRepository.findAllFiltered(
+            idProveedor, normalizarTipoComprobante(tipoComprobante), desde, hasta, pageable);
+
+        // PageImpl y no compras.map(): el armado necesita la página entera para traer todos los
+        // detalles en una sola consulta. Mapear fila por fila volvería a un query por compra.
+        return new PageImpl<>(
+            toCompraResponseList(compras.getContent()), pageable, compras.getTotalElements());
     }
 
-    // MÉTODOS COMENTADOS: Se reemplazaron por getAllFiltered() que cubre todos los casos
-    // con un solo query parametrizado. Se mantienen comentados por si en el futuro
-    // se necesitan endpoints dedicados (ej: historial por un usuario específico).
+    /**
+     * Totales por día para los reportes. Va contra una proyección de dos columnas y no contra
+     * getAllFiltered: ese arma la respuesta completa de cada compra —detalles incluidos— y
+     * resuelve un proveedor por fila, así que un reporte mensual disparaba una consulta por
+     * compra del período para después quedarse solo con la fecha y el importe.
+     */
+    @Override
+    public Map<LocalDate, Float> getTotalesPorDia(LocalDateTime desde, LocalDateTime hasta) {
+        Map<LocalDate, Float> totales = new HashMap<>();
+        for (Object[] fila : compraRepository.fechasYTotalesEnRango(desde, hasta)) {
+            if (fila[0] == null) {
+                continue;
+            }
+            LocalDate dia = ((LocalDateTime) fila[0]).toLocalDate();
+            float total = fila[1] == null ? 0f : ((Number) fila[1]).floatValue();
+            totales.merge(dia, total, Float::sum);
+        }
+        return totales;
+    }
 
-    // public Page<CompraResponse> getAll(Pageable pageable) {
-    //     return compraRepository.findAllPaginated(pageable).map(c -> {
-    //         List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-    //         return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-    //     });
-    // }
+    /**
+     * Los proveedores que tienen o tuvieron este producto, con las dos cifras que se miran al
+     * comprar: lo que cada uno lista —el precio de referencia, que se carga a mano— y lo que
+     * realmente se le pagó la última vez.
+     *
+     * <p>Vive acá y no en productos ni en proveedores porque compras es el único módulo que ya
+     * depende de los dos. El catálogo de referencia lo sigue teniendo productos, que es donde
+     * se carga; esto solo lo cruza con el historial.
+     *
+     * <p>Es de consulta: no propone, no valida y no toca el alta de la compra.
+     */
+    @Override
+    public List<ProveedorDeProductoResponse> getProveedoresDeProducto(UUID idProducto) {
+        // Valida que el producto exista: preguntar por los proveedores de un id inventado
+        // tiene que ser un 404 y no una lista vacía, que se lee como "no le compré a nadie".
+        productosApi.getById(idProducto);
 
-    // public Page<CompraResponse> getByUsuario(UUID idUsuario, Pageable pageable) {
-    //     return compraRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuario, pageable)
-    //         .map(c -> {
-    //             List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-    //             return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-    //         });
-    // }
+        Map<UUID, ProveedorDeProductoResponse.UltimaCompra> historial = new HashMap<>();
+        Map<UUID, ProveedorResponse> proveedores = new HashMap<>();
 
-    // public Page<CompraResponse> getByFecha(LocalDateTime desde, LocalDateTime hasta, Pageable pageable) {
-    //     return compraRepository.findByCreatedAtBetweenAndDeletedAtIsNull(desde, hasta, pageable)
-    //         .map(c -> {
-    //             List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(c.getId());
-    //             return toCompraResponse(c, toDetalleCompraResponseList(detalles));
-    //         });
-    // }
+        for (Object[] fila : detalleCompraRepository.ultimaCompraPorProveedor(idProducto)) {
+            UUID idProveedor = (UUID) fila[0];
+            // Dos compras del mismo proveedor con el createdAt exacto —DATETIME(6)— entran las
+            // dos: se queda la primera, cualquiera de las dos dice lo mismo.
+            historial.putIfAbsent(idProveedor, ProveedorDeProductoResponse.UltimaCompra.builder()
+                .fecha((LocalDateTime) fila[1])
+                .tipoComprobante((String) fila[2])
+                .nroComprobante((String) fila[3])
+                .precioUnitario(fila[4] == null ? 0f : ((Number) fila[4]).floatValue())
+                .build());
+        }
+
+        List<ProveedorDeProductoResponse> resultado = new ArrayList<>();
+
+        // Primero los del catálogo de referencia, que ya vienen con el proveedor resuelto y
+        // ordenados por precio: no hace falta volver a pedirlo por cada uno.
+        for (PrecioReferenciaResponse referencia : productosApi.getProveedoresDeProducto(idProducto)) {
+            if (referencia.getProveedor() == null) continue;
+
+            UUID idProveedor = referencia.getProveedor().getId();
+            proveedores.put(idProveedor, referencia.getProveedor());
+
+            resultado.add(ProveedorDeProductoResponse.builder()
+                .proveedor(referencia.getProveedor())
+                .precioReferencia(referencia.getPrecioReferencia())
+                .ultimaCompra(historial.get(idProveedor))
+                .build());
+        }
+
+        // Y después los que solo aparecen en el historial: se les compró alguna vez y nunca se
+        // les cargó un precio. Van al final porque no hay con qué ordenarlos entre los otros, y
+        // entre ellos por nombre: salen de un mapa, así que sin esto el orden cambiaría de una
+        // llamada a la otra.
+        List<ProveedorDeProductoResponse> soloHistorial = new ArrayList<>();
+        for (Map.Entry<UUID, ProveedorDeProductoResponse.UltimaCompra> entrada : historial.entrySet()) {
+            if (proveedores.containsKey(entrada.getKey())) continue;
+
+            ProveedorResponse proveedor;
+            try {
+                // Incluyendo bajas: a quién se le compró no desaparece de la pantalla porque
+                // hoy no se pueda operar con él.
+                proveedor = proveedoresApi.getByIdIncluyendoBajas(entrada.getKey());
+            } catch (ResourceNotFoundException e) {
+                continue;
+            }
+
+            soloHistorial.add(ProveedorDeProductoResponse.builder()
+                .proveedor(proveedor)
+                .ultimaCompra(entrada.getValue())
+                .build());
+        }
+
+        soloHistorial.sort(Comparator.comparing(p -> p.getProveedor().getNombre(),
+            Comparator.nullsLast(Comparator.naturalOrder())));
+        resultado.addAll(soloHistorial);
+
+        return resultado;
+    }
 
     /**
      * Anula una compra: saca del stock lo que había ingresado y, si se pagó de la caja,
      * devuelve la plata al turno. Falla si la mercadería ya se vendió o si el turno que
      * registró el pago ya cerró su corte.
+     *
+     * <p><b>No revierte el costo, el margen, el precio ni el proveedor que el alta le escribió
+     * al producto</b>, y es a propósito: una compra se anula por muchos motivos —el proveedor
+     * no entregó, se cargó dos veces, se devolvió la mercadería— y en ninguno de esos el precio
+     * de venta vigente tiene por qué volver atrás. Si lo que estaba mal era justamente el
+     * precio, se corrige por el ABM de productos, que es donde vive esa decisión.
      */
     @Transactional
-    public void delete(UUID id, UUID idUsuario) {
+    public void delete(UUID id) {
         Compra compra = compraRepository.findByIdAndDeletedAtIsNull(id)
             .orElseThrow(() -> new ResourceNotFoundException("Compra no encontrada"));
 
+        // Del JWT y no de un parámetro: antes venía en un header que mandaba el cliente, así
+        // que quien anulaba podía firmar la reversa de stock y la entrada de caja con el id de
+        // otro usuario, justo en las dos tablas que sirven para auditar. Mismo criterio que la
+        // anulación de ventas.
         UUID idUsuario = SecurityUtils.getCurrentUserId();
         LocalDateTime ahora = LocalDateTime.now();
 
@@ -215,55 +316,9 @@ public class CompraService implements CompraApi {
         revertirStock(compra, idUsuario);
 
         compra.setDeletedAt(ahora);
-        List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(id);
-
-        // Revertir stock por cada producto
-        for (DetalleCompra d : detalles) {
-            Producto producto = productoRepository.findByIdAndDeletedAtIsNull(d.getIdProducto());
-            if (producto == null) {
-                System.out.println("WARNING: Producto no encontrado (" + d.getIdProducto()
-                    + "), no se revirtió stock para el detalle " + d.getId());
-                continue;
-            }
-
-            if (producto.isManejaLotes()) {
-                // Buscar lote creado para esta compra y hacerle soft delete
-                List<Lote> lotes = loteRepository.findByIdProducto(d.getIdProducto());
-                for (Lote lote : lotes) {
-                    if (lote.getDeletedAt() == null && lote.getCantidad() == d.getCantidad()) {
-                        lote.setDeletedAt(java.time.LocalDateTime.now());
-                        loteRepository.save(lote);
-
-                        // Buscar y soft-delete el movimiento de stock asociado
-                        List<MovimientoStock> movimientos = movimientoStockRepository
-                            .findByIdProductoAndDeletedAtIsNullOrderByCreatedAtDesc(d.getIdProducto());
-                        for (MovimientoStock m : movimientos) {
-                            if (m.getIdLote() != null && m.getIdLote().equals(lote.getId())
-                                && m.getTipo() == TipoMovimiento.COMPRA) {
-                                m.setDeletedAt(java.time.LocalDateTime.now());
-                                movimientoStockRepository.save(m);
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                }
-            } else {
-                // No maneja lotes: disminuir stock
-                inventarioApi.disminuir(MovimientoStockRequest.builder()
-                    .idProducto(d.getIdProducto())
-                    .cantidad(d.getCantidad())
-                    .tipo("COMPRA")
-                    .motivo("Reversión por eliminación de compra")
-                    .idUsuario(idUsuario)
-                    .build());
-            }
-        }
-
-        // Soft delete compra + detalles
-        compra.setDeletedAt(java.time.LocalDateTime.now());
         compraRepository.save(compra);
 
+        List<DetalleCompra> detalles = detalleCompraRepository.findByIdCompraAndDeletedAtIsNull(id);
         for (DetalleCompra d : detalles) {
             d.setDeletedAt(ahora);
         }
@@ -291,21 +346,27 @@ public class CompraService implements CompraApi {
                 "No se puede anular: la compra se pagó en un turno de caja que ya fue cerrado");
         }
         cajaApi.registrarEntradaAutomatica(
-            sesionActiva, idUsuario, compra.getTotal(), "REVERSA", compra.getId());
+            sesionActiva, idUsuario, compra.getTotal(), OrigenMovimientoCaja.REVERSA, compra.getId());
     }
 
     /** Saca del stock lo que ingresó la compra, usando los movimientos que la referencian. */
     private void revertirStock(Compra compra, UUID idUsuario) {
-        List<MovimientoStock> movimientos =
+        List<MovimientoStock> movimientos = new ArrayList<>(
             movimientoStockRepository.findByIdReferenciaAndTipoAndDeletedAtIsNull(
-                compra.getId(), TipoMovimiento.COMPRA);
+                compra.getId(), TipoMovimiento.COMPRA));
+
+        // Mismo orden de bloqueo que el alta: por producto ascendente y, dentro de cada uno,
+        // los lotes en el orden que impone findParaDescuentoFefo.
+        movimientos.sort(Comparator.comparing(MovimientoStock::getIdProducto,
+                Comparator.nullsLast(Comparator.naturalOrder())));
+        reservarLotes(movimientos);
 
         for (MovimientoStock m : movimientos) {
             int aDescontar = Math.abs(m.getCantidad());
             if (aDescontar == 0) continue;
 
             if (m.getIdLote() != null) {
-                Lote lote = loteRepository.findById(m.getIdLote())
+                Lote lote = loteRepository.findByIdParaActualizar(m.getIdLote())
                     .orElseThrow(() -> new BadRequestException(
                         "No se puede revertir la compra: falta el lote " + m.getIdLote()));
 
@@ -329,20 +390,61 @@ public class CompraService implements CompraApi {
                     .idReferencia(compra.getId())
                     .build());
             } else {
-                // disminuir ya rechaza dejar el stock en negativo
-                inventarioApi.disminuir(MovimientoStockRequest.builder()
-                    .idProducto(m.getIdProducto())
-                    .cantidad(aDescontar)
-                    .tipo("AJUSTE")
-                    .motivo("Reversa por anulación de compra " + compra.getId())
-                    .idUsuario(idUsuario)
-                    .idReferencia(compra.getId())
-                    .build());
+                try {
+                    // disminuir ya rechaza dejar el stock en negativo
+                    inventarioApi.disminuir(MovimientoStockRequest.builder()
+                        .idProducto(m.getIdProducto())
+                        .cantidad(aDescontar)
+                        .tipo("AJUSTE")
+                        .motivo("Reversa por anulación de compra " + compra.getId())
+                        .idUsuario(idUsuario)
+                        .idReferencia(compra.getId())
+                        .build());
+                } catch (BadRequestException e) {
+                    // "Stock insuficiente" es correcto pero desorienta cuando lo que estás
+                    // haciendo es anular: significa que la mercadería ya se vendió. Se explica
+                    // igual que en la rama de lotes, y se conserva el detalle de cantidades.
+                    throw new BadRequestException(
+                        "No se puede anular: ya se vendió parte de lo que ingresó esta compra ("
+                            + nombreDeProducto(m.getIdProducto()) + "). " + e.getMessage());
+                }
             }
         }
     }
 
     // Helpers
+
+    /**
+     * Cargar dos veces el mismo remito duplica el ingreso de stock y la salida de caja, y no
+     * quedaba señal de nada: el número era texto libre sin control.
+     *
+     * <p>La unicidad es por proveedor <b>y tipo de comprobante</b>: dos proveedores distintos
+     * pueden emitir el mismo número, y un mismo proveedor numera por separado sus facturas y
+     * sus remitos, así que su factura 0001-00001234 y su remito 0001-00001234 son documentos
+     * distintos. Una compra sin proveedor o sin número no tiene con qué compararse y queda
+     * fuera.
+     *
+     * <p>La base sostiene lo mismo con un índice único, así que dos altas simultáneas tampoco
+     * pasan; acá el chequeo existe para dar un mensaje que se entienda en vez de un 409.
+     */
+    private void exigirComprobanteLibre(UUID idProveedor, String tipoComprobante, String nroComprobante) {
+        if (idProveedor == null || nroComprobante == null || nroComprobante.isBlank()) {
+            return;
+        }
+        if (compraRepository.existeComprobante(idProveedor, tipoComprobante, nroComprobante)) {
+            String comprobante = tipoComprobante == null || tipoComprobante.isBlank()
+                ? nroComprobante
+                : tipoComprobante + " " + nroComprobante;
+            throw new BadRequestException(
+                "Ese proveedor ya tiene una compra registrada con el comprobante " + comprobante);
+        }
+    }
+
+    /** Solo para armar mensajes de error: no se paga la consulta en el camino feliz. */
+    private String nombreDeProducto(UUID idProducto) {
+        String nombre = productosApi.getNombresPorId(List.of(idProducto)).get(idProducto);
+        return nombre != null ? nombre : "producto " + idProducto;
+    }
 
     /**
      * Igual que en ventas: los detalles de todas las compras se traen en una sola consulta y
@@ -369,17 +471,34 @@ public class CompraService implements CompraApi {
             .idUsuario(idUsuario)
             .total(0)
             .idProveedor(request.getIdProveedor())
-            .tipoComprobante(request.getTipoComprobante())
-            .nroComprobante(request.getNroComprobante())
-            .observaciones(request.getObservaciones())
+            .tipoComprobante(normalizarTipoComprobante(request.getTipoComprobante()))
+            .nroComprobante(recortar(request.getNroComprobante()))
+            .observaciones(recortar(request.getObservaciones()))
             .build();
+    }
+
+    /**
+     * El tipo de comprobante es texto libre y el filtro compara por igualdad exacta, así que sin
+     * normalizar "factura", "Factura" y "FACTURA " eran tres tipos distintos: una compra cargada
+     * con uno no aparecía al filtrar por otro. Se guarda y se busca siempre en mayúsculas.
+     */
+    private static String normalizarTipoComprobante(String tipo) {
+        String limpio = recortar(tipo);
+        return limpio == null ? null : limpio.toUpperCase();
+    }
+
+    private static String recortar(String valor) {
+        return valor == null ? null : valor.trim();
     }
 
     private CompraResponse toCompraResponse(Compra compra, List<DetalleCompraResponse> detalle) {
         ProveedorResponse proveedor = null;
         if (compra.getIdProveedor() != null) {
             try {
-                proveedor = proveedoresApi.getById(compra.getIdProveedor());
+                // Incluyendo bajas: dar de baja a un proveedor cierra las compras nuevas, no
+                // borra de la pantalla a quién se le compró. Con getById, cada baja dejaba
+                // todas sus compras históricas mostrando proveedor en null.
+                proveedor = proveedoresApi.getByIdIncluyendoBajas(compra.getIdProveedor());
             } catch (ResourceNotFoundException e) {
                 proveedor = null;
             }
@@ -395,6 +514,34 @@ public class CompraService implements CompraApi {
             .nroComprobante(compra.getNroComprobante())
             .observaciones(compra.getObservaciones())
             .build();
+    }
+
+    /**
+     * Índices del detalle ordenados por idProducto ascendente. Es el mismo criterio que usa
+     * ventas: toda operación que bloquee filas de inventario las toma en este orden, para que
+     * dos transacciones sobre los mismos productos no se queden cada una con la fila que la
+     * otra necesita y la base tenga que matar una por deadlock.
+     */
+    private static List<Integer> ordenDeBloqueo(List<DetalleCompraRequest> detalles) {
+        return IntStream.range(0, detalles.size())
+            .boxed()
+            .sorted(Comparator.comparing((Integer i) -> detalles.get(i).getIdProducto(),
+                    Comparator.nullsLast(Comparator.naturalOrder())))
+            .toList();
+    }
+
+    /**
+     * Toma por adelantado el lock de los lotes de cada producto involucrado, en el orden del
+     * FEFO. La reversa recorre movimientos, o sea un lote suelto por vez; sin esta pasada
+     * previa bloquearía los lotes de un producto en un orden distinto al del resto del
+     * sistema, que es justo lo que abre el ciclo.
+     */
+    private void reservarLotes(List<MovimientoStock> movimientos) {
+        movimientos.stream()
+            .filter(m -> m.getIdLote() != null)
+            .map(MovimientoStock::getIdProducto)
+            .distinct()
+            .forEach(loteRepository::findParaDescuentoFefo);
     }
 
     private DetalleCompra toDetalleCompraEntity(DetalleCompraRequest request, Producto producto, Compra compra) {

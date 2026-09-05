@@ -26,7 +26,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.AuthApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarRolRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CrearUsuarioRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.InvitarUsuarioRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.EstadoUsuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
@@ -60,40 +60,14 @@ class UsuarioServiceJerarquiaTest {
     }
 
     // --- Alta -------------------------------------------------------------------------------
-
-    @Test
-    @DisplayName("el SUPERADMIN puede dar de alta un ADMIN")
-    void superadminCreaAdmin() {
-        autenticar(usuario(Rol.SUPERADMIN));
-        when(userRepository.existsByEmailAndDeletedAtIsNull(anyString())).thenReturn(false);
-        when(userRepository.existsByUsernameAndDeletedAtIsNull(anyString())).thenReturn(false);
-        when(userRepository.saveAndFlush(any(Usuario.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
-
-        var response = service.crear(crearRequest(Rol.ADMIN));
-
-        assertThat(response.getRol()).isEqualTo(Rol.ADMIN);
-        assertThat(response.getEstado()).isEqualTo(EstadoUsuario.ACTIVO);
-    }
-
-    @Test
-    @DisplayName("el ADMIN no puede dar de alta otro ADMIN")
-    void adminNoCreaAdmin() {
-        autenticar(usuario(Rol.ADMIN));
-
-        assertThatThrownBy(() -> service.crear(crearRequest(Rol.ADMIN)))
-                .isInstanceOf(ForbiddenException.class)
-                .hasMessageContaining("no puede dar de alta");
-
-        verify(userRepository, never()).saveAndFlush(any());
-    }
+    // La única alta es la invitación; el reparto de roles se decide igual, en rolDeAlta.
 
     @Test
     @DisplayName("ni siquiera el SUPERADMIN puede crear otro SUPERADMIN: la llave viene del seed")
     void nadieCreaSuperadmin() {
         autenticar(usuario(Rol.SUPERADMIN));
 
-        assertThatThrownBy(() -> service.crear(crearRequest(Rol.SUPERADMIN)))
+        assertThatThrownBy(() -> service.invitar(invitarRequest(Rol.SUPERADMIN)))
                 .isInstanceOf(ForbiddenException.class);
 
         verify(userRepository, never()).saveAndFlush(any());
@@ -104,10 +78,10 @@ class UsuarioServiceJerarquiaTest {
     void permisoAntesQueValidacion() {
         autenticar(usuario(Rol.ADMIN));
 
-        assertThatThrownBy(() -> service.crear(crearRequest(Rol.ADMIN)))
+        assertThatThrownBy(() -> service.invitar(invitarRequest(Rol.ADMIN)))
                 .isInstanceOf(ForbiddenException.class);
 
-        verify(userRepository, never()).existsByEmailAndDeletedAtIsNull(anyString());
+        verify(userRepository, never()).findByEmail(anyString());
     }
 
     // --- Cambio de rol ----------------------------------------------------------------------
@@ -280,6 +254,39 @@ class UsuarioServiceJerarquiaTest {
     }
 
     @Test
+    @DisplayName("un ADMIN no puede restaurar a otro ADMIN")
+    void adminNoRestauraAdmin() {
+        Usuario objetivo = usuario(Rol.ADMIN);
+        objetivo.setDeletedAt(java.time.LocalDateTime.now());
+        registrar(objetivo);
+        autenticar(usuario(Rol.ADMIN));
+
+        assertThatThrownBy(() -> service.restaurar(objetivo.getId()))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("no puede restaurar");
+
+        assertThat(objetivo.getDeletedAt()).isNotNull();
+        verify(authApi, never()).enviarInvitacion(any(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("el SUPERADMIN sí restaura a un ADMIN dado de baja")
+    void superadminRestauraAdmin() {
+        Usuario objetivo = usuario(Rol.ADMIN);
+        objetivo.setDeletedAt(java.time.LocalDateTime.now());
+        registrar(objetivo);
+        autenticar(usuario(Rol.SUPERADMIN));
+        when(userRepository.saveAndFlush(any(Usuario.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var response = service.restaurar(objetivo.getId());
+
+        // Conserva su rol: la restauración devuelve el acceso, no lo redefine.
+        assertThat(response.getRol()).isEqualTo(Rol.ADMIN);
+        assertThat(objetivo.getDeletedAt()).isNull();
+        verify(authApi).enviarInvitacion(objetivo.getId(), objetivo.getEmail(), objetivo.getNombre());
+    }
+
+    @Test
     @DisplayName("un ADMIN no puede desbloquear a otro ADMIN")
     void adminNoDesbloqueaAdmin() {
         Usuario objetivo = registrar(usuario(Rol.ADMIN));
@@ -326,13 +333,12 @@ class UsuarioServiceJerarquiaTest {
         return request;
     }
 
-    private CrearUsuarioRequest crearRequest(Rol rol) {
-        var request = new CrearUsuarioRequest();
+    private InvitarUsuarioRequest invitarRequest(Rol rol) {
+        var request = new InvitarUsuarioRequest();
         request.setNombre("Nuevo");
         request.setApellido("Usuario");
         request.setEmail("nuevo@test.local");
         request.setUsername("nuevo");
-        request.setPassword("Password1!");
         request.setRol(rol);
         return request;
     }

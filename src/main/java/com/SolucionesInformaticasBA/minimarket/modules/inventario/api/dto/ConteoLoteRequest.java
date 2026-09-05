@@ -4,14 +4,16 @@ import java.util.UUID;
 
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
-import lombok.*;
+import lombok.Builder;
+import lombok.Data;
 
+/** Lo que se contó de un lote. Cero es un conteo válido: el lote se agotó. */
 @Data
 @Builder
-public class StockRequest {
+public class ConteoLoteRequest {
     @NotNull
-    private UUID idProducto;
+    private UUID idLote;
 
     @PositiveOrZero
-    private int cantidad;
+    private int cantidadReal;
 }

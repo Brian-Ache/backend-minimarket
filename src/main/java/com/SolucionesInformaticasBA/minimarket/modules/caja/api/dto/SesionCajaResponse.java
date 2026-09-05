@@ -14,4 +14,10 @@ public class SesionCajaResponse {
     private float saldoInicial;
     private String estado;
     private UUID idUsuarioApertura;
+
+    /**
+     * Diferencia entre lo contado al abrir y lo que había dejado el cierre anterior. Null si es
+     * el primer turno o si no hay cierre previo con ese dato; 0 cuando coincide.
+     */
+    private Float diferenciaApertura;
 }

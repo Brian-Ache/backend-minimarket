@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -12,7 +14,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.SolucionesInformaticasBA.minimarket.modules.auth.api.AuthApi;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
-import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.*;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.ActualizarUsuarioRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarPasswordRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.CambiarRolRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.InvitarUsuarioRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.dto.UsuarioResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.entity.Usuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.EstadoUsuario;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.enums.Rol;
@@ -24,116 +30,70 @@ import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundE
 
 import lombok.RequiredArgsConstructor;
 
+/**
+ * Cuentas del sistema: altas, estado y jerarquía de roles.
+ *
+ * <p>De auth solo conoce {@link AuthApi}; la entidad {@code Usuario} y su repositorio no salen
+ * de este paquete: los demás módulos entran por {@link UsuarioApi}.
+ *
+ * <p>Solo lectura por defecto: cada método que escribe lleva su propio {@code @Transactional}.
+ */
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class UsuarioService implements UsuarioApi {
+
+    /** Rol del alta que no pide ninguno: el de menos privilegio. */
+    private static final Rol ROL_POR_DEFECTO = Rol.EMPLEADO;
+
+    /** Tope del username derivado del email, para no pasarse de la columna. */
+    private static final int LARGO_MAXIMO_USERNAME = 40;
 
     private final UsuarioRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    /**
-     * Los dos módulos se necesitan mutuamente —auth resuelve credenciales contra usuarios, y
-     * usuarios le pide a auth los tokens y los mails—, y Spring rechaza el ciclo al arrancar.
-     *
-     * <p>Se corta acá y no del otro lado a propósito: auth usa a usuarios en su camino
-     * principal (validar un login), mientras que usuarios llama a auth solo para efectos
-     * posteriores al alta o a la baja. Diferir este lado es el que menos cambia el orden real
-     * de la inicialización.
-     */
+    
     @Lazy
     private final AuthApi authApi;
 
-    /**
-     * Alta de usuarios. Cada quien da de alta por debajo de su nivel: el SUPERADMIN crea ADMIN
-     * y EMPLEADO, el ADMIN solo EMPLEADO. El usuario queda habilitado de entrada porque lo crea
-     * alguien de confianza con su contraseña: no hay autorregistro ni verificación por email
-     * en el MVP.
-     */
-    @Override
-    @Transactional
-    public UsuarioResponse crear(CrearUsuarioRequest request) {
-        Rol rolNuevo = request.getRol() != null ? request.getRol() : Rol.EMPLEADO;
-        Usuario actor = usuarioAutenticado();
-
-        // Nadie manda sobre su propio nivel, así que esto también deja fuera la creación de
-        // otro SUPERADMIN: la llave maestra viene del seed, no de un endpoint.
-        if (!actor.getRol().mandaSobre(rolNuevo)) {
-            throw new ForbiddenException(
-                    "Un " + actor.getRol() + " no puede dar de alta a un " + rolNuevo);
-        }
-
-        if (userRepository.existsByEmailAndDeletedAtIsNull(request.getEmail())) {
-            throw new BadRequestException("El email ya está registrado");
-        }
-        if (userRepository.existsByUsernameAndDeletedAtIsNull(request.getUsername())) {
-            throw new BadRequestException("El nombre de usuario ya está en uso");
-        }
-
-        Usuario u = Usuario.builder()
-                .nombre(request.getNombre())
-                .apellido(request.getApellido())
-                .email(request.getEmail())
-                .username(request.getUsername())
-                .hashPassword(passwordEncoder.encode(request.getPassword()))
-                .rol(rolNuevo)
-                // Lo da de alta alguien de mayor jerarquía, con su contraseña, así que ya
-                // puede operar: no hay circuito de verificación por email en el MVP.
-                .estado(EstadoUsuario.ACTIVO)
-                .build();
-
-        // saveAndFlush: sin el flush, created_at/updated_at todavía no están en la entidad
-        // y la respuesta del alta saldría con esos campos en null.
-        return toUserResponse(userRepository.saveAndFlush(u));
-    }
+    // Alta
 
     /**
-     * Alta por invitación: crea la cuenta en estado PENDIENTE y le manda el mail a la persona
-     * para que defina su contraseña. Es el flujo pensado para el día a día — quien invita nunca
-     * conoce la contraseña del invitado, a diferencia de {@link #crear}.
-     *
-     * <p>La cuenta nace con una contraseña aleatoria que nadie sabe. La columna es NOT NULL y
-     * dejarla en un valor conocido (vacío, un default) sería una credencial válida esperando a
-     * que alguien la pruebe; con esto no hay contraseña que adivinar hasta que el invitado
-     * elija la suya.
+     * Única alta del sistema: la cuenta nace PENDIENTE y la persona define su contraseña desde
+     * el mail. No hay alta directa —quien invita nunca conoce la credencial del invitado— ni
+     * autorregistro: el SUPERADMIN sale del seed y de ahí para abajo cada uno invita a los de
+     * nivel menor.
      */
     @Override
     @Transactional
     public UsuarioResponse invitar(InvitarUsuarioRequest request) {
-        Rol rolNuevo = request.getRol() != null ? request.getRol() : Rol.EMPLEADO;
         Usuario actor = usuarioAutenticado();
+        Rol rolNuevo = rolDeAlta(actor, request.getRol());
 
-        if (!actor.getRol().mandaSobre(rolNuevo)) {
-            throw new ForbiddenException(
-                    "Un " + actor.getRol() + " no puede dar de alta a un " + rolNuevo);
-        }
-
-        if (userRepository.existsByEmailAndDeletedAtIsNull(request.getEmail())) {
-            throw new BadRequestException("El email ya está registrado");
-        }
-
-        String username = resolverUsername(request);
+        exigirEmailLibre(request.getEmail(), actor.getRol());
 
         Usuario u = Usuario.builder()
                 .nombre(request.getNombre())
                 .apellido(request.getApellido())
                 .email(request.getEmail())
-                .username(username)
+                .username(resolverUsername(request))
                 .hashPassword(passwordEncoder.encode(passwordInutilizable()))
                 .rol(rolNuevo)
                 .estado(EstadoUsuario.PENDIENTE)
                 .build();
 
+        // Sin el flush, created_at/updated_at saldrían en null en la respuesta.
         u = userRepository.saveAndFlush(u);
 
-        // Si el mail no sale, esto tira y la transacción se va abajo con el usuario: mejor que
-        // dejar una cuenta muerta que nadie puede activar y que ocupa el email y el username.
+        // Si el mail falla, la transacción se va abajo con el usuario: no queda una cuenta
+        // muerta ocupando el email y el username.
         authApi.enviarInvitacion(u.getId(), u.getEmail(), u.getNombre());
 
         return toUserResponse(u);
     }
 
     /**
-     * Reenvía la invitación de una cuenta que sigue PENDIENTE, con un token nuevo. El anterior
-     * queda invalidado. Sirve para el caso normal: el enlace venció, o el mail no llegó.
+     * Manda la invitación de nuevo con un token nuevo; el anterior queda invalidado. Para el
+     * caso normal: el enlace venció o el mail no llegó.
      */
     @Override
     @Transactional
@@ -149,61 +109,50 @@ public class UsuarioService implements UsuarioApi {
         authApi.enviarInvitacion(u.getId(), u.getEmail(), u.getNombre());
     }
 
-    /**
-     * Username pedido, o derivado de la parte local del email si no vino ninguno. Ante colisión
-     * agrega un sufijo numérico en vez de fallar: quien invita no tiene por qué saber qué
-     * nombres de usuario están tomados.
-     */
-    private String resolverUsername(InvitarUsuarioRequest request) {
-        if (request.getUsername() != null && !request.getUsername().isBlank()) {
-            String pedido = request.getUsername().trim();
-            if (userRepository.existsByUsernameAndDeletedAtIsNull(pedido)) {
-                throw new BadRequestException("El nombre de usuario ya está en uso");
-            }
-            return pedido;
-        }
-
-        String base = request.getEmail().split("@")[0]
-                .replaceAll("[^a-zA-Z0-9._-]", "")
-                .toLowerCase();
-
-        if (base.isBlank()) {
-            base = "usuario";
-        }
-        base = base.substring(0, Math.min(base.length(), 40));
-
-        String candidato = base;
-        int sufijo = 1;
-        while (userRepository.existsByUsernameAndDeletedAtIsNull(candidato)) {
-            candidato = base + ++sufijo;
-        }
-        return candidato;
-    }
-
-    /** Contraseña que nadie conoce, ni siquiera quien invita: se descarta apenas se hashea. */
-    private String passwordInutilizable() {
-        return UUID.randomUUID() + "-" + UUID.randomUUID();
-    }
+    // Consultas
 
     @Override
     public UsuarioResponse getById(UUID id) {
-        Usuario u = findActiveUser(id);
-        return toUserResponse(u);
+        return toUserResponse(findActiveUser(id));
     }
 
     @Override
     public UsuarioResponse getByEmail(String email) {
-        Usuario u = userRepository.findByEmailAndDeletedAtIsNull(email)
+        return userRepository.findByEmailAndDeletedAtIsNull(email)
+                .map(this::toUserResponse)
                 .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
-        return toUserResponse(u);
     }
 
     @Override
-    public List<UsuarioResponse> getAll() {
-        return userRepository.findAllByDeletedAtIsNull().stream()
-                .map(this::toUserResponse)
-                .toList();
+    public Page<UsuarioResponse> getAll(boolean incluirBajas, Pageable pageable) {
+        Page<Usuario> usuarios = incluirBajas
+                ? userRepository.findAll(pageable)
+                : userRepository.findAllByDeletedAtIsNull(pageable);
+
+        return usuarios.map(this::toUserResponse);
     }
+
+    @Override
+    public boolean existById(UUID id) {
+        return userRepository.existsByIdAndDeletedAtIsNull(id);
+    }
+
+    @Override
+    public boolean existsByEmail(String email) {
+        return userRepository.existsByEmailAndDeletedAtIsNull(email);
+    }
+
+    /**
+     * Rol con el que opera hoy. Lo lee el filtro JWT en cada request, así ve los cambios de rol
+     * y las bajas sin esperar a que expire el token.
+     */
+    @Override
+    public Optional<Rol> rolVigente(UUID id) {
+        return userRepository.findByIdAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO)
+                .map(Usuario::getRol);
+    }
+
+    // Datos, estado y rol
 
     @Override
     @Transactional
@@ -217,18 +166,14 @@ public class UsuarioService implements UsuarioApi {
             u.setApellido(request.getApellido());
         }
 
-        u = userRepository.save(u);
-        return toUserResponse(u);
+        return toUserResponse(userRepository.save(u));
     }
 
     /**
-     * Promueve o degrada a un usuario. Solo entre roles por debajo del propio: el SUPERADMIN
-     * mueve entre ADMIN y EMPLEADO, el ADMIN no puede fabricar otro ADMIN ni tocar a uno.
+     * Promueve o degrada, solo entre roles por debajo del propio.
      *
-     * <p>Corta las sesiones del usuario: el rol viaja en el JWT y el front decide qué mostrar
-     * con ese dato, así que tiene que volver a loguearse para recibir un token que diga la
-     * verdad. Sus permisos reales, eso sí, cambian en la request siguiente, porque el filtro
-     * lee el rol de la base y no del token.
+     * <p>Corta las sesiones porque el rol viaja en el JWT y el front decide con ese dato. Los
+     * permisos reales ya cambian en la request siguiente: el filtro lee el rol de la base.
      */
     @Override
     @Transactional
@@ -238,8 +183,7 @@ public class UsuarioService implements UsuarioApi {
 
         Rol rolNuevo = request.getRol();
 
-        // El rol nuevo también tiene que estar por debajo del actor: si no, un ADMIN se
-        // fabricaría un par —o un SUPERADMIN— y se saltearía la jerarquía por la ventana.
+        // El rol nuevo también va por debajo del actor: si no, un ADMIN se fabricaría un par.
         if (!actor.getRol().mandaSobre(rolNuevo)) {
             throw new ForbiddenException(
                     "Un " + actor.getRol() + " no puede asignar el rol " + rolNuevo);
@@ -249,16 +193,14 @@ public class UsuarioService implements UsuarioApi {
         }
 
         u.setRol(rolNuevo);
-        u = userRepository.save(u);
-        authApi.revokeAllSessions(id);
+        guardarYCortarSesiones(u);
 
         return toUserResponse(u);
     }
 
     /**
-     * Suspende el acceso sin borrar la cuenta: el usuario conserva su historial y puede
-     * reactivarse. Cortar las sesiones es parte del bloqueo, si no seguiría operando con el
-     * token que ya tenía en la mano.
+     * Suspende el acceso sin borrar la cuenta. Cortar las sesiones es parte del bloqueo: si no,
+     * seguiría operando con el token que ya tenía.
      */
     @Override
     @Transactional
@@ -271,8 +213,7 @@ public class UsuarioService implements UsuarioApi {
         }
 
         u.setEstado(EstadoUsuario.BLOQUEADO);
-        u = userRepository.save(u);
-        authApi.revokeAllSessions(id);
+        guardarYCortarSesiones(u);
 
         return toUserResponse(u);
     }
@@ -299,11 +240,46 @@ public class UsuarioService implements UsuarioApi {
         exigirMandoSobre(u, "eliminar", "eliminarte");
 
         u.setDeletedAt(LocalDateTime.now());
-        userRepository.save(u);
 
-        // Sin esto el usuario dado de baja seguiría operando con sus tokens vigentes.
-        authApi.revokeAllSessions(id);
+        // Si no, seguiría operando con sus tokens vigentes hasta que expiren.
+        guardarYCortarSesiones(u);
     }
+
+    /**
+     * Revive una cuenta dada de baja con una invitación nueva, como si se la diera de alta otra
+     * vez pero sobre su propia fila: así conserva su historial de ventas, compras y movimientos,
+     * que cuelgan de su id.
+     *
+     * <p>Vuelve PENDIENTE y con la contraseña anterior invalidada. Reactivar con la credencial
+     * vieja resucitaría una contraseña que puede llevar meses sin uso, y sin ninguna señal de
+     * que la persona siga controlando ese email; la invitación es esa señal.
+     *
+     * <p>No hace falta revisar el email ni el username: las unique keys no miran
+     * {@code deleted_at}, así que siguieron reservados durante toda la baja.
+     */
+    @Override
+    @Transactional
+    public UsuarioResponse restaurar(UUID id) {
+        Usuario u = buscarPorId(id);
+
+        if (u.getDeletedAt() == null) {
+            throw new BadRequestException("El usuario no está dado de baja");
+        }
+        exigirMandoSobre(u, "restaurar", "restaurarte");
+
+        u.setDeletedAt(null);
+        u.setEstado(EstadoUsuario.PENDIENTE);
+        u.setHashPassword(passwordEncoder.encode(passwordInutilizable()));
+        u = userRepository.saveAndFlush(u);
+
+        // Igual que en el alta: si el mail no sale, la restauración se va abajo con él y la
+        // cuenta queda dada de baja como estaba, en vez de revivir sin forma de entrar.
+        authApi.enviarInvitacion(u.getId(), u.getEmail(), u.getNombre());
+
+        return toUserResponse(u);
+    }
+
+    // Contraseñas
 
     @Override
     @Transactional
@@ -314,24 +290,40 @@ public class UsuarioService implements UsuarioApi {
             throw new BadRequestException("La contraseña actual no es correcta");
         }
 
-        u.setHashPassword(passwordEncoder.encode(request.getNuevoPass()));
-        userRepository.save(u);
+        cambiarPassword(u, request.getNuevoPass());
     }
 
     /**
-     * Se busca primero por email y solo después por username, en dos consultas separadas en
-     * lugar de un OR. Es a propósito: si alguien tuviera como username el email de otra
-     * persona, un OR devolvería dos filas y la consulta reventaría. Así la precedencia queda
-     * explícita —gana el email, que es la credencial principal— y el resultado nunca es
-     * ambiguo.
+     * Además de la contraseña, habilita la cuenta si todavía estaba pendiente: el token del
+     * reseteo viajó al email de la cuenta, que es la misma prueba de identidad que pide la
+     * invitación. Sin esto, quien resetea en lugar de aceptar la invitación se queda con una
+     * contraseña válida y sin poder entrar nunca, porque el login exige una cuenta activa.
      *
-     * <p>El estado se exige en la consulta: una cuenta pendiente o bloqueada no llega siquiera
-     * a que se le compare la contraseña, y el vacío que devuelve es indistinguible del de una
-     * cuenta inexistente o una contraseña mala.
+     * <p>Una cuenta bloqueada no se destraba por acá: ahí el impedimento no es la credencial.
+     */
+    @Override
+    @Transactional
+    public void restablecerPassword(UUID id, String password) {
+        Usuario u = findActiveUser(id);
+
+        if (u.getEstado() == EstadoUsuario.PENDIENTE) {
+            u.setEstado(EstadoUsuario.ACTIVO);
+        }
+
+        cambiarPassword(u, password);
+    }
+
+    /**
+     * Email primero y username después, en dos consultas y no un OR: si alguien tuviera como
+     * username el email de otro, un OR devolvería dos filas y reventaría. La segunda consulta
+     * solo sale si la primera vino vacía.
+     *
+     * <p>El estado va en la consulta: una cuenta pendiente o bloqueada ni llega a que se le
+     * compare la contraseña.
      */
     @Override
     public Optional<UsuarioResponse> verificarCredenciales(String identificador, String password) {
-        String id = identificador == null ? "" : identificador.trim();
+        String id = normalizar(identificador);
 
         return userRepository.findByEmailAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO)
                 .or(() -> userRepository.findByUsernameAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO))
@@ -342,12 +334,14 @@ public class UsuarioService implements UsuarioApi {
     /** Misma precedencia email→username que {@link #verificarCredenciales}, sin filtrar estado. */
     @Override
     public Optional<UsuarioResponse> buscarPorIdentificador(String identificador) {
-        String id = identificador == null ? "" : identificador.trim();
+        String id = normalizar(identificador);
 
         return userRepository.findByEmailAndDeletedAtIsNull(id)
                 .or(() -> userRepository.findByUsernameAndDeletedAtIsNull(id))
                 .map(this::toUserResponse);
     }
+
+    // Aceptación de una invitación
 
     @Override
     public UsuarioResponse getCuentaInvitada(UUID id) {
@@ -363,94 +357,44 @@ public class UsuarioService implements UsuarioApi {
             u.setUsername(usernameElegido(u, username.trim()));
         }
 
-        u.setHashPassword(passwordEncoder.encode(password));
         u.setEstado(EstadoUsuario.ACTIVO);
-        userRepository.save(u);
+        cambiarPassword(u, password);
     }
 
+    // Reglas de jerarquía
+
     /**
-     * La cuenta detrás de una invitación que todavía sirve.
-     *
-     * <p>No se apoya en {@link #findActiveUser} porque la cuenta borrada no es acá un 404 sino
-     * una invitación vencida: quien llega con el enlace no tiene por qué enterarse de si la
-     * cuenta existió alguna vez.
+     * Valida que el actor pueda repartir el rol pedido y lo devuelve; sin rol va
+     * {@link #ROL_POR_DEFECTO}. Como nadie manda sobre su propio nivel, esto también impide
+     * crear otro SUPERADMIN: esa llave viene del seed.
      */
-    private Usuario invitacionVigente(UUID id) {
-        Usuario u = userRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
+    private Rol rolDeAlta(Usuario actor, Rol rolPedido) {
+        Rol rolNuevo = rolPedido != null ? rolPedido : ROL_POR_DEFECTO;
 
-        if (u.getDeletedAt() != null || u.getEstado() == EstadoUsuario.BLOQUEADO) {
-            // Lo dieron de baja o lo bloquearon entre la invitación y la aceptación.
-            throw new BadRequestException("La invitación ya no es válida");
+        if (!actor.getRol().mandaSobre(rolNuevo)) {
+            throw new ForbiddenException(
+                    "Un " + actor.getRol() + " no puede dar de alta a un " + rolNuevo);
         }
-
-        return u;
+        return rolNuevo;
     }
 
     /**
-     * Valida el nombre de usuario que eligió el invitado.
+     * Exige que el actor esté por encima del objetivo en la jerarquía, y lo devuelve para no
+     * volver a buscarlo. Los {@code @PreAuthorize} del controller solo ven el rol de quien
+     * llama; sin esta regla un ADMIN podría borrar al SUPERADMIN o a otro ADMIN.
      *
-     * <p>Confirmar el que ya tiene —el derivado del email, que el formulario le muestra
-     * precargado— es el caso normal y tiene que pasar: por eso se compara antes de consultar,
-     * si no la cuenta se chocaría contra su propio registro y devolvería un 400 absurdo.
+     * <p>El caso propio se descarta contra el id del token, sin ir a la base. El rol del actor
+     * sí se relee: si acaban de degradarlo, su token todavía dice ADMIN.
      *
-     * <p>A diferencia del alta por invitación, acá una colisión no se desambigua con un sufijo:
-     * el invitado lo está eligiendo a mano y tiene que enterarse de que ese no le quedó.
-     */
-    private String usernameElegido(Usuario u, String username) {
-        if (username.equals(u.getUsername())) {
-            return username;
-        }
-        if (userRepository.existsByUsernameAndDeletedAtIsNull(username)) {
-            throw new BadRequestException("El nombre de usuario ya está en uso");
-        }
-        return username;
-    }
-
-    @Override
-    @Transactional
-    public void restablecerPassword(UUID id, String password) {
-        Usuario u = findActiveUser(id);
-
-        u.setHashPassword(passwordEncoder.encode(password));
-        userRepository.save(u);
-    }
-
-    public boolean existById(UUID id){
-        return userRepository.existsByIdAndDeletedAtIsNull(id);
-    }
-
-    public boolean existsByEmail(String email){
-        return userRepository.existsByEmailAndDeletedAtIsNull(email);
-    }
-
-    @Override
-    public Optional<Rol> rolVigente(UUID id) {
-        return userRepository.findByIdAndDeletedAtIsNullAndEstado(id, EstadoUsuario.ACTIVO)
-                .map(Usuario::getRol);
-    }
-
-    /**
-     * Exige que quien ejecuta la operación esté por encima del objetivo en la jerarquía, y
-     * devuelve al actor para no volver a buscarlo.
-     *
-     * <p>Los {@code @PreAuthorize} del controller solo miran el rol de quien llama; la decisión
-     * completa necesita también el rol del objetivo, y eso solo se sabe acá. Sin esta regla, un
-     * ADMIN podría bloquear o borrar al SUPERADMIN, o dos ADMIN podrían sacarse del sistema
-     * entre sí.
-     *
-     * <p>El rol del actor se relee de la base y no se toma del JWT: si acaban de degradarlo, su
-     * token todavía dice ADMIN y seguiría mandando hasta que expire.
-     *
-     * @param accion       infinitivo que encaja en "Un ADMIN no puede {accion} a un ADMIN"
-     * @param accionPropia infinitivo que encaja en "No podés {accionPropia} a vos mismo"
+     * @param accion       infinitivo para "Un ADMIN no puede {accion} a un ADMIN"
+     * @param accionPropia infinitivo para "No podés {accionPropia} a vos mismo"
      */
     private Usuario exigirMandoSobre(Usuario objetivo, String accion, String accionPropia) {
-        Usuario actor = usuarioAutenticado();
-
-        if (actor.getId().equals(objetivo.getId())) {
+        if (objetivo.getId().equals(SecurityUtils.getCurrentUserId())) {
             throw new BadRequestException("No podés " + accionPropia + " a vos mismo");
         }
+
+        Usuario actor = usuarioAutenticado();
         if (!actor.getRol().mandaSobre(objetivo.getRol())) {
             throw new ForbiddenException(
                     "Un " + actor.getRol() + " no puede " + accion + " a un " + objetivo.getRol());
@@ -458,20 +402,164 @@ public class UsuarioService implements UsuarioApi {
         return actor;
     }
 
-    /** El usuario detrás del JWT de la request en curso, tal como está hoy en la base. */
+    /** El usuario del JWT en curso, tal como está hoy en la base. */
     private Usuario usuarioAutenticado() {
         return findActiveUser(SecurityUtils.getCurrentUserId());
     }
 
+    // Unicidad de email y username
+
+    /**
+     * Mira también las cuentas dadas de baja. Las unique keys de la tabla no saben de
+     * {@code deleted_at}: si acá se ignorara la baja lógica, el alta pasaría la validación y
+     * reventaría recién en el INSERT, con un 409 genérico de integridad que no le dice al
+     * administrador qué pasó.
+     *
+     * <p>Los mensajes distinguen los tres casos porque cada uno tiene una salida distinta, y
+     * quien invita necesita saber cuál le toca: la cuenta pendiente se resuelve reenviándole la
+     * invitación, la dada de baja restaurándola, y la que está en pie no se resuelve.
+     */
+    private void exigirEmailLibre(String email, Rol rolActor) {
+        userRepository.findByEmail(email).ifPresent(u -> {
+            throw new BadRequestException(mensajeEmailOcupado(u, rolActor));
+        });
+    }
+
+    /**
+     * Qué pasa con ese email y, si corresponde, qué hacer al respecto.
+     *
+     * <p>La salida se ofrece solo cuando el actor manda sobre la cuenta que lo ocupa: reenviar
+     * y restaurar exigen esa misma jerarquía, así que proponerle a un ADMIN que restaure a otro
+     * ADMIN sería mandarlo a un 403. El hecho se informa igual —explica por qué el email está
+     * tomado y por qué la cuenta no aparece en el listado—; lo que se omite es la instrucción.
+     */
+    private String mensajeEmailOcupado(Usuario u, Rol rolActor) {
+        boolean puedeGestionarla = rolActor.mandaSobre(u.getRol());
+
+        if (u.getDeletedAt() != null) {
+            return "El email pertenece a una cuenta dada de baja"
+                    + (puedeGestionarla ? ": restaurala para volver a darle acceso" : "");
+        }
+        if (u.getEstado() == EstadoUsuario.PENDIENTE) {
+            return "Ese email ya tiene una invitación pendiente"
+                    + (puedeGestionarla ? ": reenviásela en lugar de invitarlo de nuevo" : "");
+        }
+        return "El email ya está registrado";
+    }
+
+    /** Incluye las cuentas dadas de baja, por lo mismo que {@link #exigirEmailLibre}. */
+    private void exigirUsernameLibre(String username) {
+        if (userRepository.existsByUsername(username)) {
+            throw new BadRequestException("El nombre de usuario ya está en uso");
+        }
+    }
+
+    /**
+     * Username pedido, o derivado del email si no vino ninguno. Ante colisión agrega un sufijo
+     * en vez de fallar: quien invita no sabe qué nombres están tomados.
+     */
+    private String resolverUsername(InvitarUsuarioRequest request) {
+        if (request.getUsername() != null && !request.getUsername().isBlank()) {
+            String pedido = request.getUsername().trim();
+            exigirUsernameLibre(pedido);
+            return pedido;
+        }
+
+        String base = request.getEmail().split("@")[0]
+                .replaceAll("[^a-zA-Z0-9._-]", "")
+                .toLowerCase();
+
+        if (base.isBlank()) {
+            base = "usuario";
+        }
+        base = base.substring(0, Math.min(base.length(), LARGO_MAXIMO_USERNAME));
+
+        // Cuenta las bajas lógicas como ocupadas: su username sigue en la unique key.
+        String candidato = base;
+        int sufijo = 1;
+        while (userRepository.existsByUsername(candidato)) {
+            candidato = base + ++sufijo;
+        }
+        return candidato;
+    }
+
+    /**
+     * Valida el username que eligió el invitado. Confirmar el que ya tiene es el caso normal,
+     * por eso se compara antes de consultar: si no, chocaría contra su propio registro.
+     *
+     * <p>Acá la colisión no se resuelve con un sufijo como en {@link #resolverUsername}: lo
+     * está eligiendo a mano y tiene que enterarse.
+     */
+    private String usernameElegido(Usuario u, String username) {
+        if (!username.equals(u.getUsername())) {
+            exigirUsernameLibre(username);
+        }
+        return username;
+    }
+
+    // Helpers
+
+    /**
+     * Contraseña que nadie conoce: se descarta apenas se hashea. La columna es NOT NULL y un
+     * valor conocido sería una credencial válida esperando a que la prueben.
+     */
+    private String passwordInutilizable() {
+        return UUID.randomUUID() + "-" + UUID.randomUUID();
+    }
+
+    private void cambiarPassword(Usuario u, String password) {
+        u.setHashPassword(passwordEncoder.encode(password));
+        userRepository.save(u);
+    }
+
+    /**
+     * Guarda y cierra las sesiones abiertas. Van juntos en todo lo que cambia qué puede hacer
+     * la cuenta —baja, bloqueo, cambio de rol—: el token viejo dejaría en pie el permiso que se
+     * acaba de sacar.
+     */
+    private void guardarYCortarSesiones(Usuario u) {
+        userRepository.save(u);
+        authApi.revokeAllSessions(u.getId());
+    }
+
+    /**
+     * La cuenta de una invitación que todavía sirve. No usa {@link #findActiveUser} porque acá
+     * una cuenta borrada no es un 404 sino una invitación vencida: quien llega con el enlace no
+     * tiene por qué saber si existió.
+     *
+     * <p>Exige que siga PENDIENTE, y no solo que no esté dada de baja ni bloqueada: la
+     * invitación existe para cerrar un alta abierta. Una cuenta que ya se activó por otro
+     * camino —{@link #restablecerPassword}— dejaría, si no, un enlace vivo capaz de cambiarle
+     * la contraseña sin conocer la actual durante las horas que le queden de validez.
+     */
+    private Usuario invitacionVigente(UUID id) {
+        Usuario u = buscarPorId(id);
+
+        if (u.getDeletedAt() != null || u.getEstado() != EstadoUsuario.PENDIENTE) {
+            // Lo dieron de baja, lo bloquearon o la cuenta ya se activó entre medio.
+            throw new BadRequestException("La invitación ya no es válida");
+        }
+
+        return u;
+    }
+
     private Usuario findActiveUser(UUID id) {
-        Usuario u = userRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
+        Usuario u = buscarPorId(id);
 
         if (u.getDeletedAt() != null) {
             throw new ResourceNotFoundException("Usuario no encontrado");
         }
 
         return u;
+    }
+
+    private Usuario buscarPorId(UUID id) {
+        return userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
+    }
+
+    private static String normalizar(String identificador) {
+        return identificador == null ? "" : identificador.trim();
     }
 
     private UsuarioResponse toUserResponse(Usuario u) {
@@ -485,6 +573,7 @@ public class UsuarioService implements UsuarioApi {
                 .estado(u.getEstado())
                 .createdAt(u.getCreatedAt())
                 .updatedAt(u.getUpdatedAt())
+                .deletedAt(u.getDeletedAt())
                 .build();
     }
 }
