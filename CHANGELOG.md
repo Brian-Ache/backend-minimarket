@@ -551,7 +551,7 @@ detenida; ver *Base de datos*. Una instalación nueva no las necesita.
 
 ## 0.3.0 (2026-08-21)
 
-Primeros puntos de [`docs/cambios.md`](docs/cambios.md). El sistema se despliega **una instancia
+Primeros puntos de [`docs/historico/0.2.0-requerimientos.md`](docs/historico/0.2.0-requerimientos.md). El sistema se despliega **una instancia
 por comercio**, así que no hay multi-inquilino: el aislamiento entre comercios lo da el
 despliegue, no el modelo de datos.
 
@@ -570,7 +570,7 @@ despliegue, no el modelo de datos.
     apoderarse de una sesión de superadmin alcanzaría para fabricarse otro.
   - Las reglas por URL no cambiaron: el filtro JWT publica las authorities del rol **y las de
     los roles inferiores**, así que los `hasRole('ADMIN')` existentes ya incluyen al SUPERADMIN.
-- **Alta por invitación con SMTP**, el flujo que pedía `docs/cambios.md`:
+- **Alta por invitación con SMTP**, el flujo que pedían los requerimientos de la 0.2.0:
   - `POST /api/users/v1/invitaciones` — el administrador carga nombre, apellido, email y rol; la
     cuenta nace `PENDIENTE` con una contraseña aleatoria que nadie conoce, y a la persona le
     llega un mail para definir la suya. `username` es opcional: si no viene se deriva del email.
@@ -624,17 +624,17 @@ despliegue, no el modelo de datos.
 - Para una instalación nueva usar `00_init_limpio.sql` y, opcionalmente, `01_seed.sql`. El init
   contiene el esquema final de esta versión y no requiere ejecutar migraciones adicionales.
 
-### Pendiente de `docs/cambios.md`
+### Pendiente de los requerimientos de la 0.2.0
 
 - Permisos configurables por empleado — descartado por ahora: todas las funciones activas.
 
-Con esto queda cubierto todo `docs/cambios.md` salvo ese último punto.
+Con esto queda cubierto todo el documento de requerimientos salvo ese último punto.
 
 ## 0.2.0 (2026-08-18)
 
 Relevamiento y corrección de 25 bugs del MVP. Todos los defectos fueron reproducidos contra la
 API real antes de corregirlos, y cada corrección verificada del mismo modo. El detalle completo
-—causa, solución y evidencia de cada uno— está en [`docs/plan-correccion-bugs.md`](docs/plan-correccion-bugs.md).
+—causa, solución y evidencia de cada uno— está en [`docs/historico/0.4.0-correccion-de-bugs.md`](docs/historico/0.4.0-correccion-de-bugs.md).
 
 ### Cambios que rompen compatibilidad
 

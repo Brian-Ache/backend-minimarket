@@ -228,6 +228,27 @@ una venta o a una compra según el origen), por eso no llevan FK.
 - **El corte de caja se congela al cerrarlo.** Es un documento contable: se guarda como quedó y
   no se recalcula.
 
+### Concurrencia
+
+Todo lo que lee una cantidad para después reescribirla toma el lock de la fila
+(`SELECT ... FOR UPDATE`): sin eso, dos operaciones simultáneas sobre el mismo producto parten
+del mismo valor leído, la segunda pisa a la primera y se vende de más sin que quede registrado.
+Son tres puertas y una sola por recurso:
+
+| Recurso | Consulta |
+|---|---|
+| Fila de `stock` de un producto | `StockRepository.findByIdProductoParaActualizar` |
+| Lotes de un producto | `LoteRepository.findParaDescuentoFefo` |
+| Sesión de caja abierta | `SesionCajaRepository.findAbiertaParaActualizar` |
+
+`findParaDescuentoFefo` es la **única** puerta para bloquear los lotes de un producto, y su orden
+—`fechaVencimiento ASC, id ASC`— es parte del contrato: todas las transacciones los toman en esa
+secuencia, así que no puede haber ciclo entre ellas. Las operaciones que recorren lotes sueltos
+—la reversa de una venta o de una compra, el ajuste manual por lote— hacen antes una pasada que
+los bloquea a todos por esta consulta, en vez de tomarlos uno por uno en el orden en que
+aparecen. Cuando además hay que bloquear stock y lotes del mismo producto, el orden es siempre
+stock primero.
+
 ## Flujos principales
 
 **Venta.** Se crea con sus líneas y descuenta stock en el momento (FEFO por lote si
@@ -265,6 +286,8 @@ Todas las rutas son `/{recurso}/v1/...` y requieren `Authorization: Bearer <toke
 
 El detalle de cada endpoint —request, response y errores— está en
 [`docs/api-endpoints.md`](docs/api-endpoints.md). Swagger UI en `/swagger-ui/index.html`.
+
+El resto de la documentación está indexado en [`docs/README.md`](docs/README.md).
 
 ### Manejo de errores
 
