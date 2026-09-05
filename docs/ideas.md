@@ -23,7 +23,8 @@ No hace falta que propongas la solución: muchas veces el mejor camino aparece
 recién cuando miramos el código.
 -->
 
-- 
+- preparar github action para despliegue automatico en el vps (configurar nginx)
+- preparar para crear imagen docker (de la mano con despliegue automatico y docker hub)
 
 ---
 
