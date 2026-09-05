@@ -48,6 +48,11 @@ inventario.
   regla es por proveedor y por tipo: dos proveedores distintos pueden emitir el mismo número, y
   un mismo proveedor puede tener un remito y una factura con el mismo número porque cada tipo
   lleva su propia numeración. Ver *Base de datos*.
+- **Los tres listados de ventas devuelven un `Page`.** `GET /api/ventas/v1`,
+  `/api/ventas/v1/usuario/{idUsuario}` y `/api/ventas/v1/fecha` aceptan `?page=` y `?size=`
+  (1 a 100) y ya no devuelven una lista. El primero traía **todas** las ventas de la historia
+  del comercio con todos sus detalles en cada request, sobre la tabla que más rápido crece del
+  sistema.
 - **`DELETE /api/compras/v1/{id}` ya no lleva el header `idUsuario`.** Era el último endpoint que
   lo exigía, contra lo que la documentación viene diciendo desde hace dos versiones. Si el front
   lo sigue mandando, se ignora; si antes lo omitía, dejaba de responder `500`.
@@ -189,6 +194,13 @@ inventario.
   esperando un rango semiabierto —que es como está escrito el otro query del mismo repositorio y
   como funciona ventas—. Una compra registrada exactamente a las `00:00:00.000000` del día
   siguiente entraba en el reporte del día anterior.
+- **El resumen de ventas de un turno se fechaba con el día en que se lo consultaba.**
+  `GET /api/ventas/v1/resumen/sesion/{idSesion}` usaba la fecha de hoy en lugar de la del turno,
+  así que un turno que abre a las 22:00 y cierra a las 02:00 salía fechado al día siguiente, y
+  consultar hoy el turno de ayer devolvía la fecha equivocada. Es el endpoint que se mira al
+  cerrar caja. Ahora sale de la apertura de la sesión.
+- **El listado de ventas levantaba también las anuladas para descartarlas en memoria**, con un
+  `findAll()` que ignoraba el índice de `deleted_at`.
 - **`tipoComprobante` se guardaba tal cual venía y el filtro comparaba por igualdad exacta**, así
   que `"factura"`, `"Factura"` y `"FACTURA "` eran tres tipos distintos: una compra cargada con
   uno no aparecía al filtrar por otro. Ahora se recorta y se guarda en mayúsculas, y la búsqueda
