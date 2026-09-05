@@ -53,6 +53,16 @@ inventario.
   (1 a 100) y ya no devuelven una lista. El primero traía **todas** las ventas de la historia
   del comercio con todos sus detalles en cada request, sobre la tabla que más rápido crece del
   sistema.
+- **Un `EMPLEADO` solo ve sus propias ventas.** Vale para los tres listados y para
+  `GET /api/ventas/v1/{id}`, que responde `403` con la venta de otro. `GET /api/ventas/v1`
+  devuelve ahora cosas distintas según quién llame: todas para un `ADMIN`, las propias para el
+  resto. Antes cualquier autenticado veía las de todos y podía listar las de un compañero por
+  id de usuario.
+- **`montoRecibido` dejó de ser obligatorio al cobrar, salvo en efectivo.** Con `TARJETA` o
+  `TRANSFERENCIA` se ignora y la venta queda con el campo en `null`: antes había que mandar un
+  número —normalmente el total exacto— para que el cobro pasara, y ese número quedaba guardado
+  como si fuera la plata que entregó el cliente. En efectivo sigue siendo obligatorio y tiene
+  que alcanzar para el total.
 - **`DELETE /api/compras/v1/{id}` ya no lleva el header `idUsuario`.** Era el último endpoint que
   lo exigía, contra lo que la documentación viene diciendo desde hace dos versiones. Si el front
   lo sigue mandando, se ignora; si antes lo omitía, dejaba de responder `500`.
@@ -199,6 +209,13 @@ inventario.
   así que un turno que abre a las 22:00 y cierra a las 02:00 salía fechado al día siguiente, y
   consultar hoy el turno de ayer devolvía la fecha equivocada. Es el endpoint que se mira al
   cerrar caja. Ahora sale de la apertura de la sesión.
+- **Un rango de fechas invertido devolvía un listado vacío en silencio**, y quien preguntaba se
+  quedaba pensando que no hubo ventas en vez de que se equivocó de fechas. Ahora es `400`. La
+  amplitud del rango no se acota: los listados paginan, así que un rango grande no trae más
+  filas por request.
+- **Faltar un query param obligatorio respondía `500`.** `GET /api/ventas/v1/fecha` sin fechas
+  caía en el catch-all; ahora es `400` y dice cuál falta. Alcanza a todos los endpoints con
+  parámetros obligatorios.
 - **El listado de ventas levantaba también las anuladas para descartarlas en memoria**, con un
   `findAll()` que ignoraba el índice de `deleted_at`.
 - **`tipoComprobante` se guardaba tal cual venía y el filtro comparaba por igualdad exacta**, así
@@ -240,6 +257,16 @@ inventario.
   incluidas las filas dadas de baja, ignorando el índice de `deleted_at`.
 - **El tamaño de página del catálogo tiene techo** (100). Sin límite, un solo pedido podía exigir
   un trabajo arbitrariamente grande.
+
+### Configuración
+
+- **`ventas.reserva-stock.minutos`** (default 120) — cuánto tiempo una venta sin cobrar retiene
+  el stock que descontó al armarse. El descuento ocurre al armar la venta y no al cobrarla, así
+  que un ticket que nadie cerró dejaba mercadería reservada para siempre, invisible en el stock
+  disponible y sin nada que lo mostrara. Pasado ese plazo un barrido la anula y devuelve la
+  mercadería, con su movimiento de reversa. En **`0`** queda apagado, que es el comportamiento
+  anterior.
+- **`ventas.reserva-stock.revision-ms`** (default 300000) — cada cuánto corre ese barrido.
 
 ### Base de datos
 
