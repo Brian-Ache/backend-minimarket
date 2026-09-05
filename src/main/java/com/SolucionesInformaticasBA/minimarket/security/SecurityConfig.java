@@ -69,6 +69,7 @@ public class SecurityConfig {
                         // operativo, así que van con el resto de lo sensible. Aumentar y
                         // disminuir siguen abiertos: son el movimiento normal del día.
                         .requestMatchers(HttpMethod.POST, "/api/inventario/v1/controlar").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/inventario/v1/lotes/ajustar").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/inventario/v1/stock/**").hasRole("ADMIN")
 
                         // Anular ventas y compras es una operación sensible

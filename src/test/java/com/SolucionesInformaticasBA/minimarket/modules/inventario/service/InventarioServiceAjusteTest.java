@@ -66,7 +66,7 @@ class InventarioServiceAjusteTest {
     }
 
     @Test
-    @DisplayName("un producto que maneja lotes no se ajusta por stock")
+    @DisplayName("un producto que maneja lotes no se ajusta por stock, y el error dice por dónde sí")
     void ajusteDeProductoConLotesEsBadRequest() {
         when(usuarioApi.existById(ID_USUARIO)).thenReturn(true);
         when(productosApi.getById(ID_PRODUCTO)).thenReturn(producto(true));
@@ -74,7 +74,8 @@ class InventarioServiceAjusteTest {
         BadRequestException ex = assertThrows(BadRequestException.class,
                 () -> inventarioService.controlarStock(ID_USUARIO, ajuste(5)));
 
-        assertEquals("El producto maneja lotes: su existencia se ajusta cargando o descargando lotes",
+        assertEquals("El producto maneja lotes: su existencia se ajusta por lote, "
+                + "con POST /api/inventario/v1/lotes/ajustar",
                 ex.getMessage());
         verify(stockRepository, never()).save(any());
         verify(movimientoStockRepository, never()).save(any());

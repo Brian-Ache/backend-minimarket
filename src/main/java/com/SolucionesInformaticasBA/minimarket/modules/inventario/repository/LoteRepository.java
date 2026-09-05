@@ -1,10 +1,14 @@
 package com.SolucionesInformaticasBA.minimarket.modules.inventario.repository;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -34,6 +38,10 @@ public interface LoteRepository extends JpaRepository<Lote,UUID>{
      * las dos sobre la misma cantidad leída y el lote terminaba con más unidades de las que
      * realmente quedaban. Exige transacción abierta.
      *
+     * <p>El orden es <b>FEFO</b> —first expired, first out—, que no es lo mismo que FIFO: se
+     * consume primero el lote que vence antes, no el que entró antes. En un minimarket es lo
+     * que corresponde, porque lo que hay que sacar de la góndola es lo que está por vencerse.
+     *
      * <p>Es la <b>única</b> puerta para bloquear los lotes de un producto, y por eso el orden
      * es parte del contrato: el desempate por id evita que dos lotes con el mismo vencimiento
      * se tomen en orden distinto según la consulta. Todas las transacciones bloquean los lotes
@@ -42,7 +50,33 @@ public interface LoteRepository extends JpaRepository<Lote,UUID>{
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT l FROM Lote l WHERE l.idProducto = :idProducto AND l.deletedAt IS NULL"
         + " ORDER BY l.fechaVencimiento ASC, l.id ASC")
-    List<Lote> findParaDescuentoFifo(@Param("idProducto") UUID idProducto);
+    List<Lote> findParaDescuentoFefo(@Param("idProducto") UUID idProducto);
+
+    /**
+     * Lotes del producto que tiene sentido ofrecer para un conteo manual: los que hoy siguen
+     * en la góndola. Sin lock y en el mismo orden que el FEFO, porque es solo lectura para
+     * armar la pantalla.
+     *
+     * <p>Quedan afuera los vencidos —lo que corresponde ahí es una merma, no un ajuste de
+     * conteo— y los que están en cero desde hace rato. Lo segundo sale de {@code updatedAt} y
+     * no de los movimientos del lote: la cantidad es lo único que se reescribe de un lote una
+     * vez creado, así que el timestamp de la fila ya es la fecha en que se agotó, y evita
+     * agrupar movimientos_stock por lote cada vez que se abre la pantalla.
+     *
+     * @param hoy fecha contra la que se mide el vencimiento
+     * @param agotadoDesde momento antes del cual un lote en cero se considera muerto
+     */
+    @Query("""
+            SELECT l FROM Lote l
+             WHERE l.idProducto = :idProducto
+               AND l.deletedAt IS NULL
+               AND (l.fechaVencimiento IS NULL OR l.fechaVencimiento >= :hoy)
+               AND (l.cantidad > 0 OR l.updatedAt >= :agotadoDesde)
+             ORDER BY l.fechaVencimiento ASC, l.id ASC
+            """)
+    List<Lote> findAjustables(@Param("idProducto") UUID idProducto,
+                              @Param("hoy") LocalDate hoy,
+                              @Param("agotadoDesde") LocalDateTime agotadoDesde);
 
     /** Un lote con el lock de la fila tomado, para revertir una venta o una compra. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
@@ -57,4 +91,24 @@ public interface LoteRepository extends JpaRepository<Lote,UUID>{
              GROUP BY l.idProducto
             """)
     List<Object[]> sumCantidadAgrupadaPorProducto();
+
+    /** Igual que la anterior, acotada a los productos pedidos: es la que usa una página. */
+    @Query("""
+            SELECT l.idProducto, SUM(l.cantidad) FROM Lote l
+             WHERE l.deletedAt IS NULL
+               AND l.idProducto IN :ids
+             GROUP BY l.idProducto
+            """)
+    List<Object[]> sumCantidadAgrupadaDeProductos(@Param("ids") Collection<UUID> ids);
+
+    Page<Lote> findAllByDeletedAtIsNull(Pageable pageable);
+
+    Page<Lote> findByFechaVencimientoBeforeAndDeletedAtIsNull(LocalDate fecha, Pageable pageable);
+
+    Page<Lote> findByFechaVencimientoBetweenAndDeletedAtIsNull(LocalDate inicio, LocalDate fin,
+                                                               Pageable pageable);
+
+    Page<Lote> findByFechaVencimientoAfterAndDeletedAtIsNull(LocalDate fecha, Pageable pageable);
+
+    Page<Lote> findByFechaVencimientoIsNullAndDeletedAtIsNull(Pageable pageable);
 }

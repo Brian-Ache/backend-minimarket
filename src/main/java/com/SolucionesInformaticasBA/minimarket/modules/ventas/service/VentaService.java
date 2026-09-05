@@ -115,7 +115,7 @@ public class VentaService implements VentasApi {
                     int cantidadRestante = d.getCantidad();
                     // Con lock de fila: sin él, dos ventas simultáneas del mismo producto
                     // descontaban las dos sobre la misma cantidad leída y se vendía de más.
-                    List<Lote> lotes = loteRepository.findParaDescuentoFifo(producto.getId());
+                    List<Lote> lotes = loteRepository.findParaDescuentoFefo(producto.getId());
                     for (Lote lote : lotes) {
                         if (cantidadRestante <= 0) break;
                         if (lote.getCantidad() <= 0) continue;
@@ -130,7 +130,7 @@ public class VentaService implements VentasApi {
                             .idLote(lote.getId())
                             .cantidad(-descontar)
                             .tipo(TipoMovimiento.VENTA)
-                            .motivo("Venta realizada (FIFO)")
+                            .motivo("Venta realizada (FEFO)")
                             .idUsuario(idUsuario)
                             .idReferencia(venta.getId())
                             .build();
@@ -305,7 +305,7 @@ public class VentaService implements VentasApi {
     /**
      * Devuelve al stock lo que descontó la venta, apoyándose en los movimientos que la
      * referencian. Trabajar sobre los movimientos —y no sobre los detalles— es lo que permite
-     * reponer cada lote exactamente en la cantidad de la que se sacó cuando el FIFO repartió
+     * reponer cada lote exactamente en la cantidad de la que se sacó cuando el FEFO repartió
      * una línea entre varios lotes.
      *
      * <p>Los movimientos originales no se borran: la reversa se registra como un movimiento
@@ -317,8 +317,8 @@ public class VentaService implements VentasApi {
                 venta.getId(), TipoMovimiento.VENTA));
 
         // Mismo orden de bloqueo que la venta que se está anulando: por producto ascendente y,
-        // dentro de cada producto, los lotes en el orden del FIFO (que es el que impone
-        // findParaDescuentoFifo, ver reservarLotes). Sin esto, una anulación y una venta del
+        // dentro de cada producto, los lotes en el orden del FEFO (que es el que impone
+        // findParaDescuentoFefo, ver reservarLotes). Sin esto, una anulación y una venta del
         // mismo producto podían tomarse los lotes en orden cruzado y trabarse entre sí.
         movimientos.sort(Comparator.comparing(MovimientoStock::getIdProducto,
                 Comparator.nullsLast(Comparator.naturalOrder())));
@@ -377,7 +377,7 @@ public class VentaService implements VentasApi {
 
     /**
      * Toma por adelantado el lock de los lotes de cada producto involucrado, en el orden del
-     * FIFO. La reversa recorre movimientos, o sea un lote suelto por vez y en el orden en que
+     * FEFO. La reversa recorre movimientos, o sea un lote suelto por vez y en el orden en que
      * se vendieron; sin esta pasada previa bloquearía los lotes de un producto en un orden
      * distinto al que usa el resto del sistema, que es justo lo que abre el ciclo.
      */
@@ -386,7 +386,7 @@ public class VentaService implements VentasApi {
             .filter(m -> m.getIdLote() != null)
             .map(MovimientoStock::getIdProducto)
             .distinct()
-            .forEach(loteRepository::findParaDescuentoFifo);
+            .forEach(loteRepository::findParaDescuentoFefo);
     }
 
     @Override
