@@ -217,6 +217,15 @@ inventario.
   que dejó el anterior, la misma plata se contaba una vez por turno. Ahora el día arranca con el
   primer turno y los retiros de cada cierre salen como movimiento, así que el día cierra con lo
   que efectivamente quedó en la caja.
+- **El origen de un movimiento de caja era un `String` suelto que viajaba entre tres módulos.**
+  El resumen clasificaba comparando por igualdad exacta, así que un `"Venta"` mal tipeado
+  compilaba, pasaba la validación de Java y quedaba fuera de todas las categorías del arqueo
+  aunque sí sumara al saldo esperado. Ahora es un enum y el compilador señala cualquier valor
+  que no exista. La columna guarda los mismos nombres, así que no hace falta migrar nada.
+- **Los movimientos automáticos aceptaban cualquier id de turno.** Ventas y compras siempre
+  pasan el de la sesión abierta, pero la API no lo validaba: bastaba equivocarse para imputarle
+  plata a un turno ya cerrado y correrle el arqueo a un corte firmado. Ahora responde `400` si
+  el turno está cerrado y `404` si no existe.
 - **De la caja podía salir plata que no estaba.** Una salida manual no miraba el saldo del
   turno: se podían sacar $50.000 de una caja con $3.000 y el arqueo informaba un saldo esperado
   negativo, que físicamente no significa nada.
