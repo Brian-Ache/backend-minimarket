@@ -20,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
@@ -115,6 +116,23 @@ class VentaServiceCobroTest {
         assertEquals(500f, response.getCambio());
         assertEquals(2000f, response.getVenta().getMontoRecibido());
         verify(cajaApi).registrarEntradaAutomatica(ID_SESION, ID_USUARIO, 1500f, "VENTA", ID_VENTA);
+    }
+
+    @Test
+    @DisplayName("un rango de fechas invertido es 400 y no un listado vacío")
+    void rangoInvertidoEsBadRequest() {
+        LocalDateTime desde = LocalDateTime.now();
+        LocalDateTime hasta = desde.minusDays(1);
+
+        assertThrows(BadRequestException.class,
+                () -> ventaService.getByFecha(null, desde, hasta, PageRequest.of(0, 20)));
+        assertThrows(BadRequestException.class,
+                () -> ventaService.getByFechaCobradas(desde, hasta));
+        // Un rango de amplitud cero tampoco devuelve nada: también se avisa.
+        assertThrows(BadRequestException.class,
+                () -> ventaService.getByFecha(null, desde, desde, PageRequest.of(0, 20)));
+
+        verify(ventaRepository, never()).findEnRango(any(), any(), any(), any());
     }
 
     private void prepararCobro() {

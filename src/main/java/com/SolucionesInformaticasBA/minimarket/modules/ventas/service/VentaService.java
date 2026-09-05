@@ -221,14 +221,29 @@ public class VentaService implements VentasApi {
 
     @Override
     public List<VentaResponse> getByFechaCobradas(LocalDateTime desde, LocalDateTime hasta) {
+        validarRango(desde, hasta);
         return toVentaResponseList(ventaRepository.findCobradasEnRango(desde, hasta));
     }
 
     @Override
     public Page<VentaResponse> getByFecha(UUID idUsuario, LocalDateTime desde, LocalDateTime hasta,
                                           Pageable pageable) {
+        validarRango(desde, hasta);
         return toVentaResponsePage(
             ventaRepository.findEnRango(idUsuario, desde, hasta, pageable), pageable);
+    }
+
+    /**
+     * El rango es semiabierto, así que desde tiene que ser anterior a hasta: invertidos, o
+     * iguales, la consulta no devuelve nada y el que pregunta se queda pensando que no hubo
+     * ventas en vez de que se equivocó de fechas. La amplitud no se acota: los listados
+     * paginan, así que un rango grande no trae más filas por request.
+     */
+    private void validarRango(LocalDateTime desde, LocalDateTime hasta) {
+        if (!desde.isBefore(hasta)) {
+            throw new BadRequestException(
+                "El rango de fechas es inválido: 'desde' tiene que ser anterior a 'hasta'");
+        }
     }
 
     /**

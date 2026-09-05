@@ -909,6 +909,9 @@ Filtra por rango de fechas. El rango es **semiabierto**: incluye `desde` y exclu
 
 **Response `200`:** `Page<VentaResponse>`
 
+**Errores `400`:** falta `desde` o `hasta` · `desde` no es anterior a `hasta` —invertidas, o
+iguales, la consulta no devolvería nada y parecería que no hubo ventas
+
 ---
 
 ### `DELETE /api/ventas/v1/{id}`
