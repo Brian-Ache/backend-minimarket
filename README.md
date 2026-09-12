@@ -52,6 +52,44 @@ Queda en `http://localhost:8080`, con Swagger UI en `/swagger-ui/index.html`.
 > log con el enlace de invitación o de reseteo incluido, que es lo único que se necesita para
 > completar esos flujos en desarrollo.
 
+## Levantarlo con Docker
+
+La alternativa a los tres pasos de arriba: `compose.yaml` levanta la API y su MySQL juntos, sin
+instalar nada más que Docker.
+
+```bash
+cp .env.example .env    # completar JWT_SECRET y DB_PASSWORD
+docker compose up --build
+```
+
+Compose lee el `.env` del directorio **solo**, así que acá no hace falta el `set -a; source .env`.
+Si falta alguna de las dos variables obligatorias, falla antes de construir nada y dice cuál.
+
+La primera vez, MySQL corre `00_init_limpio.sql` y `01_seed.sql` desde el volumen y queda con el
+esquema y los usuarios de desarrollo. **Esos scripts no vuelven a correr**: el `docker-entrypoint`
+solo los aplica con el volumen vacío. Para rehacer la base desde cero:
+
+```bash
+docker compose down -v && docker compose up --build
+```
+
+Tres cosas que el compose resuelve y conviene saber que están ahí:
+
+- **La imagen no migra la base.** Arranca con `JPA_DDL_AUTO=none` y espera el esquema ya aplicado;
+  mientras no exista Flyway, las migraciones de `script/database/` se corren a mano y con la
+  aplicación detenida. El contenedor no lo hace solo y no va a avisar: una columna que falta
+  aparece como un error de Hibernate en el primer request que la toca.
+- **El charset.** `docker/mysql/utf8mb4.cnf` fuerza `utf8mb4` en el cliente del contenedor. Sin
+  eso los scripts de inicialización entran doble-codificados y la categoría "Almacén" queda
+  guardada como `Almacén`, con las columnas ya en `utf8mb4` y sin ningún error a la vista.
+- **La zona horaria.** El contenedor corre en `America/Argentina/Buenos_Aires`, no en UTC. Un
+  punto de venta que fecha sus ventas, sus movimientos de caja y sus cortes tres horas adelantados
+  no sirve. Se cambia con `TZ` en el `.env`.
+
+> **`compose.yaml` no es el archivo de producción.** Siembra usuarios con contraseñas conocidas y
+> publica el puerto de MySQL. El despliegue al VPS usa su propio compose, que baja la imagen
+> publicada en vez de construirla.
+
 ## Tests
 
 ```bash
@@ -87,6 +125,7 @@ src/main/java/…/minimarket/
 └── modules/       auth, usuarios, categorias, proveedores, productos,
                    inventario, ventas, compras, caja, reportes
 script/database/   esquema, seeds y migraciones numeradas
+docker/mysql/      configuración del MySQL del compose
 docs/              documentación (ver docs/README.md)
 ```
 

@@ -1,0 +1,16 @@
+# Lo que no tiene que entrar al contexto de build. target/ es lo más importante: son cientos
+# de megas de clases compiladas en la máquina de quien construye, que además pisarían el jar
+# que arma la etapa de build.
+target/
+.git/
+.github/
+.env
+
+# Documentación y andamiaje que no participan del build.
+docs/
+script/
+*.md
+.claude/
+.vscode/
+.idea/
+.mvn/wrapper/maven-wrapper.jar
