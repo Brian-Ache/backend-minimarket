@@ -62,6 +62,21 @@ Queda en `http://localhost:8080`, con Swagger UI en `/swagger-ui/index.html`.
 que necesita la base levantada; si no está, falla con *Communications link failure* y el resto
 pasa igual.
 
+Para correr solo lo que no necesita base —que es lo que hace el CI—:
+
+```bash
+./mvnw -B verify -DexcludedGroups=integracion
+```
+
+Todo test que necesite MySQL va marcado con `@Tag("integracion")`.
+
+## CI
+
+`.github/workflows/ci.yml` corre `./mvnw -B verify` en cada push a `main` o `developer` y en
+cada PR contra ellas, con JDK 21 y cache de Maven. Para que un PR con un test roto no se pueda
+mergear hay que marcar el check **Build y tests** como obligatorio en la protección de rama de
+GitHub (*Settings → Branches*); el workflow por sí solo reporta, no bloquea.
+
 ## Estructura
 
 ```
