@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>3.5.13</version>
+		<version>4.1.1</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.SolucionesInformaticasBA</groupId>
@@ -69,9 +69,11 @@
 		<dependency>
 			<groupId>org.springdoc</groupId>
 			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-			<!-- 2.8.x es la serie que acompaña a Spring Boot 3.5; con 2.5.0 (pensada para 3.2)
-			     el arranque muere con NoSuchMethodError en ControllerAdviceBean. -->
-			<version>2.8.9</version>
+			<!-- La serie 3.x es la que acompaña a Spring Boot 4 / Spring Framework 7. La 2.8.x
+			     está compilada contra Spring 6 y el arranque muere con NoSuchMethodError en
+			     ControllerAdviceBean, que es el mismo síntoma que ya dio este proyecto al
+			     quedarse con una springdoc vieja. -->
+			<version>3.1.1</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.security</groupId>

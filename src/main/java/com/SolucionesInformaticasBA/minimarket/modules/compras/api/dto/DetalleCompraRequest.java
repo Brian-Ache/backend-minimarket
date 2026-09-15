@@ -10,6 +10,8 @@ import lombok.*;
 
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class DetalleCompraRequest {
     @NotNull
     private UUID idProducto;

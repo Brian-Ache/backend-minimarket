@@ -3,8 +3,10 @@ package com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto;
 import java.time.LocalDate;
 
 import jakarta.validation.constraints.NotNull;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /**
  * Datos del primer lote de un producto que maneja lotes, dentro del alta.
@@ -15,6 +17,8 @@ import lombok.Data;
  */
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class LoteInicialRequest {
     private String numeroLote;
 

@@ -503,8 +503,17 @@ public class UsuarioService implements UsuarioApi {
      * Contraseña que nadie conoce: se descarta apenas se hashea. La columna es NOT NULL y un
      * valor conocido sería una credencial válida esperando a que la prueben.
      */
+    /**
+     * Una contraseña que nadie puede conocer, para la cuenta que todavía no eligió la suya.
+     *
+     * <p>Un solo UUID y no dos: BCrypt no acepta más de <b>72 bytes</b>, y dos UUID con un
+     * guion en el medio son 73. Spring Security 6 truncaba en silencio y esto funcionaba de
+     * casualidad; desde la 7 tira {@code IllegalArgumentException} y la invitación entera muere
+     * con un 500. Con 122 bits de entropía alcanza de sobra para un hash contra el que nadie va
+     * a autenticarse nunca.
+     */
     private String passwordInutilizable() {
-        return UUID.randomUUID() + "-" + UUID.randomUUID();
+        return UUID.randomUUID().toString();
     }
 
     private void cambiarPassword(Usuario u, String password) {

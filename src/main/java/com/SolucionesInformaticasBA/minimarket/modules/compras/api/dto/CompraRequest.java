@@ -10,6 +10,8 @@ import lombok.*;
 
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class CompraRequest {
     @NotEmpty(message = "La compra debe tener al menos un detalle")
     @Valid

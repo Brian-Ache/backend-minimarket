@@ -5,12 +5,16 @@ import java.math.BigDecimal;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /** Precio que un proveedor lista por un producto. Se carga y se corrige siempre a mano. */
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class PrecioReferenciaRequest {
     @NotNull
     @PositiveOrZero
