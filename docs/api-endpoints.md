@@ -68,7 +68,10 @@ Errores de validación (`400`):
 | Consultar catálogo (GET productos/categorías/proveedores) | ✅ | ✅ | ✅ |
 | Ver y editar su propio usuario, cambiar su contraseña | ✅ | ✅ | ✅ |
 | Crear/editar/borrar productos, categorías y proveedores | ✅ | ✅ | ❌ |
-| Anular ventas y compras (DELETE) | ✅ | ✅ | ❌ |
+| Anular **compras** (DELETE) | ✅ | ✅ | ❌ |
+| Anular **ventas** (DELETE) | ✅ sin ventana | ✅ sin ventana | ✅ solo las propias, hasta 7 días |
+| Sincronizar tickets creados sin conexión (`/ventas/v1/sync`) | ✅ | ✅ | ✅ |
+| Ver lo que la sincronización dejó marcado (`/ventas/v1/revision`) | ✅ | ✅ | ❌ |
 | Corte de caja | ✅ | ✅ | ❌ |
 | Reportes | ✅ | ✅ | ❌ |
 | Listar y ver usuarios | ✅ | ✅ | ❌ |
@@ -878,16 +881,26 @@ Registra una venta con sus detalles. Si el producto maneja lotes, descuenta del 
 **Response `200`:**
 ```json
 {
-  "id": "UUID",
-  "fecha": "datetime",
-  "total": "float",
+  "id": "UUID v7",
+  "fecha": "datetime — cuándo ocurrió el ticket",
+  "total": "decimal",
   "detalles": [ "...DetalleVentaResponse" ],
   "cobrada": false,
   "fechaCobro": null,
   "metodoPago": null,
-  "montoRecibido": null
+  "montoRecibido": null,
+  "origen": "ONLINE | OFFLINE",
+  "dispositivo": "string | null — qué caja lo generó (solo OFFLINE)",
+  "sincronizadoEn": "datetime | null — cuándo llegó a MySQL (null en las ONLINE)",
+  "requiereRevision": false
 }
 ```
+
+> **Los importes de ventas son `decimal`, no `float`.** El total de un ticket lo suma también el
+> front cuando se crea sin conexión, y las dos cuentas tienen que dar exactamente igual. Un
+> `float` no representa la mayoría de los importes —`4850.10` se guarda como el binario más
+> cercano—, así que cada diferencia de redondeo aparecería como un ticket "para revisar" que no
+> tiene nada. Alcanza a `total`, `montoRecibido`, `precioUnitario` y `costoUnitario`.
 
 **Error `400`:** stock insuficiente · sin detalles · cantidad <= 0
 
@@ -1030,12 +1043,171 @@ stock**. Si el producto maneja lotes, repone en cada lote exactamente la cantida
 descontó, incluso cuando el FEFO repartió una línea entre varios. Los movimientos originales
 no se borran: la reversa queda registrada como un movimiento `AJUSTE` adicional.
 
-**Solo ADMIN.**
+**Quién puede anular qué**
+
+| Quién | Qué |
+|---|---|
+| `EMPLEADO` | Solo ventas **propias**, y solo si el turno de caja de esa venta abrió hace **7 días o menos** |
+| `ADMIN` · `SUPERADMIN` | Cualquier venta, sin ventana |
+
+La ventana se mide sobre la **apertura del turno** de la venta y no sobre su fecha: es el turno el
+que define el período contable, y una venta de las 23:50 pertenece al turno que abrió a las 18:00.
+Una venta sin turno —las que no son en efectivo cuando no había caja abierta— cae de vuelta en su
+propia fecha. El plazo se configura con `ventas.anulacion.dias`.
+
+**Una venta cobrada sí se anula.** Estaba prohibido, y era coherente mientras no existiera una
+ventana; con siete días, el 100% de lo anulable está cobrado. Si movió efectivo, la plata vuelve
+como un movimiento `REVERSA` **en el turno abierto de hoy**, que es de donde físicamente sale
+cuando el cliente vuelve con el ticket: el corte viejo no se toca.
 
 **Response `204`**
 
-**Error `400`:** la venta ya está cobrada — movió plata y puede estar dentro de un corte
-cerrado, así que corresponde una devolución, no una anulación
+**Errores:**
+
+| Código | Cuándo |
+|---|---|
+| `403` | Un `EMPLEADO` sobre la venta de otro |
+| `400` | Un `EMPLEADO` sobre una venta fuera de su ventana de 7 días |
+| `400` | La venta fue en efectivo y **no hay ningún turno de caja abierto** donde devolver la plata |
+| `404` | La venta no existe o ya estaba anulada |
+
+---
+
+### `POST /api/ventas/v1/sync`
+
+Recibe la cola de eventos de una caja que estuvo sin conexión.
+
+Lo puede llamar **cualquier usuario autenticado que pueda vender**. Quien llama es *quien
+sincroniza*, no necesariamente quien vendió: el vendedor de cada ticket viaja en el payload
+porque es un hecho de hace dos días. Es la única excepción a la regla de que la identidad sale
+siempre del JWT, y queda auditada con el par `id_usuario_sync` / `origen = OFFLINE`.
+
+**Request:**
+```json
+{
+  "dispositivo": "caja-01",
+  "eventos": [
+    {
+      "uuid": "UUID v7 — la identidad de la ENTIDAD, no del evento",
+      "tipo": "CREAR | ANULAR | ABRIR_SESION | CERRAR_SESION",
+      "secuencia": "long — contador del dispositivo, desempata dos eventos del mismo instante",
+      "ocurridoEn": "datetime — cuándo pasó en el local. Es la fecha que se persiste"
+    }
+  ]
+}
+```
+
+El `uuid` es el de la entidad que el evento toca: el del ticket en `CREAR` y `ANULAR`, el del
+turno en los dos de caja. De ahí sale la idempotencia —la clave es siempre `tipo` + `uuid`—, así
+que **reenviar un lote entero es inofensivo**.
+
+**Carga por tipo de evento**
+
+| `tipo` | Campos propios |
+|---|---|
+| `CREAR` | `idVendedor`, `idSesion`, `total`, `metodoPago` (`EFECTIVO` · `TARJETA` · `TRANSFERENCIA`), `montoRecibido` (solo efectivo), `detalles[]` |
+| `ANULAR` | `idUsuario` (quién anuló), `motivo` (opcional) |
+| `ABRIR_SESION` | `idUsuario`, `saldoInicial` |
+| `CERRAR_SESION` | `idUsuario`, `saldoFinal` (el conteo físico), `montoRetirado`, `observaciones` |
+
+Cada línea de `detalles[]`: `tipo` (`PRODUCTO` o `MANUAL`), `idProducto` o `nombreManual` según
+el caso, `cantidad` y `precioUnitario`. **El `precioUnitario` viaja también en las líneas de
+producto y se guarda tal cual**: es el precio que el cliente pagó ese día, no el de la lista de
+hoy.
+
+> El evento `CREAR` representa siempre una venta **cerrada y cobrada** —es lo que es un ticket de
+> caja registradora—, así que no lleva un campo `cobrada` y su fecha de cobro es la misma
+> `ocurridoEn`.
+
+**Response `200`** — siempre `200`, con un resultado por evento y en el orden en que se
+procesaron, que **no** es el orden del array:
+
+```json
+{
+  "recibidos": 2,
+  "resultados": [
+    { "uuid": "…", "tipo": "ABRIR_SESION", "estado": "OK", "requiereRevision": false },
+    {
+      "uuid": "…",
+      "tipo": "CREAR",
+      "estado": "OK",
+      "requiereRevision": true,
+      "mensaje": "Se regularizaron 6 unidades de Yerba 1kg"
+    }
+  ]
+}
+```
+
+| Campo del resultado | Qué dice |
+|---|---|
+| `estado` | `OK` o `ERROR` |
+| `requiereRevision` | En un `OK`: el evento se persistió pero dejó una discrepancia. **El evento ya está sincronizado**: sale de la cola igual |
+| `codigo` | En un `ERROR`: cuál de los casos de abajo |
+| `reintentable` | En un `ERROR`: si volver a mandarlo puede cambiar algo |
+| `mensaje` | Texto para el operador o para el log |
+
+**Códigos de error por ítem**
+
+| `codigo` | Cuándo | `reintentable` |
+|---|---|---|
+| `UUID_INVALIDO` | El uuid no es versión 7 | No |
+| `FECHA_INVALIDA` | Futuro, demasiado vieja, anulación anterior a su ticket, o corte anterior a su apertura | No |
+| `VENDEDOR_INEXISTENTE` | El usuario del evento no existe. Que esté **dado de baja no es error** | No |
+| `PRODUCTO_INEXISTENTE` | Una línea referencia un producto que no existe | No |
+| `EVENTO_INVALIDO` | El payload no trae lo que su tipo necesita | No |
+| `PERMISO_INSUFICIENTE` | `ANULAR` de un `EMPLEADO` sobre una venta ajena o fuera de su ventana | No |
+| `SESION_INEXISTENTE` | El evento referencia un turno que todavía no llegó | **Sí** |
+| `SESION_YA_ABIERTA` | `ABRIR_SESION` choca con el turno abierto que ya hay | **Sí** |
+| `SESION_CERRADA` | El ticket llegó después del corte de su turno, o no hay caja abierta para la reversa | Depende |
+| `INTERNO` | Cualquier fallo inesperado del backend | **Sí** |
+
+**Errores del lote entero** —los únicos que no responden `200`:
+
+| Status | Cuándo |
+|---|---|
+| `400` | JSON ilegible, `eventos` vacío, o más de 100 eventos (el límite va en el mensaje) |
+| `401` | Token ausente, vencido o de un usuario dado de baja |
+| `403` | Autenticado sin permiso para vender |
+
+El tope se configura con `sync.lote.maximo`, y las validaciones de fecha con
+`sync.desfase-maximo-minutos` (5) y `sync.antiguedad-maxima-dias` (60).
+
+**Qué espera el backend del front**
+
+| Obligación | Por qué |
+|---|---|
+| Generar **UUID v7** para tickets y turnos | Si no, la PK se fragmenta y el evento se rechaza |
+| Mandar `ocurridoEn` con el reloj del local, y mantenerlo en hora | Es la fecha que queda en la base y la que fechan los reportes |
+| No mandar más de 100 eventos por request | Arriba de eso el lote entero se rechaza |
+| No borrar un evento de la cola hasta recibir su `OK` | Es lo único que garantiza que nada se pierda |
+| Reintentar los `ERROR` con `reintentable: true`, y **no** los de `false` | Reintentar un evento condenado es ruido infinito |
+| Incluir el `idSesion` en todo ticket | Sin eso el ticket no se puede colgar de ningún turno |
+
+**Qué puede esperar el front del backend**
+
+- Un resultado por cada evento mandado.
+- Que un evento con `OK` esté persistido y sea seguro borrarlo de la cola, incluso con
+  `requiereRevision`.
+- Que reenviar un lote entero sea inofensivo.
+- Que un `ERROR` en un ítem no afecte a los demás del mismo lote.
+
+---
+
+### `GET /api/ventas/v1/revision`
+
+Listado paginado de lo que la sincronización dejó marcado: stock que hubo que **regularizar** y
+totales declarados que **no coincidieron** con el recalculado.
+
+**Solo ADMIN.**
+
+**Query params:** `?page=0&size=20`
+
+**Response `200`:** `Page<VentaResponse>` — las marcadas traen `requiereRevision: true`
+
+> **No son ventas con problemas: son ventas válidas que apuntan a uno.** Lo que corresponde hacer
+> con una regularización de stock no es revisar el ticket —el ticket es correcto, la mercadería
+> salió del local— sino **contar ese producto**, con el ajuste contra conteo físico que ya existe
+> (`POST /api/inventario/v1/controlar` o `/lotes/ajustar`).
 
 ---
 
@@ -1046,9 +1218,10 @@ cerrado, así que corresponde una devolución, no una anulación
   "idProducto": "UUID | null",
   "nombre": "string",
   "cantidad": "int",
-  "precioUnitario": "float",
-  "subtotal": "float",
-  "tipo": "PRODUCTO | MANUAL"
+  "precioUnitario": "decimal",
+  "subtotal": "decimal",
+  "tipo": "PRODUCTO | MANUAL",
+  "costoUnitario": "decimal | null — costo congelado al vender; null en los ítems MANUAL"
 }
 ```
 

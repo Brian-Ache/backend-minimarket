@@ -1,5 +1,127 @@
 # Changelog
 
+## 0.6.0 (2026-09-15)
+
+**Sincronización offline-first.** El front puede vender con internet caído y mandar los tickets
+por lote cuando vuelve la conexión. Es la versión que más cambia el corazón del módulo de ventas:
+el id y la fecha de un ticket pasan a venir del dispositivo, los importes de ventas dejan de ser
+`float`, y anular deja de ser una operación exclusiva de administrador.
+
+Además, el proyecto salta a **Spring Boot 4.1** (Hibernate 7, Spring Security 7, Jackson 3,
+JUnit 6), y el repo estrena **CI** e **imagen Docker**.
+
+**Al actualizar hay que aplicar las migraciones `12` y `13`** en orden y con la aplicación
+detenida; ver *Base de datos*. Una instalación nueva no las necesita.
+
+### Cambios que rompen compatibilidad
+
+- **Los importes de ventas son `decimal` y ya no `float`.** Alcanza a `total` y `montoRecibido`
+  de la venta, y a `precioUnitario` y `costoUnitario` de cada línea, en el request y en el
+  response. Un cliente que los leía como `float` sigue funcionando; uno que comparaba strings
+  puede ver `4850.10` donde antes veía `4850.1`. El motivo es el sync: el total lo suma también
+  el front y las dos cuentas tienen que dar exactamente igual. Compras, caja y los precios del
+  catálogo **siguen en `float`**.
+- **`DELETE /api/ventas/v1/{id}` ya no es solo de ADMIN.** Un `EMPLEADO` puede anular **sus
+  propias** ventas dentro de una ventana de 7 días, medida sobre la apertura del turno de esa
+  venta. Un `ADMIN` sigue pudiendo anular cualquiera sin ventana. `DELETE /api/compras/**` no
+  cambia.
+- **Una venta cobrada ahora se anula.** Antes respondía `400 No se puede anular una venta ya
+  cobrada`. Era coherente mientras no existiera una ventana; con siete días, el 100% de lo
+  anulable está cobrado. Si movió efectivo, la anulación **exige un turno de caja abierto** donde
+  devolver la plata y responde `400` si no lo hay.
+- **La reversa de caja de una anulación va al turno abierto de hoy**, no al turno en que se
+  cobró. El corte viejo no se toca —ya está firmado— y el de hoy cuadra con el efectivo que
+  realmente sale del cajón. Es distinto de lo que hace `compras`, que se niega a anular si el
+  turno cerró; acá esa regla vaciaría la ventana de siete días al segundo día.
+- **`created_at` y `deleted_at` de `ventas` y `detalles_ventas` cambiaron de significado.** Ya no
+  son auditoría de la fila sino cuándo **ocurrió** el ticket y cuándo se **anuló**. En una venta
+  online no cambia nada; en una offline las manda el dispositivo y pueden ser de hace días. El
+  dato nuevo es `sincronizado_en`, que es cuándo llegó a MySQL.
+- **`CajaApi.registrarEntradaAutomatica` y `registrarSalidaAutomatica` cambiaron de firma**: un
+  parámetro `LocalDateTime fecha` al final. Es una interfaz interna entre módulos, no de la API
+  HTTP.
+- **Spring Boot 4.1.** Java 21 sigue siendo el mínimo. El salto trae Jackson 3, que es más
+  estricto con los DTO sin constructor vacío —ver *Correcciones*—.
+
+### Agregado
+
+- **`POST /api/ventas/v1/sync`** — recibe la cola de eventos de una caja que estuvo sin conexión.
+  Cuatro tipos de evento (`CREAR`, `ANULAR`, `ABRIR_SESION`, `CERRAR_SESION`), hasta 100 por
+  lote, y **siempre responde `200`** con un resultado por ítem: un ticket que falla no impide que
+  entren los otros diecinueve. Lo puede llamar cualquiera que pueda vender.
+  - **Una transacción por evento, no una por lote.** Un lote a medio procesar deja la base
+    consistente, que es exactamente lo que pasa cuando la respuesta se pierde en el camino.
+  - **Idempotente por `tipo` + `uuid`.** Reenviar un lote entero es inofensivo y devuelve la
+    misma respuesta, marca de revisión incluida.
+  - **Los eventos se aplican en el orden en que pasaron en el local**, no en el del array.
+- **`GET /api/ventas/v1/revision`** (ADMIN, paginado) — lo que la sincronización dejó marcado:
+  stock que hubo que regularizar y totales que no coincidieron. No son ventas con problemas: son
+  ventas válidas que apuntan a uno.
+- **`VentaResponse` suma cuatro campos**: `origen` (`ONLINE`/`OFFLINE`), `dispositivo`,
+  `sincronizadoEn` y `requiereRevision`. `DetalleVentaResponse` expone `costoUnitario`, que ya se
+  guardaba.
+- **UUIDv7 en las tablas que reciben ids del front** (`ventas`, `detalles_ventas`,
+  `sesiones_caja`), con `shared/Uuid7`. Los 48 bits altos son el timestamp, así que las
+  inserciones vuelven a ser casi secuenciales en vez de fragmentar el clustered index como un v4.
+  El endpoint de sync **rechaza** un uuid que no sea v7.
+- **Regularización de stock en las ventas offline.** Un faltante ya no puede rechazar un ticket:
+  la venta es física y ya ocurrió. Entra un `AJUSTE` por la diferencia y después la `VENTA`
+  completa, y el ticket queda marcado para revisión.
+- **CI** (`.github/workflows/ci.yml`): compila y corre los tests en cada push a `main` o
+  `developer` y en cada PR. No publica ni despliega.
+- **Imagen Docker** (`Dockerfile` multi-stage, usuario no root) y `compose.yaml` para levantar la
+  API con su MySQL sin instalar nada más.
+
+### Cambiado
+
+- **El FEFO de un ticket offline prefiere los lotes que ya existían a la fecha de la venta.** Sin
+  eso, un lote que ingresó ayer podría absorber la venta de anteayer, cuando físicamente no
+  estaba en el local. El filtro se hace en memoria sobre los lotes que la consulta de bloqueo ya
+  tomó: una segunda consulta ordenada por fecha de alta tomaría los locks en un orden distinto al
+  canónico y abriría un ciclo de deadlock.
+- **La fecha del ticket baja hasta el kardex y la caja.** El movimiento de stock y el de caja de
+  una venta offline quedan fechados cuando salió la mercadería, no cuando llegó el lote. Sin
+  esto, el kardex mostraba la mercadería saliendo dos días después de la venta que la sacó.
+- **El movimiento de retiro del corte se fecha con el cierre** y no con el reloj del servidor. En
+  un turno sincronizado caía fuera de la vida de su propio turno.
+- **El turno de caja se puede sincronizar.** `ABRIR_SESION` y `CERRAR_SESION` viajan en el lote,
+  con el uuid y las fechas del dispositivo. Sigue habiendo un solo turno abierto a la vez: la
+  apertura que choca responde `SESION_YA_ABIERTA` reintentable, no una violación de índice cruda.
+
+### Correcciones
+
+- **Invitar un usuario respondía `500` en Spring Security 7.** La contraseña de relleno de una
+  cuenta invitada eran dos UUID con un guion, o sea 73 bytes, y BCrypt no acepta más de 72.
+  Security 6 truncaba en silencio y funcionaba de casualidad; la 7 tira
+  `IllegalArgumentException` y se llevaba puesta la invitación entera.
+- **Diez DTO de request respondían `500` con Jackson 3.** Eran `@Data @Builder` sin constructor
+  vacío: Lombok omite el de `@Data` cuando `@Builder` ya declaró uno, y Jackson 2 lo toleraba vía
+  `-parameters`. Afectaba al alta de producto, las compras, los ajustes de stock y de lotes, el
+  precio de referencia y los movimientos de stock.
+- **`save()` hacía un `SELECT` antes de cada `INSERT`** en las entidades con id asignado: Spring
+  Data decide que una entidad con id no es nueva y pasa por `merge()`. Un ticket de diez líneas
+  eran once consultas de más, y un lote de cien tickets, más de mil. Resuelto implementando
+  `Persistable`.
+
+### Base de datos
+
+- **`12_ventas_offline.sql` — columnas de sincronización en `ventas`.** `sincronizado_en`,
+  `origen`, `dispositivo`, `id_usuario_sync` (FK a `usuarios`) y `requiere_revision`, más el
+  índice `ix_ventas_revision`. Toda venta existente queda con `origen = 'ONLINE'`, que es lo que
+  efectivamente es. Agrega también la tabla `anulaciones_pendientes`, **sin FK a `ventas`** a
+  propósito: guarda anulaciones que llegaron antes que el ticket que anulan, así que la venta
+  puede no existir todavía.
+- **`13_importes_decimal_ventas.sql` — importes de ventas a `DECIMAL(12,2)`.** `ventas.total`,
+  `ventas.monto_recibido`, `detalles_ventas.precio_unitario` y `costo_unitario`.
+  - **Ojo con esto, que es contraintuitivo:** la cabecera y las líneas se redondean por separado,
+    así que la conversión puede **descuadrar una venta que en `float` cuadraba**. Un total de
+    `999.999` queda en `1000.00` y su línea de `3 × 333.333` en `3 × 333.33 = 999.99`. El script
+    lista las ventas que terminaron así **después** de convertir: antes no se ven. Esas
+    diferencias no se corrigen solas —el total es la plata que el cliente pagó—, y una diferencia
+    grande no es redondeo y hay que mirarla.
+- Aplicar en orden y con la aplicación detenida. `00_init_limpio.sql` ya trae todo: una
+  instalación nueva no necesita las migraciones.
+
 ## 0.5.0 (2026-09-05)
 
 Cuatro trabajos que venían anotados como pendientes: el alta de producto pasa a cargar sus

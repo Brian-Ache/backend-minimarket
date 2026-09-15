@@ -23,8 +23,7 @@ No hace falta que propongas la solución: muchas veces el mejor camino aparece
 recién cuando miramos el código.
 -->
 
-- preparar github action para despliegue automatico en el vps (configurar nginx)
-- preparar para crear imagen docker (de la mano con despliegue automatico y docker hub)
+_(vacío)_
 
 ---
 
@@ -32,7 +31,16 @@ recién cuando miramos el código.
 
 <!-- Lo que ya estamos discutiendo pero todavía no tiene plan cerrado. -->
 
-_(vacío)_
+- **Despliegue automático al VPS con nginx.** La imagen Docker y el CI **ya están hechos**
+  (fases B1 y B2, publicadas en la 0.6.0); falta publicar la imagen y desplegar (B3 y B4), que
+  dependen de decisiones de infraestructura: cuenta de Docker Hub, VPS y dominio. Queda además
+  una decisión abierta: si se agrega `spring-boot-starter-actuator` para tener un healthcheck
+  real, o se convive con unos segundos de 502 en cada despliegue.
+- **Sincronización offline-first de tickets.** **Hecha y publicada en la 0.6.0**: el Track A
+  entero, de A1 a A7. El contrato para el front está en
+  [`api-endpoints.md`](api-endpoints.md) y el porqué de cada regla en
+  [`ARCHITECTURE.md`](../ARCHITECTURE.md). Lo que queda abierto es del lado del front, listado en
+  la sección 6 del [documento de requisitos](../requisitos-sync-offline-tickets%20(1).md).
 
 ---
 

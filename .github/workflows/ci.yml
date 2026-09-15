@@ -34,7 +34,7 @@ jobs:
           distribution: temurin
           cache: maven
 
-      # Los tests son unitarios con Mockito y corren sin base. El único que necesita MySQL
+      # Casi todos los tests son unitarios con Mockito y corren sin base. El único que necesita MySQL
       # es MinimarketApplicationTests.contextLoads, marcado con @Tag("integracion"):
       # queda excluido hasta que haya tests de integración con Testcontainers.
       - name: Build y tests

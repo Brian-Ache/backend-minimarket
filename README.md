@@ -3,7 +3,7 @@
 Backend de un punto de venta para minimarket: catálogo, ventas con cobro, compras a proveedores,
 inventario con lotes y vencimientos, caja con arqueo y reportes.
 
-API REST con Spring Boot 3.5 sobre Java 21 y MySQL 8, autenticación por JWT y autorización por
+API REST con Spring Boot 4.1 sobre Java 21 y MySQL 8, autenticación por JWT y autorización por
 rol. Se despliega **una instancia por comercio**: el aislamiento entre comercios lo da el
 despliegue, no el modelo de datos.
 
@@ -96,7 +96,7 @@ Tres cosas que el compose resuelve y conviene saber que están ahí:
 ./mvnw test
 ```
 
-258 tests unitarios con JUnit 5 y Mockito. `MinimarketApplicationTests.contextLoads` es el único
+270 tests unitarios con JUnit 6 y Mockito. `MinimarketApplicationTests.contextLoads` es el único
 que necesita la base levantada; si no está, falla con *Communications link failure* y el resto
 pasa igual.
 

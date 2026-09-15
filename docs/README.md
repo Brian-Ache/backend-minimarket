@@ -4,6 +4,7 @@
 |---|---|---|
 | [`api-endpoints.md`](api-endpoints.md) | Referencia de la API: request, response y errores de cada endpoint | Con cada cambio de contrato |
 | [`ideas.md`](ideas.md) | Bandeja de entrada: ideas y correcciones sin procesar | Cuando se te ocurre algo |
+| [`plan-0.6.0-sync-offline-y-despliegue.md`](plan-0.6.0-sync-offline-y-despliegue.md) | Plan de la 0.6.0: sincronización offline-first de tickets y despliegue automático, en fases | Mientras la 0.6.0 esté abierta |
 | [`roadmap.md`](roadmap.md) | Deuda técnica y funcionalidades propuestas, con el enfoque que hoy parece razonable | Cuando algo de `ideas.md` se decide postergar, o cuando se salda deuda |
 | [`historico/`](historico/) | Documentos cerrados que el `CHANGELOG` referencia. No describen el sistema actual | Nunca |
 
