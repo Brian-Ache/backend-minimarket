@@ -21,6 +21,13 @@ public interface InventarioApi {
     List<StockResponse> getByIdProductos(List<UUID> idProductos);
     StockResponse aumentar(MovimientoStockRequest request);
     StockResponse disminuir(MovimientoStockRequest request);
+
+    /**
+     * Descuenta para una venta que ya ocurrió: si la existencia no alcanza, regulariza el
+     * faltante con un {@code AJUSTE} previo y descuenta la venta completa. Devuelve cuántas
+     * unidades hubo que regularizar, para que quien llama marque el comprobante.
+     */
+    int disminuirRegularizando(MovimientoStockRequest request);
     /** Baja de la fila de stock. Exige que esté en cero. */
     void delete(UUID idProducto);
     void controlarStock(UUID idUsuario, AjusteStockRequest request);

@@ -26,6 +26,9 @@ public interface VentasApi {
     Page<VentaResponse> getByFecha(UUID idUsuario, LocalDateTime desde, LocalDateTime hasta,
                                    Pageable pageable);
 
+    /** Ventas que entraron con una discrepancia y alguien tiene que mirar. Solo ADMIN. */
+    Page<VentaResponse> getParaRevision(Pageable pageable);
+
     /** Solo ventas cobradas, filtradas por fecha de cobro. Es la fuente de todo reporte de dinero. */
     List<VentaResponse> getByFechaCobradas(LocalDateTime desde, LocalDateTime hasta);
     void delete(UUID id);

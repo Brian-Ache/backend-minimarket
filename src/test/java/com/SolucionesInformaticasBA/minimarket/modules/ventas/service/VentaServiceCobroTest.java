@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -67,10 +68,10 @@ class VentaServiceCobroTest {
 
         CobrarVentaResponse response = ventaService.cobrar(ID_VENTA, ID_USUARIO, pago("TARJETA", null));
 
-        assertEquals(0f, response.getCambio());
+        assertEquals(new BigDecimal("0.00"), response.getCambio());
         assertNull(response.getVenta().getMontoRecibido());
         // La tarjeta no toca el arqueo: no genera entrada de caja.
-        verify(cajaApi, never()).registrarEntradaAutomatica(any(), any(), anyFloat(), any(), any());
+        verify(cajaApi, never()).registrarEntradaAutomatica(any(), any(), anyFloat(), any(), any(), any());
     }
 
     @Test
@@ -80,10 +81,10 @@ class VentaServiceCobroTest {
         when(cajaApi.buscarSesionActiva()).thenReturn(Optional.empty());
 
         CobrarVentaResponse response =
-            ventaService.cobrar(ID_VENTA, ID_USUARIO, pago("TRANSFERENCIA", 99999f));
+            ventaService.cobrar(ID_VENTA, ID_USUARIO, pago("TRANSFERENCIA", "99999.00"));
 
         assertNull(response.getVenta().getMontoRecibido());
-        assertEquals(0f, response.getCambio());
+        assertEquals(new BigDecimal("0.00"), response.getCambio());
     }
 
     @Test
@@ -106,18 +107,19 @@ class VentaServiceCobroTest {
                 .thenReturn(Optional.of(venta()));
 
         BadRequestException ex = assertThrows(BadRequestException.class,
-                () -> ventaService.cobrar(ID_VENTA, ID_USUARIO, pago("EFECTIVO", 1000f)));
+                () -> ventaService.cobrar(ID_VENTA, ID_USUARIO, pago("EFECTIVO", "1000.00")));
         assertEquals("El monto recibido es menor al total de la venta", ex.getMessage());
 
         prepararCobro();
         when(cajaApi.getIdSesionActiva()).thenReturn(ID_SESION);
 
-        CobrarVentaResponse response = ventaService.cobrar(ID_VENTA, ID_USUARIO, pago("EFECTIVO", 2000f));
+        CobrarVentaResponse response = ventaService.cobrar(ID_VENTA, ID_USUARIO, pago("EFECTIVO", "2000.00"));
 
-        assertEquals(500f, response.getCambio());
-        assertEquals(2000f, response.getVenta().getMontoRecibido());
+        assertEquals(new BigDecimal("500.00"), response.getCambio());
+        assertEquals(new BigDecimal("2000.00"), response.getVenta().getMontoRecibido());
+        // Fecha null: el cobro de mostrador ocurre ahora, así que el movimiento se fecha solo.
         verify(cajaApi).registrarEntradaAutomatica(
-                ID_SESION, ID_USUARIO, 1500f, OrigenMovimientoCaja.VENTA, ID_VENTA);
+                ID_SESION, ID_USUARIO, 1500f, OrigenMovimientoCaja.VENTA, ID_VENTA, null);
     }
 
     @Test
@@ -148,16 +150,16 @@ class VentaServiceCobroTest {
         return Venta.builder()
                 .id(ID_VENTA)
                 .idUsuario(ID_USUARIO)
-                .total(1500f)
+                .total(new BigDecimal("1500.00"))
                 .cobrada(false)
                 .createdAt(LocalDateTime.now())
                 .build();
     }
 
-    private CobrarVentaRequest pago(String metodoPago, Float montoRecibido) {
+    private CobrarVentaRequest pago(String metodoPago, String montoRecibido) {
         CobrarVentaRequest request = new CobrarVentaRequest();
         request.setMetodoPago(metodoPago);
-        request.setMontoRecibido(montoRecibido);
+        request.setMontoRecibido(montoRecibido == null ? null : new BigDecimal(montoRecibido));
         return request;
     }
 }

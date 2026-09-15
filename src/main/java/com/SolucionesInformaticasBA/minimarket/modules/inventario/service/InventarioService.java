@@ -74,6 +74,7 @@ public class InventarioService implements InventarioApi{
             .motivo(request.getMotivo())
             .idUsuario(request.getIdUsuario())
             .idReferencia(request.getIdReferencia())
+            .createdAt(request.getFecha())
             .build());
 
         return toStockResponse(stock);
@@ -99,9 +100,82 @@ public class InventarioService implements InventarioApi{
             .motivo(request.getMotivo())
             .idUsuario(request.getIdUsuario())
             .idReferencia(request.getIdReferencia())
+            .createdAt(request.getFecha())
             .build());
 
         return toStockResponse(stock);
+    }
+
+    /**
+     * Descuenta para una venta que <b>ya ocurrió</b>, regularizando el faltante si la existencia
+     * no alcanza.
+     *
+     * <p>Es el descuento de un ticket que se creó sin conexión. Acá no se puede rechazar nada:
+     * la venta es física, pasó sobre el mostrador hace dos días, y el vendedor no pudo haber
+     * entregado mercadería que no existía. Si el sistema decía 4 y se vendieron 10, entonces el
+     * que estaba mal era el sistema: las 10 unidades estaban en la góndola. La venta no produjo
+     * el faltante, lo reveló.
+     *
+     * <p>De ahí que no se descuente "hasta donde alcance". Primero entra un {@code AJUSTE} por
+     * la diferencia y después la {@code VENTA} completa, en este orden y en la misma
+     * transacción:
+     *
+     * <pre>
+     *   AJUSTE  +6   Regularización por venta offline &lt;uuid&gt;    4 → 10
+     *   VENTA  -10   el ticket, completo                        10 → 0
+     * </pre>
+     *
+     * <p>Registrar la venta parcial y el faltante como un ajuste negativo estaría mal por dos
+     * motivos: el kardex dejaría de sumar al stock —movimientos por −10 contra una existencia
+     * que bajó 4—, y la anulación repondría 4 en vez de 10, porque la reversa trabaja sobre los
+     * movimientos de tipo {@code VENTA}. Con la venta registrada completa, la reversa da +10
+     * sola.
+     *
+     * <p>El stock nunca pasa por un valor negativo en ningún paso intermedio, y todo ocurre con
+     * la fila de stock bloqueada: leerla por fuera para decidir cuánto ajustar abriría la
+     * carrera que el lock existe para cerrar.
+     *
+     * @return cuántas unidades hubo que regularizar. Cero es el caso normal.
+     */
+    @Transactional
+    public int disminuirRegularizando(MovimientoStockRequest request) {
+        validarCantidadPositiva(request.getCantidad());
+        Stock stock = buscarStock(request.getIdProducto());
+
+        int faltante = Math.max(0, request.getCantidad() - stock.getCantidad());
+
+        if (faltante > 0) {
+            stock.setCantidad(stock.getCantidad() + faltante);
+            stockRepository.save(stock);
+
+            // El tipo es AJUSTE y no un valor nuevo del ENUM: nadie clasifica por tipo fuera de
+            // inventario, y la superficie para encontrar estos casos es el flag de revisión de
+            // la venta, no el tipo del movimiento.
+            movimientoStockRepository.save(MovimientoStock.builder()
+                .idProducto(request.getIdProducto())
+                .cantidad(faltante)
+                .tipo(TipoMovimiento.AJUSTE)
+                .motivo("Regularización por venta offline " + request.getIdReferencia())
+                .idUsuario(request.getIdUsuario())
+                .idReferencia(request.getIdReferencia())
+                .createdAt(request.getFecha())
+                .build());
+        }
+
+        stock.setCantidad(stock.getCantidad() - request.getCantidad());
+        stockRepository.save(stock);
+
+        movimientoStockRepository.save(MovimientoStock.builder()
+            .idProducto(request.getIdProducto())
+            .cantidad(-request.getCantidad())
+            .tipo(parseTipo(request.getTipo()))
+            .motivo(request.getMotivo())
+            .idUsuario(request.getIdUsuario())
+            .idReferencia(request.getIdReferencia())
+            .createdAt(request.getFecha())
+            .build());
+
+        return faltante;
     }
 
     /**

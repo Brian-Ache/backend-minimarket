@@ -156,7 +156,7 @@ public class CompraService implements CompraApi {
             UUID idSesion = cajaApi.getIdSesionActiva();
             compra.setIdSesion(idSesion);
             cajaApi.registrarSalidaAutomatica(
-                idSesion, idUsuario, total, OrigenMovimientoCaja.COMPRA, compra.getId());
+                idSesion, idUsuario, total, OrigenMovimientoCaja.COMPRA, compra.getId(), null);
         }
 
         compra = compraRepository.saveAndFlush(compra);
@@ -346,7 +346,7 @@ public class CompraService implements CompraApi {
                 "No se puede anular: la compra se pagó en un turno de caja que ya fue cerrado");
         }
         cajaApi.registrarEntradaAutomatica(
-            sesionActiva, idUsuario, compra.getTotal(), OrigenMovimientoCaja.REVERSA, compra.getId());
+            sesionActiva, idUsuario, compra.getTotal(), OrigenMovimientoCaja.REVERSA, compra.getId(), null);
     }
 
     /** Saca del stock lo que ingresó la compra, usando los movimientos que la referencian. */

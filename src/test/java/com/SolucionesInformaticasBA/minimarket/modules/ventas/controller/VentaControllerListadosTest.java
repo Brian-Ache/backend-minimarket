@@ -30,6 +30,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.SyncVentasApi;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.VentasApi;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.GlobalExceptionHandler;
 
@@ -43,13 +44,16 @@ class VentaControllerListadosTest {
     @Mock
     private VentasApi ventasApi;
 
+    @Mock
+    private SyncVentasApi syncVentasApi;
+
     private MockMvc mockMvc;
 
     private static final UUID ID_USUARIO = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(new VentaController(ventasApi))
+        mockMvc = MockMvcBuilders.standaloneSetup(new VentaController(ventasApi, syncVentasApi))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
         autenticarComo(ID_USUARIO, "ROLE_EMPLEADO");

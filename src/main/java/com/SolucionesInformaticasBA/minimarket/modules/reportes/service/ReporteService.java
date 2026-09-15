@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.reportes.service;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -28,6 +29,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.reportes.api.dto.ReporteV
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.VentasApi;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.DetalleVentaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.Importes;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 
 import lombok.AllArgsConstructor;
@@ -63,7 +65,10 @@ public class ReporteService implements ReportesApi {
         for (VentaResponse v : ventas) {
             LocalDate dia = fechaDeCobro(v);
             float[] acc = porDiaMap.computeIfAbsent(dia, k -> new float[2]);
-            acc[0] += v.getTotal();
+            // Frontera: las ventas ya llevan la plata en BigDecimal, los reportes todavía no.
+            // Mientras el reporte mezcle ventas con compras —que siguen en float— migrarlo no
+            // lo haría exacto, así que se cruza acá y a la vista.
+            acc[0] += Importes.aFloat(v.getTotal());
             acc[1] += 1;
         }
 
@@ -82,7 +87,11 @@ public class ReporteService implements ReportesApi {
             .desde(desde)
             .hasta(hasta)
             .totalTransacciones(ventas.size())
-            .totalIngresos((float) ventas.stream().mapToDouble(VentaResponse::getTotal).sum())
+            // La suma se hace en BigDecimal y recién el resultado se pasa a float: sumar
+            // en float acumularía el error una vez por venta.
+            .totalIngresos(Importes.aFloat(ventas.stream()
+                .map(VentaResponse::getTotal)
+                .reduce(Importes.CERO, BigDecimal::add)))
             .porDia(porDia)
             .build();
     }
@@ -111,12 +120,13 @@ public class ReporteService implements ReportesApi {
             float[] acc = porDiaMap.computeIfAbsent(dia, k -> new float[2]);
 
             for (DetalleVentaResponse d : v.getDetalles()) {
-                float ventaLinea = d.getSubtotal();
+                float ventaLinea = Importes.aFloat(d.getSubtotal());
                 totalVentas += ventaLinea;
                 acc[0] += ventaLinea;
 
                 if (d.getCostoUnitario() != null) {
-                    float costoLinea = d.getCostoUnitario() * d.getCantidad();
+                    float costoLinea = Importes.aFloat(
+                        Importes.porCantidad(d.getCostoUnitario(), d.getCantidad()));
                     costoTotal += costoLinea;
                     acc[1] += costoLinea;
                 } else {
@@ -203,7 +213,7 @@ public class ReporteService implements ReportesApi {
                 ProductoAgg item = agg.computeIfAbsent(d.getIdProducto(), k -> new ProductoAgg());
                 item.nombre = d.getNombre();
                 item.cantidad += d.getCantidad();
-                item.total += d.getSubtotal();
+                item.total += Importes.aFloat(d.getSubtotal());
             }
         }
 

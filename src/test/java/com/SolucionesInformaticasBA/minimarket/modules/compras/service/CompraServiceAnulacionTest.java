@@ -94,7 +94,7 @@ class CompraServiceAnulacionTest {
         ArgumentCaptor<UUID> usuario = ArgumentCaptor.forClass(UUID.class);
         verify(cajaApi).registrarEntradaAutomatica(
                 eq(ID_SESION), usuario.capture(), anyFloat(),
-                eq(OrigenMovimientoCaja.REVERSA), eq(ID_COMPRA));
+                eq(OrigenMovimientoCaja.REVERSA), eq(ID_COMPRA), any());
         assertEquals(ID_DEL_JWT, usuario.getValue());
     }
 
@@ -128,7 +128,7 @@ class CompraServiceAnulacionTest {
         ArgumentCaptor<Compra> captor = ArgumentCaptor.forClass(Compra.class);
         verify(compraRepository).save(captor.capture());
         assertNotNull(captor.getValue().getDeletedAt());
-        verify(cajaApi, never()).registrarEntradaAutomatica(any(), any(), anyFloat(), any(), any());
+        verify(cajaApi, never()).registrarEntradaAutomatica(any(), any(), anyFloat(), any(), any(), any());
     }
 
     @Test

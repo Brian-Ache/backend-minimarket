@@ -52,6 +52,11 @@ public class SecurityConfig {
                         // Usuarios: /me y change-password se resuelven con @PreAuthorize
                         // en el controller, porque dependen de quién es el dueño del recurso.
                         .requestMatchers("/api/reportes/**").hasRole("ADMIN")
+                        // El listado de lo que la sincronización dejó marcado muestra el estado
+                        // del inventario y de la caja de todo el local, no las ventas de quien
+                        // pregunta: va con el resto de lo que solo ve un administrador. Tiene
+                        // que declararse antes que la regla general de /api/ventas.
+                        .requestMatchers(HttpMethod.GET, "/api/ventas/v1/revision").hasRole("ADMIN")
                         .requestMatchers("/api/caja/v1/corte", "/api/caja/v1/corte/**").hasRole("ADMIN")
 
                         // Catálogo: lectura para todos, escritura solo ADMIN
@@ -72,8 +77,18 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/inventario/v1/lotes/ajustar").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/inventario/v1/stock/**").hasRole("ADMIN")
 
-                        // Anular ventas y compras es una operación sensible
-                        .requestMatchers(HttpMethod.DELETE, "/api/ventas/**", "/api/compras/**").hasRole("ADMIN")
+                        // Anular una compra sigue siendo solo de administrador: mueve plata a
+                        // proveedores y no hay ninguna ventana que lo acote.
+                        .requestMatchers(HttpMethod.DELETE, "/api/compras/**").hasRole("ADMIN")
+
+                        // Anular una venta ya no. Un vendedor puede anular **las suyas** y solo
+                        // dentro de la ventana de siete días, pero eso depende de quién es el
+                        // dueño de la venta y de cuándo abrió su turno: son datos del objetivo,
+                        // no de la ruta. La regla real vive en AnuladorVentas.validarPermiso,
+                        // que es también por donde pasa la anulación que llega del front
+                        // offline. Dejarla acá como hasRole("ADMIN") haría que el panel fuera
+                        // más estricto que la sincronización, y anular sin conexión sería la
+                        // forma de saltear el permiso.
 
                         // --- Resto: cualquier usuario autenticado (ADMIN o EMPLEADO) ---
                         .anyRequest().authenticated())

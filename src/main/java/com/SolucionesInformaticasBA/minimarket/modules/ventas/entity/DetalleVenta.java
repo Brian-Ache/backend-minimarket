@@ -1,10 +1,11 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.entity;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.springframework.data.domain.Persistable;
 
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
@@ -20,10 +21,10 @@ import lombok.Setter;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class DetalleVenta {
+public class DetalleVenta implements Persistable<UUID> {
 
+    /** UUIDv7 asignado a mano, por el mismo motivo que el de {@link Venta}. */
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
     @Column(name = "id_venta", nullable = false)
@@ -40,15 +41,15 @@ public class DetalleVenta {
     @Column(nullable = false)
     private int cantidad;
 
-    @Column(name = "precio_unitario", nullable = false)
-    private float precioUnitario;
+    @Column(name = "precio_unitario", nullable = false, precision = 12, scale = 2)
+    private BigDecimal precioUnitario;
 
     // Costo del producto al momento de vender. Congelarlo acá es lo que permite calcular
     // la ganancia real después, aunque el costo del producto cambie más adelante.
-    @Column(name = "costo_unitario")
-    private Float costoUnitario;
+    @Column(name = "costo_unitario", precision = 12, scale = 2)
+    private BigDecimal costoUnitario;
 
-    @CreationTimestamp
+    /** La fecha del ticket, no la del INSERT. Ver {@link Venta#getCreatedAt()}. */
     @Column(name = "created_at", updatable = false, nullable = false)
     private LocalDateTime createdAt;
 
@@ -59,4 +60,20 @@ public class DetalleVenta {
     @Builder.Default
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt = null;
+
+    /** Ver {@link Venta#isNew()}: el id asignado a mano obliga a decirlo explícitamente. */
+    @Builder.Default
+    @Transient
+    private boolean nuevo = true;
+
+    @Override
+    public boolean isNew() {
+        return nuevo;
+    }
+
+    @PostLoad
+    @PrePersist
+    void yaEstaEnLaBase() {
+        this.nuevo = false;
+    }
 }

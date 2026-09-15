@@ -22,10 +22,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.SyncVentasApi;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.VentasApi;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.ResumenDiarioResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.SyncLoteRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.SyncLoteResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaResponse;
 import com.SolucionesInformaticasBA.minimarket.shared.Paginacion;
@@ -42,11 +45,47 @@ import lombok.AllArgsConstructor;
 public class VentaController {
 
     private final VentasApi ventasApi;
+    private final SyncVentasApi syncVentasApi;
 
     @PostMapping("/v1")
     public ResponseEntity<VentaResponse> realizarVenta(
             @Valid @RequestBody VentaRequest request) {
         return ResponseEntity.ok(ventasApi.realizarVenta(SecurityUtils.getCurrentUserId(), request));
+    }
+
+    /**
+     * Recibe la cola de eventos de una caja que estuvo sin conexión.
+     *
+     * <p>Responde siempre {@code 200} con un resultado por evento: un ticket que falla no puede
+     * impedir que entren los otros diecinueve del lote. Los únicos {@code 4xx} son los del lote
+     * entero —JSON ilegible, lote vacío o por encima del tope—, donde no hay nada por ítem que
+     * informar.
+     *
+     * <p>Quien llama es <b>quien sincroniza</b>, no necesariamente quien vendió: el vendedor de
+     * cada ticket viaja en el payload porque es un hecho de hace dos días. Es la única
+     * excepción a la regla de que la identidad sale siempre del JWT, y queda auditada con el
+     * par {@code id_usuario_sync} / {@code origen = OFFLINE}.
+     */
+    @PostMapping("/v1/sync")
+    public ResponseEntity<SyncLoteResponse> sincronizar(@Valid @RequestBody SyncLoteRequest request) {
+        return ResponseEntity.ok(
+            syncVentasApi.sincronizar(SecurityUtils.getCurrentUserId(), request));
+    }
+
+    /**
+     * Lo que la sincronización dejó para mirar: stock que hubo que regularizar y totales que no
+     * coincidieron. Solo ADMIN, como el resto de lo que expone el estado del negocio.
+     *
+     * <p>No son ventas con problemas: son ventas válidas que apuntan a uno. Lo que corresponde
+     * hacer con una regularización es <b>contar ese producto</b>, con el ajuste contra conteo
+     * físico que ya existe.
+     */
+    @GetMapping("/v1/revision")
+    public ResponseEntity<Page<VentaResponse>> getParaRevision(
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
+        return ResponseEntity.ok(ventasApi.getParaRevision(pagina(page, size)));
     }
 
     @GetMapping("/v1/{id}")

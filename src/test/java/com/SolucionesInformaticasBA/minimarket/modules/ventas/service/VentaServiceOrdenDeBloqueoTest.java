@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
@@ -48,6 +49,7 @@ class VentaServiceOrdenDeBloqueoTest {
     @Mock private LoteRepository loteRepository;
     @Mock private MovimientoStockRepository movimientoStockRepository;
     @Mock private CajaApi cajaApi;
+    @Mock private DescontadorStock descontadorStock;
 
     @InjectMocks private VentaService ventaService;
 
@@ -101,13 +103,13 @@ class VentaServiceOrdenDeBloqueoTest {
         manual.setTipo("MANUAL");
         manual.setCantidad(1);
         manual.setNombreManual("Bolsa");
-        manual.setPrecioUnitario(500f);
+        manual.setPrecioUnitario(new BigDecimal("500.00"));
 
         VentaResponse response = ventaService.realizarVenta(ID_USUARIO, ventaCon(manual, linea(ID_PRIMERO, 1)));
 
         assertEquals(List.of("Bolsa", "Agua"),
                 response.getDetalles().stream().map(d -> d.getNombre()).toList());
-        assertEquals(1500f, response.getTotal());
+        assertEquals(new BigDecimal("1500.00"), response.getTotal());
     }
 
     private void prepararVenta() {

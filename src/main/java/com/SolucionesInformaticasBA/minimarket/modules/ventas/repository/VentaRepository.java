@@ -66,6 +66,26 @@ public interface VentaRepository extends JpaRepository<Venta, UUID> {
     List<Venta> findByIdSesionAndCobradaTrueAndDeletedAtIsNull(UUID idSesion);
 
     /**
+     * Ventas que entraron pero dejaron una discrepancia: stock que hubo que regularizar o un
+     * total declarado que no coincidió con el recalculado.
+     *
+     * <p>No son ventas con problemas: son ventas válidas que apuntan a un problema en otro
+     * lado. Lo que hay que hacer con una regularización de stock no es revisar el ticket —el
+     * ticket es correcto— sino <b>contar ese producto</b>. Este listado es el punto de entrada
+     * a ese trabajo.
+     *
+     * <p>El orden de los campos es el del índice {@code ix_ventas_revision (requiere_revision,
+     * deleted_at)}, que es lo que evita recorrer la tabla entera para encontrar un puñado de
+     * filas.
+     */
+    @Query("""
+            SELECT v FROM Venta v
+             WHERE v.requiereRevision = true
+               AND v.deletedAt IS NULL
+            """)
+    Page<Venta> findParaRevision(Pageable pageable);
+
+    /**
      * Ventas que siguen sin cobrar desde antes del límite: son las que están reteniendo stock
      * sin que nadie haya cerrado la operación.
      *

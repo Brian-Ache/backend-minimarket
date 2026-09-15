@@ -28,6 +28,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 
+import com.SolucionesInformaticasBA.minimarket.shared.Importes;
 import com.SolucionesInformaticasBA.minimarket.modules.compras.api.CompraApi;
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
@@ -291,7 +292,7 @@ class ReporteServiceTest {
         venta.setFecha(fechaCobro.minusMinutes(5));
         venta.setFechaCobro(fechaCobro);
         venta.setCobrada(true);
-        venta.setTotal(total);
+        venta.setTotal(Importes.de(total));
         venta.setDetalles(List.of(detalles));
         return venta;
     }
@@ -302,9 +303,9 @@ class ReporteServiceTest {
         detalle.setIdProducto(idProducto);
         detalle.setNombre(nombre);
         detalle.setCantidad(cantidad);
-        detalle.setPrecioUnitario(precioUnitario);
-        detalle.setSubtotal(precioUnitario * cantidad);
-        detalle.setCostoUnitario(costoUnitario);
+        detalle.setPrecioUnitario(Importes.de(precioUnitario));
+        detalle.setSubtotal(Importes.porCantidad(Importes.de(precioUnitario), cantidad));
+        detalle.setCostoUnitario(Importes.deNullable(costoUnitario));
         detalle.setTipo(idProducto == null ? "MANUAL" : "PRODUCTO");
         return detalle;
     }

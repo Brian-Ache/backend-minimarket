@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.service;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -18,13 +19,6 @@ import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.InventarioApi;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto.MovimientoStockRequest;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.Lote;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.entity.MovimientoStock;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.LoteRepository;
-import com.SolucionesInformaticasBA.minimarket.modules.inventario.repository.MovimientoStockRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.ProductosApi;
 import com.SolucionesInformaticasBA.minimarket.modules.productos.api.dto.ProductoResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.usuarios.api.UsuarioApi;
@@ -38,9 +32,12 @@ import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaReque
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.DetalleVenta;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.entity.Venta;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.enums.OrigenVenta;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.repository.DetalleVentaRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.repository.VentaRepository;
+import com.SolucionesInformaticasBA.minimarket.shared.Importes;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
+import com.SolucionesInformaticasBA.minimarket.shared.Uuid7;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ForbiddenException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
@@ -58,10 +55,9 @@ public class VentaService implements VentasApi {
     private final DetalleVentaRepository detalleVentaRepository;
     private final UsuarioApi usuarioApi;
     private final ProductosApi productosApi;
-    private final InventarioApi inventarioApi;
-    private final LoteRepository loteRepository;
-    private final MovimientoStockRepository movimientoStockRepository;
     private final CajaApi cajaApi;
+    private final DescontadorStock descontadorStock;
+    private final AnuladorVentas anuladorVentas;
 
     @Override
     @Transactional
@@ -74,11 +70,20 @@ public class VentaService implements VentasApi {
             throw new BadRequestException("La venta debe tener al menos un detalle");
         }
 
+        // El id y la fecha se asignan acá y no los pone Hibernate. El id porque tiene que ser
+        // un UUIDv7 —el generador de Hibernate produce v4, que fragmenta el índice—, y la
+        // fecha porque created_at pasa a significar cuándo ocurrió el ticket: en una venta
+        // online es ahora, pero en una offline la manda el front y es de hace días.
+        LocalDateTime ocurridoEn = LocalDateTime.now();
+
         // Se guarda primero para tener el id: cada movimiento de stock lo referencia y así
         // la anulación puede revertir exactamente lo que esta venta descontó.
         Venta venta = ventaRepository.save(Venta.builder()
+            .id(Uuid7.nuevo())
             .idUsuario(idUsuario)
-            .total(0)
+            .total(Importes.CERO)
+            .createdAt(ocurridoEn)
+            .origen(OrigenVenta.ONLINE)
             .build());
 
         // El detalle se procesa por orden de bloqueo, no por el orden en que llegó, y cada
@@ -94,7 +99,9 @@ public class VentaService implements VentasApi {
             }
 
             DetalleVenta detalle = new DetalleVenta();
-            float precio;
+            detalle.setId(Uuid7.nuevo());
+            detalle.setCreatedAt(ocurridoEn);
+            BigDecimal precio;
 
             if ("PRODUCTO".equals(d.getTipo())) {
                 if (d.getIdProducto() == null) {
@@ -103,63 +110,32 @@ public class VentaService implements VentasApi {
 
                 ProductoResponse producto = productosApi.getById(d.getIdProducto());
 
-                precio = producto.getPrecio();
+                // El precio y el costo llegan en float desde productos, que todavía no migró.
+                // Importes.de los cruza sin arrastrar la basura binaria del float.
+                precio = Importes.de(producto.getPrecio());
 
                 detalle.setIdProducto(producto.getId());
                 detalle.setNombreProducto(producto.getNombre());
                 // Se congela el costo de hoy: si mañana cambia, la ganancia histórica no se
                 // reescribe. Los ítems MANUAL quedan sin costo (null), no en 0.
-                detalle.setCostoUnitario(producto.getCosto());
+                detalle.setCostoUnitario(Importes.deNullable(producto.getCosto()));
 
-                if (producto.isManejaLotes()) {
-                    int cantidadRestante = d.getCantidad();
-                    // Con lock de fila: sin él, dos ventas simultáneas del mismo producto
-                    // descontaban las dos sobre la misma cantidad leída y se vendía de más.
-                    List<Lote> lotes = loteRepository.findParaDescuentoFefo(producto.getId());
-                    for (Lote lote : lotes) {
-                        if (cantidadRestante <= 0) break;
-                        if (lote.getCantidad() <= 0) continue;
-
-                        int descontar = Math.min(lote.getCantidad(), cantidadRestante);
-                        lote.setCantidad(lote.getCantidad() - descontar);
-                        loteRepository.save(lote);
-                        cantidadRestante -= descontar;
-
-                        MovimientoStock m = MovimientoStock.builder()
-                            .idProducto(producto.getId())
-                            .idLote(lote.getId())
-                            .cantidad(-descontar)
-                            .tipo(TipoMovimiento.VENTA)
-                            .motivo("Venta realizada (FEFO)")
-                            .idUsuario(idUsuario)
-                            .idReferencia(venta.getId())
-                            .build();
-                        movimientoStockRepository.save(m);
-                    }
-                    if (cantidadRestante > 0) {
-                        throw new BadRequestException("Stock insuficiente en lotes para el producto " + producto.getNombre());
-                    }
-                } else {
-                    inventarioApi.disminuir(MovimientoStockRequest.builder()
-                        .idProducto(producto.getId())
-                        .cantidad(d.getCantidad())
-                        .tipo("VENTA")
-                        .motivo("Venta realizada")
-                        .idUsuario(idUsuario)
-                        .idReferencia(venta.getId())
-                        .build());
-                }
+                // El descuento vive en un colaborador porque el flujo de sincronización hace
+                // exactamente lo mismo, y dos copias de este loop es la forma más probable de
+                // que un día tomen los locks de lote en órdenes distintos.
+                descontadorStock.descontar(producto, d.getCantidad(), idUsuario, venta.getId());
 
             } else if ("MANUAL".equals(d.getTipo())) {
                 if (d.getNombreManual() == null || d.getNombreManual().isBlank()) {
                     throw new BadRequestException("nombreManual requerido para tipo MANUAL");
                 }
 
-                if (d.getPrecioUnitario() <= 0) {
+                if (d.getPrecioUnitario() == null
+                        || d.getPrecioUnitario().compareTo(BigDecimal.ZERO) <= 0) {
                     throw new BadRequestException("precioUnitario debe ser mayor a 0 para tipo MANUAL");
                 }
 
-                precio = d.getPrecioUnitario();
+                precio = Importes.normalizar(d.getPrecioUnitario());
 
                 detalle.setIdProducto(null);
                 detalle.setNombreProducto(d.getNombreManual());
@@ -176,11 +152,13 @@ public class VentaService implements VentasApi {
 
         List<DetalleVenta> detalles = new ArrayList<>(Arrays.asList(procesados));
 
-        // El total se suma en el orden del ticket y no en el de bloqueo: con float, cambiar el
-        // orden de la suma puede correr el último centavo.
-        float total = 0;
+        // El total se suma en el orden del ticket y no en el de bloqueo. Con BigDecimal la suma
+        // es asociativa y el orden ya no cambia el resultado, pero se mantiene porque es el
+        // mismo recorrido que va a hacer el front al armar su ticket: si alguna vez las dos
+        // cuentas no coinciden, que no sea por el orden.
+        BigDecimal total = Importes.CERO;
         for (DetalleVenta d : detalles) {
-            total += d.getPrecioUnitario() * d.getCantidad();
+            total = total.add(Importes.porCantidad(d.getPrecioUnitario(), d.getCantidad()));
         }
 
         venta.setTotal(total);
@@ -220,6 +198,18 @@ public class VentaService implements VentasApi {
         return toVentaResponsePage(ventaRepository.findFiltradas(idUsuario, pageable), pageable);
     }
 
+    /**
+     * Lo que quedó marcado para mirar: regularizaciones de stock y diferencias de total.
+     *
+     * <p>Son ventas válidas y ya sincronizadas. Lo que corresponde hacer con una regularización
+     * no es revisar el ticket sino contar ese producto, con el ajuste contra conteo físico que
+     * ya existe.
+     */
+    @Override
+    public Page<VentaResponse> getParaRevision(Pageable pageable) {
+        return toVentaResponsePage(ventaRepository.findParaRevision(pageable), pageable);
+    }
+
     @Override
     public List<VentaResponse> getByFechaCobradas(LocalDateTime desde, LocalDateTime hasta) {
         validarRango(desde, hasta);
@@ -248,10 +238,15 @@ public class VentaService implements VentasApi {
     }
 
     /**
-     * Anula una venta no cobrada y devuelve la mercadería al stock.
+     * Anula una venta y devuelve la mercadería al stock.
      *
-     * <p>Una venta ya cobrada no se anula: movió plata y puede estar dentro de un corte
-     * cerrado. Para eso corresponde un flujo de devolución, que hoy no existe.
+     * <p><b>Una venta cobrada ahora sí se anula.</b> Estaba prohibido de forma explícita, y era
+     * coherente mientras no existiera una ventana: hoy, con siete días, el 100% de lo anulable
+     * está cobrado. Si movió efectivo, la plata vuelve por el turno abierto de hoy.
+     *
+     * <p>Quién puede anular qué lo decide {@link AnuladorVentas#validarPermiso}, que es el mismo
+     * lugar por el que pasa la anulación que llega del front offline: no puede haber una puerta
+     * más permisiva que la otra.
      */
     @Override
     @Transactional
@@ -259,12 +254,9 @@ public class VentaService implements VentasApi {
         Venta venta = ventaRepository.findByIdAndDeletedAtIsNull(id)
             .orElseThrow(() -> new ResourceNotFoundException("Venta no encontrada"));
 
-        if (Boolean.TRUE.equals(venta.getCobrada())) {
-            throw new BadRequestException(
-                "No se puede anular una venta ya cobrada. Registrá una devolución.");
-        }
-
-        anular(venta, SecurityUtils.getCurrentUserId());
+        UUID actor = SecurityUtils.getCurrentUserId();
+        anuladorVentas.validarPermiso(venta, actor, SecurityUtils.esAdmin());
+        anuladorVentas.anular(venta, actor, LocalDateTime.now());
     }
 
     /**
@@ -282,79 +274,7 @@ public class VentaService implements VentasApi {
         if (venta == null || Boolean.TRUE.equals(venta.getCobrada())) {
             return;
         }
-        anular(venta, null);
-    }
-
-    /** @param idUsuario quién anula; null cuando la anulación la dispara el sistema. */
-    private void anular(Venta venta, UUID idUsuario) {
-        LocalDateTime ahora = LocalDateTime.now();
-
-        revertirStock(venta, idUsuario);
-
-        venta.setDeletedAt(ahora);
-        ventaRepository.save(venta);
-
-        List<DetalleVenta> detalles =
-            detalleVentaRepository.findByIdVentaAndDeletedAtIsNull(venta.getId());
-        for (DetalleVenta d : detalles) {
-            d.setDeletedAt(ahora);
-        }
-        detalleVentaRepository.saveAll(detalles);
-    }
-
-    /**
-     * Devuelve al stock lo que descontó la venta, apoyándose en los movimientos que la
-     * referencian. Trabajar sobre los movimientos —y no sobre los detalles— es lo que permite
-     * reponer cada lote exactamente en la cantidad de la que se sacó cuando el FEFO repartió
-     * una línea entre varios lotes.
-     *
-     * <p>Los movimientos originales no se borran: la reversa se registra como un movimiento
-     * nuevo, para no perder la trazabilidad de lo que pasó.
-     */
-    private void revertirStock(Venta venta, UUID idUsuario) {
-        List<MovimientoStock> movimientos = new ArrayList<>(
-            movimientoStockRepository.findByIdReferenciaAndTipoAndDeletedAtIsNull(
-                venta.getId(), TipoMovimiento.VENTA));
-
-        // Mismo orden de bloqueo que la venta que se está anulando: por producto ascendente y,
-        // dentro de cada producto, los lotes en el orden del FEFO (que es el que impone
-        // findParaDescuentoFefo, ver reservarLotes). Sin esto, una anulación y una venta del
-        // mismo producto podían tomarse los lotes en orden cruzado y trabarse entre sí.
-        movimientos.sort(Comparator.comparing(MovimientoStock::getIdProducto,
-                Comparator.nullsLast(Comparator.naturalOrder())));
-        reservarLotes(movimientos);
-
-        for (MovimientoStock m : movimientos) {
-            int aReponer = Math.abs(m.getCantidad());
-            if (aReponer == 0) continue;
-
-            if (m.getIdLote() != null) {
-                Lote lote = loteRepository.findByIdParaActualizar(m.getIdLote())
-                    .orElseThrow(() -> new BadRequestException(
-                        "No se puede revertir la venta: falta el lote " + m.getIdLote()));
-                lote.setCantidad(lote.getCantidad() + aReponer);
-                loteRepository.save(lote);
-
-                movimientoStockRepository.save(MovimientoStock.builder()
-                    .idProducto(m.getIdProducto())
-                    .idLote(lote.getId())
-                    .cantidad(aReponer)
-                    .tipo(TipoMovimiento.AJUSTE)
-                    .motivo("Reversa por anulación de venta " + venta.getId())
-                    .idUsuario(idUsuario)
-                    .idReferencia(venta.getId())
-                    .build());
-            } else {
-                inventarioApi.aumentar(MovimientoStockRequest.builder()
-                    .idProducto(m.getIdProducto())
-                    .cantidad(aReponer)
-                    .tipo("AJUSTE")
-                    .motivo("Reversa por anulación de venta " + venta.getId())
-                    .idUsuario(idUsuario)
-                    .idReferencia(venta.getId())
-                    .build());
-            }
-        }
+        anuladorVentas.anular(venta, null, LocalDateTime.now());
     }
 
     /**
@@ -375,20 +295,6 @@ public class VentaService implements VentasApi {
             .toList();
     }
 
-    /**
-     * Toma por adelantado el lock de los lotes de cada producto involucrado, en el orden del
-     * FEFO. La reversa recorre movimientos, o sea un lote suelto por vez y en el orden en que
-     * se vendieron; sin esta pasada previa bloquearía los lotes de un producto en un orden
-     * distinto al que usa el resto del sistema, que es justo lo que abre el ciclo.
-     */
-    private void reservarLotes(List<MovimientoStock> movimientos) {
-        movimientos.stream()
-            .filter(m -> m.getIdLote() != null)
-            .map(MovimientoStock::getIdProducto)
-            .distinct()
-            .forEach(loteRepository::findParaDescuentoFefo);
-    }
-
     @Override
     @Transactional
     public CobrarVentaResponse cobrar(UUID idVenta, UUID idUsuario, CobrarVentaRequest request) {
@@ -401,22 +307,24 @@ public class VentaService implements VentasApi {
         // El monto recibido es la plata que el cliente pone sobre el mostrador: se exige, se
         // valida y se guarda solo cuando se cobra en efectivo. Con tarjeta o transferencia no
         // existe tal cosa, y guardarlo dejaba la columna con un número que no significaba nada.
+        BigDecimal montoRecibido = Importes.normalizar(request.getMontoRecibido());
         if (enEfectivo) {
-            if (request.getMontoRecibido() == null) {
+            if (montoRecibido == null) {
                 throw new BadRequestException("El monto recibido es obligatorio para cobrar en efectivo");
             }
-            if (request.getMontoRecibido() < venta.getTotal()) {
+            if (montoRecibido.compareTo(venta.getTotal()) < 0) {
                 throw new BadRequestException("El monto recibido es menor al total de la venta");
             }
         }
 
-        // Solo hay vuelto si se paga en efectivo.
-        float cambio = enEfectivo ? request.getMontoRecibido() - venta.getTotal() : 0;
+        // Solo hay vuelto si se paga en efectivo. Con DECIMAL la resta es exacta: se acabaron
+        // los vueltos de 149.99999 que había que redondear para mostrar.
+        BigDecimal cambio = enEfectivo ? montoRecibido.subtract(venta.getTotal()) : Importes.CERO;
 
         venta.setCobrada(true);
         venta.setFechaCobro(LocalDateTime.now());
         venta.setMetodoPago(metodoPago);
-        venta.setMontoRecibido(enEfectivo ? request.getMontoRecibido() : null);
+        venta.setMontoRecibido(enEfectivo ? montoRecibido : null);
 
         // Solo el efectivo entra a la caja: la tarjeta y la transferencia quedan registradas
         // en la venta (metodo_pago) pero no forman parte del arqueo, que cuenta billetes.
@@ -425,8 +333,13 @@ public class VentaService implements VentasApi {
         if (enEfectivo) {
             UUID idSesion = cajaApi.getIdSesionActiva();
             venta.setIdSesion(idSesion);
+            // Frontera con caja, que sigue llevando la plata en float: acá se pierde la
+            // exactitud que la venta sí tiene. Es la deuda técnica #1 del roadmap y se salda
+            // cuando migren los importes de caja y compras.
+            // Fecha null: el cobro ocurre ahora, con el cajero frente a la pantalla.
             cajaApi.registrarEntradaAutomatica(
-                idSesion, idUsuario, venta.getTotal(), OrigenMovimientoCaja.VENTA, venta.getId());
+                idSesion, idUsuario, Importes.aFloat(venta.getTotal()),
+                OrigenMovimientoCaja.VENTA, venta.getId(), null);
         } else {
             // La venta con tarjeta o transferencia igual pertenece al turno: se la asocia
             // para poder reportarla en el cierre, pero sin generar movimiento de caja.
@@ -468,19 +381,19 @@ public class VentaService implements VentasApi {
 
     private ResumenDiarioResponse toResumen(LocalDate fecha, List<Venta> ventas) {
         int cantidadVentas = ventas.size();
-        float totalVentas = 0;
-        float totalEfectivo = 0;
-        float totalTarjeta = 0;
-        float totalTransferencia = 0;
+        BigDecimal totalVentas = Importes.CERO;
+        BigDecimal totalEfectivo = Importes.CERO;
+        BigDecimal totalTarjeta = Importes.CERO;
+        BigDecimal totalTransferencia = Importes.CERO;
 
         for (Venta v : ventas) {
-            totalVentas += v.getTotal();
+            totalVentas = totalVentas.add(v.getTotal());
             if ("EFECTIVO".equals(v.getMetodoPago())) {
-                totalEfectivo += v.getTotal();
+                totalEfectivo = totalEfectivo.add(v.getTotal());
             } else if ("TARJETA".equals(v.getMetodoPago())) {
-                totalTarjeta += v.getTotal();
+                totalTarjeta = totalTarjeta.add(v.getTotal());
             } else if ("TRANSFERENCIA".equals(v.getMetodoPago())) {
-                totalTransferencia += v.getTotal();
+                totalTransferencia = totalTransferencia.add(v.getTotal());
             }
         }
 
@@ -544,6 +457,10 @@ public class VentaService implements VentasApi {
         response.setFechaCobro(venta.getFechaCobro());
         response.setMetodoPago(venta.getMetodoPago());
         response.setMontoRecibido(venta.getMontoRecibido());
+        response.setOrigen(venta.getOrigen() == null ? null : venta.getOrigen().name());
+        response.setDispositivo(venta.getDispositivo());
+        response.setSincronizadoEn(venta.getSincronizadoEn());
+        response.setRequiereRevision(venta.isRequiereRevision());
         return response;
     }
 
@@ -560,7 +477,7 @@ public class VentaService implements VentasApi {
         }
         response.setCantidad(detalle.getCantidad());
         response.setPrecioUnitario(detalle.getPrecioUnitario());
-        response.setSubtotal(detalle.getPrecioUnitario() * detalle.getCantidad());
+        response.setSubtotal(Importes.porCantidad(detalle.getPrecioUnitario(), detalle.getCantidad()));
         response.setCostoUnitario(detalle.getCostoUnitario());
 
         return response;

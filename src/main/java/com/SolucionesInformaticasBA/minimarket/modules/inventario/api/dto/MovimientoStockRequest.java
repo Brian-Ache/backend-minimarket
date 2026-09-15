@@ -1,5 +1,6 @@
 package com.SolucionesInformaticasBA.minimarket.modules.inventario.api.dto;
 
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 import jakarta.validation.constraints.NotBlank;
@@ -32,4 +33,17 @@ public class MovimientoStockRequest {
 
     /** Venta o compra que originó el movimiento. Permite revertirlo al anularla. */
     private UUID idReferencia;
+
+    /**
+     * Cuándo ocurrió el movimiento en el local.
+     *
+     * <p>Null en todo el flujo online, donde ocurre ahora. La manda el flujo de sincronización,
+     * porque un ticket creado sin conexión sacó la mercadería hace dos días y el kardex tiene
+     * que mostrarlo ese día: si no, muestra la mercadería saliendo después de la venta que la
+     * sacó.
+     *
+     * <p>No la acepta el controller: es un dato interno del servidor, igual que idUsuario y
+     * idReferencia.
+     */
+    private LocalDateTime fecha;
 }

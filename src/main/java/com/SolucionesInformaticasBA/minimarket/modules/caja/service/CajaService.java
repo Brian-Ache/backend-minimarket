@@ -26,6 +26,7 @@ import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimien
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.TipoMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.repository.MovimientoCajaRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.repository.SesionCajaRepository;
+import com.SolucionesInformaticasBA.minimarket.shared.Uuid7;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
@@ -41,19 +42,45 @@ public class CajaService implements CajaApi {
     @Override
     @Transactional
     public SesionCajaResponse abrirSesion(UUID idUsuario, AbrirSesionRequest request) {
+        // El turno que abre con conexión abre ahora y estrena su propio uuid; el que abrió sin
+        // ella trae los dos datos del dispositivo. De ahí para abajo es el mismo camino.
+        return abrirSesion(Uuid7.nuevo(), idUsuario, request.getSaldoInicial(), LocalDateTime.now());
+    }
+
+    /**
+     * La apertura de un turno que ocurrió sin conexión, con su uuid y su fecha del local.
+     *
+     * <p>El turno abrió a las ocho de la mañana de anteayer y el lote llega hoy: si la fecha la
+     * pusiera el INSERT, el corte de ese turno quedaría fechado hoy y el arqueo de dos días
+     * aparecería como si fuera de una sola mañana.
+     */
+    @Override
+    @Transactional
+    public SesionCajaResponse abrirSesionSincronizada(UUID idSesion, UUID idUsuario,
+                                                      float saldoInicial,
+                                                      LocalDateTime fechaApertura) {
+        return abrirSesion(idSesion, idUsuario, saldoInicial, fechaApertura);
+    }
+
+    private SesionCajaResponse abrirSesion(UUID idSesion, UUID idUsuario, float saldoInicial,
+                                           LocalDateTime fechaApertura) {
+        // La comprobación explícita además del índice único: uk_sesiones_una_abierta también lo
+        // impide, pero una violación de índice sale como un error opaco de la base y el front
+        // no puede distinguirla de un fallo cualquiera.
         if (sesionCajaRepository.findTopByEstadoAndDeletedAtIsNullOrderByCreatedAtDesc(EstadoSesion.ABIERTA).isPresent()) {
             throw new BadRequestException("Ya existe una sesión de caja abierta. Debe cerrarla antes de abrir una nueva.");
         }
 
         SesionCaja sesion = SesionCaja.builder()
-            .fechaApertura(LocalDateTime.now())
-            .saldoInicial(request.getSaldoInicial())
+            .id(idSesion)
+            .fechaApertura(fechaApertura)
+            .saldoInicial(saldoInicial)
             .idUsuarioApertura(idUsuario)
             .estado(EstadoSesion.ABIERTA)
             // Lo contado al abrir contra lo que dejó el cierre anterior. No se rechaza la
             // apertura: el comercio tiene que poder trabajar aunque la caja no cuadre, y un
             // faltante entre turnos es justamente lo que hay que dejar anotado.
-            .diferenciaApertura(diferenciaConElCierreAnterior(request.getSaldoInicial()))
+            .diferenciaApertura(diferenciaConElCierreAnterior(saldoInicial))
             .build();
 
         return toSesionResponse(sesionCajaRepository.save(sesion));
@@ -125,7 +152,8 @@ public class CajaService implements CajaApi {
     @Override
     @Transactional
     public MovimientoCajaResponse registrarEntradaAutomatica(
-            UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia) {
+            UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen,
+            UUID idReferencia, LocalDateTime fecha) {
         exigirSesionAbierta(idSesion);
         MovimientoCaja movimiento = MovimientoCaja.builder()
             .idSesion(idSesion)
@@ -134,6 +162,7 @@ public class CajaService implements CajaApi {
             .idUsuario(idUsuario)
             .origen(origen)
             .idReferencia(idReferencia)
+            .createdAt(fecha)
             .build();
         return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
@@ -141,7 +170,8 @@ public class CajaService implements CajaApi {
     @Override
     @Transactional
     public MovimientoCajaResponse registrarSalidaAutomatica(
-            UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia) {
+            UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen,
+            UUID idReferencia, LocalDateTime fecha) {
         exigirSesionAbierta(idSesion);
         MovimientoCaja movimiento = MovimientoCaja.builder()
             .idSesion(idSesion)
@@ -150,6 +180,7 @@ public class CajaService implements CajaApi {
             .idUsuario(idUsuario)
             .origen(origen)
             .idReferencia(idReferencia)
+            .createdAt(fecha)
             .build();
         return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
@@ -273,6 +304,35 @@ public class CajaService implements CajaApi {
         // que además ya le había devuelto al usuario un corte que no quedó guardado.
         SesionCaja sesion = sesionCajaRepository.findAbiertaParaActualizar()
             .orElseThrow(() -> new BadRequestException("No hay una sesión de caja abierta"));
+        return cerrar(sesion, idUsuario, request, LocalDateTime.now());
+    }
+
+    /**
+     * El corte de un turno que se cerró sin conexión.
+     *
+     * <p>Exige que el turno sea <b>ese</b>: el uuid viene del evento, no se resuelve con "el que
+     * está abierto ahora". El saldo esperado se calcula acá y no lo manda el front, porque el
+     * front no conoce los movimientos que el backend registró —una compra pagada por caja, un
+     * retiro—; lo que sí manda es el conteo físico, que es lo único que el dispositivo sabe y el
+     * backend no puede saber.
+     */
+    @Override
+    @Transactional
+    public CorteResponse realizarCorteSincronizado(UUID idSesion, UUID idUsuario,
+                                                   CorteRequest request,
+                                                   LocalDateTime fechaCierre) {
+        SesionCaja sesion = sesionCajaRepository.findAbiertaParaActualizar()
+            .orElseThrow(() -> new BadRequestException("No hay una sesión de caja abierta"));
+
+        if (!sesion.getId().equals(idSesion)) {
+            throw new BadRequestException(
+                "El turno que se quiere cerrar no es el que está abierto");
+        }
+        return cerrar(sesion, idUsuario, request, fechaCierre);
+    }
+
+    private CorteResponse cerrar(SesionCaja sesion, UUID idUsuario, CorteRequest request,
+                                 LocalDateTime fechaCierre) {
 
         ResumenCajaResponse resumen = calcularResumen(
             // El corte es un documento contable y esta fecha queda archivada: va la del turno,
@@ -293,7 +353,7 @@ public class CajaService implements CajaApi {
         sesion.setMontoRetirado(request.getMontoRetirado());
         sesion.setSaldoDejado(request.getSaldoReal() - request.getMontoRetirado());
         sesion.setObservaciones(request.getObservaciones());
-        sesion.setFechaCierre(LocalDateTime.now());
+        sesion.setFechaCierre(fechaCierre);
         sesion.setIdUsuarioCierre(idUsuario);
         sesion.setEstado(EstadoSesion.CERRADA);
 
@@ -321,6 +381,11 @@ public class CajaService implements CajaApi {
                 .idUsuario(idUsuario)
                 .origen(OrigenMovimientoCaja.RETIRO)
                 .idReferencia(cerrada.getId())
+                // La misma fecha que el cierre: la plata salió del cajón cuando se hizo el
+                // corte. Fechándola ahora, en un turno sincronizado el retiro cae fuera de la
+                // vida de su propio turno y el resumen de caja por fecha lo ve dos días
+                // después del corte que lo produjo.
+                .createdAt(fechaCierre)
                 .build());
         }
 

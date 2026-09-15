@@ -1,5 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto;
 
+import java.math.BigDecimal;
+
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Data;
@@ -13,7 +15,7 @@ public class CobrarVentaRequest {
      * como si fuera un dato real. Con esos medios se ignora.
      */
     @PositiveOrZero
-    private Float montoRecibido;
+    private BigDecimal montoRecibido;
 
     @NotBlank
     private String metodoPago;

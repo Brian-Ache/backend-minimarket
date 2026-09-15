@@ -53,7 +53,7 @@ class CajaServiceMovimientosAutomaticosTest {
 
         BadRequestException ex = assertThrows(BadRequestException.class,
                 () -> cajaService.registrarEntradaAutomatica(
-                        ID_SESION, ID_USUARIO, 1500f, OrigenMovimientoCaja.VENTA, ID_VENTA));
+                        ID_SESION, ID_USUARIO, 1500f, OrigenMovimientoCaja.VENTA, ID_VENTA, null));
 
         assertEquals("El turno de caja ya está cerrado: no se le pueden imputar movimientos nuevos",
                 ex.getMessage());
@@ -67,7 +67,7 @@ class CajaServiceMovimientosAutomaticosTest {
 
         assertThrows(ResourceNotFoundException.class,
                 () -> cajaService.registrarSalidaAutomatica(
-                        ID_SESION, ID_USUARIO, 500f, OrigenMovimientoCaja.COMPRA, ID_VENTA));
+                        ID_SESION, ID_USUARIO, 500f, OrigenMovimientoCaja.COMPRA, ID_VENTA, null));
 
         verify(movimientoCajaRepository, never()).saveAndFlush(any());
     }
@@ -80,7 +80,7 @@ class CajaServiceMovimientosAutomaticosTest {
         when(movimientoCajaRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         cajaService.registrarEntradaAutomatica(
-                ID_SESION, ID_USUARIO, 1500f, OrigenMovimientoCaja.VENTA, ID_VENTA);
+                ID_SESION, ID_USUARIO, 1500f, OrigenMovimientoCaja.VENTA, ID_VENTA, null);
 
         ArgumentCaptor<MovimientoCaja> captor = ArgumentCaptor.forClass(MovimientoCaja.class);
         verify(movimientoCajaRepository).saveAndFlush(captor.capture());

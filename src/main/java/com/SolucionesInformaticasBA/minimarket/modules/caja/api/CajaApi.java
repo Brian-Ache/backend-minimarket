@@ -19,6 +19,13 @@ import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimien
 
 public interface CajaApi {
     SesionCajaResponse abrirSesion(UUID idUsuario, AbrirSesionRequest request);
+
+    /**
+     * Apertura de un turno que ocurrió sin conexión: el uuid y la fecha los trae el dispositivo.
+     * Sigue valiendo que no puede haber dos turnos abiertos a la vez.
+     */
+    SesionCajaResponse abrirSesionSincronizada(UUID idSesion, UUID idUsuario, float saldoInicial,
+        LocalDateTime fechaApertura);
     SesionCajaResponse getSesionActiva();
 
     /**
@@ -40,9 +47,15 @@ public interface CajaApi {
      * Movimientos que escribe el sistema al registrar un comprobante. Exigen que la sesión
      * exista y siga abierta: aceptaban cualquier id, así que se podía imputar plata a un turno
      * ya cerrado y correrle el arqueo a un corte firmado.
+     *
+     * <p>La {@code fecha} es cuándo ocurrió el movimiento en el local. Null en todo el flujo
+     * online, donde ocurre ahora; la manda el flujo de sincronización, porque la plata de un
+     * ticket de anteayer entró a la caja anteayer y el arqueo tiene que verlo ese día.
      */
-    MovimientoCajaResponse registrarEntradaAutomatica(UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia);
-    MovimientoCajaResponse registrarSalidaAutomatica(UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen, UUID idReferencia);
+    MovimientoCajaResponse registrarEntradaAutomatica(UUID idSesion, UUID idUsuario, float monto,
+        OrigenMovimientoCaja origen, UUID idReferencia, LocalDateTime fecha);
+    MovimientoCajaResponse registrarSalidaAutomatica(UUID idSesion, UUID idUsuario, float monto,
+        OrigenMovimientoCaja origen, UUID idReferencia, LocalDateTime fecha);
 
     /**
      * Movimientos del turno abierto —sin fechas— o de un rango. El rango es semiabierto y las
@@ -54,6 +67,13 @@ public interface CajaApi {
     ResumenCajaResponse getResumenDiario(LocalDate fecha);
 
     CorteResponse realizarCorte(UUID idUsuario, CorteRequest request);
+
+    /**
+     * Corte de un turno que se cerró sin conexión. Exige que el turno abierto sea justamente
+     * {@code idSesion}: no se resuelve con "el que está abierto ahora".
+     */
+    CorteResponse realizarCorteSincronizado(UUID idSesion, UUID idUsuario, CorteRequest request,
+        LocalDateTime fechaCierre);
     CorteResponse getCorteById(UUID id);
     CorteResponse getUltimoCorte();
     /** Paginado: suma una fila por turno cerrado y crece para siempre. */

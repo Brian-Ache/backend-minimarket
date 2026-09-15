@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -101,12 +102,12 @@ class VentaServiceListadosTest {
         when(cajaApi.getSesionById(ID_SESION)).thenReturn(SesionCajaResponse.builder()
                 .id(ID_SESION).fechaApertura(apertura).build());
         when(ventaRepository.findByIdSesionAndCobradaTrueAndDeletedAtIsNull(ID_SESION))
-                .thenReturn(List.of(ventaCobrada("EFECTIVO", 1500f)));
+                .thenReturn(List.of(ventaCobrada("EFECTIVO", "1500.00")));
 
         ResumenDiarioResponse resumen = ventaService.getResumenPorSesion(ID_SESION);
 
         assertEquals(apertura.toLocalDate(), resumen.getFecha());
-        assertEquals(1500f, resumen.getTotalEfectivo());
+        assertEquals(new BigDecimal("1500.00"), resumen.getTotalEfectivo());
         assertEquals(1, resumen.getCantidadVentas());
     }
 
@@ -116,16 +117,16 @@ class VentaServiceListadosTest {
         when(cajaApi.getSesionById(ID_SESION)).thenReturn(SesionCajaResponse.builder()
                 .id(ID_SESION).fechaApertura(LocalDateTime.now()).build());
         when(ventaRepository.findByIdSesionAndCobradaTrueAndDeletedAtIsNull(ID_SESION))
-                .thenReturn(List.of(ventaCobrada("EFECTIVO", 1000f),
-                        ventaCobrada("TARJETA", 2000f),
-                        ventaCobrada("TRANSFERENCIA", 500f)));
+                .thenReturn(List.of(ventaCobrada("EFECTIVO", "1000.00"),
+                        ventaCobrada("TARJETA", "2000.00"),
+                        ventaCobrada("TRANSFERENCIA", "500.00")));
 
         ResumenDiarioResponse resumen = ventaService.getResumenPorSesion(ID_SESION);
 
-        assertEquals(1000f, resumen.getTotalEfectivo());
-        assertEquals(2000f, resumen.getTotalTarjeta());
-        assertEquals(500f, resumen.getTotalTransferencia());
-        assertEquals(3500f, resumen.getTotalVentas());
+        assertEquals(new BigDecimal("1000.00"), resumen.getTotalEfectivo());
+        assertEquals(new BigDecimal("2000.00"), resumen.getTotalTarjeta());
+        assertEquals(new BigDecimal("500.00"), resumen.getTotalTransferencia());
+        assertEquals(new BigDecimal("3500.00"), resumen.getTotalVentas());
     }
 
     @Test
@@ -187,16 +188,16 @@ class VentaServiceListadosTest {
         return Venta.builder()
                 .id(ID_VENTA)
                 .idUsuario(ID_DUENIO)
-                .total(1500f)
+                .total(new BigDecimal("1500.00"))
                 .cobrada(false)
                 .createdAt(LocalDateTime.now())
                 .build();
     }
 
-    private Venta ventaCobrada(String metodoPago, float total) {
+    private Venta ventaCobrada(String metodoPago, String total) {
         Venta v = venta();
         v.setId(UUID.randomUUID());
-        v.setTotal(total);
+        v.setTotal(new BigDecimal(total));
         v.setCobrada(true);
         v.setMetodoPago(metodoPago);
         v.setFechaCobro(LocalDateTime.now());
@@ -209,7 +210,7 @@ class VentaServiceListadosTest {
                 .idVenta(ID_VENTA)
                 .nombreProducto("Leche")
                 .cantidad(1)
-                .precioUnitario(1500f)
+                .precioUnitario(new BigDecimal("1500.00"))
                 .build();
     }
 }

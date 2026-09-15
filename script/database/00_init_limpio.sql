@@ -281,41 +281,60 @@ CREATE TABLE IF NOT EXISTS movimientos_caja (
         CHECK (origen IS NULL OR origen IN ('MANUAL','VENTA','COMPRA','REVERSA','RETIRO'))
 ) ENGINE = InnoDB;
 
+-- El id lo puede generar el backend o el front —un ticket creado sin conexion trae el
+-- suyo—, y en los dos casos es un UUIDv7: sus 48 bits altos son el timestamp, asi que
+-- como clustered index de InnoDB las inserciones quedan casi secuenciales. Un v4 aca
+-- fragmenta las paginas, y por eso el endpoint de sync rechaza lo que no sea v7.
+--
+-- created_at es cuando ocurrio el ticket, no cuando se inserto la fila: en una venta
+-- offline la manda el front y puede ser de hace dos dias. sincronizado_en es cuando
+-- llego a MySQL, y queda NULL en las ventas online.
+--
+-- Los importes van en DECIMAL: el total lo suma tambien el front y las dos cuentas
+-- tienen que dar igual, cosa que con FLOAT no pasa.
 CREATE TABLE IF NOT EXISTS ventas (
-    id              BINARY(16)  NOT NULL,
-    id_usuario      BINARY(16)  NOT NULL,
-    total           FLOAT       NOT NULL,
-    cobrada         BIT(1)      NULL DEFAULT b'0',
-    fecha_cobro     DATETIME(6) NULL,
-    metodo_pago     VARCHAR(20) NULL,
-    monto_recibido  FLOAT       NULL,
-    id_sesion       BINARY(16)  NULL,
-    created_at      DATETIME(6) NOT NULL,
-    updated_at      DATETIME(6) NOT NULL,
-    deleted_at      DATETIME(6) NULL,
+    id                BINARY(16)    NOT NULL,
+    id_usuario        BINARY(16)    NOT NULL,
+    total             DECIMAL(12,2) NOT NULL,
+    cobrada           BIT(1)        NULL DEFAULT b'0',
+    fecha_cobro       DATETIME(6)   NULL,
+    metodo_pago       VARCHAR(20)   NULL,
+    monto_recibido    DECIMAL(12,2) NULL,
+    id_sesion         BINARY(16)    NULL,
+    created_at        DATETIME(6)   NOT NULL,
+    updated_at        DATETIME(6)   NOT NULL,
+    deleted_at        DATETIME(6)   NULL,
+    sincronizado_en   DATETIME(6)   NULL,
+    origen            VARCHAR(10)   NOT NULL DEFAULT 'ONLINE',
+    dispositivo       VARCHAR(50)   NULL,
+    id_usuario_sync   BINARY(16)    NULL,
+    requiere_revision BIT(1)        NOT NULL DEFAULT b'0',
     PRIMARY KEY (id),
     KEY ix_ventas_fecha (created_at, deleted_at),
     KEY ix_ventas_usuario (id_usuario, deleted_at),
     KEY ix_ventas_cobrada_fecha (cobrada, deleted_at, created_at),
     KEY ix_ventas_fecha_cobro (fecha_cobro, deleted_at),
     KEY ix_ventas_sesion (id_sesion),
+    KEY ix_ventas_revision (requiere_revision, deleted_at),
     CONSTRAINT fk_ventas_usuario
         FOREIGN KEY (id_usuario) REFERENCES usuarios (id) ON DELETE RESTRICT,
     CONSTRAINT fk_ventas_sesion
-        FOREIGN KEY (id_sesion) REFERENCES sesiones_caja (id) ON DELETE RESTRICT
+        FOREIGN KEY (id_sesion) REFERENCES sesiones_caja (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_ventas_usuario_sync
+        FOREIGN KEY (id_usuario_sync) REFERENCES usuarios (id) ON DELETE RESTRICT
 ) ENGINE = InnoDB;
 
 CREATE TABLE IF NOT EXISTS detalles_ventas (
-    id              BINARY(16)   NOT NULL,
-    id_venta        BINARY(16)   NOT NULL,
-    id_producto     BINARY(16)   NULL,
-    nombre_producto VARCHAR(255) NULL,
-    cantidad        INT          NOT NULL,
-    precio_unitario FLOAT        NOT NULL,
-    costo_unitario  FLOAT        NULL,
-    created_at      DATETIME(6)  NOT NULL,
-    updated_at      DATETIME(6)  NOT NULL,
-    deleted_at      DATETIME(6)  NULL,
+    id              BINARY(16)    NOT NULL,
+    id_venta        BINARY(16)    NOT NULL,
+    id_producto     BINARY(16)    NULL,
+    nombre_producto VARCHAR(255)  NULL,
+    cantidad        INT           NOT NULL,
+    precio_unitario DECIMAL(12,2) NOT NULL,
+    costo_unitario  DECIMAL(12,2) NULL,
+    created_at      DATETIME(6)   NOT NULL,
+    updated_at      DATETIME(6)   NOT NULL,
+    deleted_at      DATETIME(6)   NULL,
     PRIMARY KEY (id),
     KEY ix_det_ventas_venta (id_venta, deleted_at),
     KEY ix_det_ventas_producto (id_producto, deleted_at),
@@ -323,6 +342,20 @@ CREATE TABLE IF NOT EXISTS detalles_ventas (
         FOREIGN KEY (id_venta) REFERENCES ventas (id) ON DELETE RESTRICT,
     CONSTRAINT fk_det_ventas_producto
         FOREIGN KEY (id_producto) REFERENCES productos (id) ON DELETE RESTRICT
+) ENGINE = InnoDB;
+
+-- Una anulacion que llego antes que el CREAR de su propio ticket: el lote se corto entre
+-- los dos eventos. La fila espera aca hasta que la venta llegue, y por eso no tiene FK a
+-- ventas: la venta todavia no existe, que es toda la razon de ser de la tabla.
+CREATE TABLE IF NOT EXISTS anulaciones_pendientes (
+    id_venta   BINARY(16)   NOT NULL,
+    anulado_en DATETIME(6)  NOT NULL,
+    id_usuario BINARY(16)   NOT NULL,
+    motivo     VARCHAR(255) NULL,
+    created_at DATETIME(6)  NOT NULL,
+    PRIMARY KEY (id_venta),
+    CONSTRAINT fk_anulaciones_pend_usuario
+        FOREIGN KEY (id_usuario) REFERENCES usuarios (id) ON DELETE RESTRICT
 ) ENGINE = InnoDB;
 
 CREATE TABLE IF NOT EXISTS compras (
