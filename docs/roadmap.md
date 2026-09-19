@@ -27,13 +27,17 @@ entidades, todos los DTOs, el esquema y el histórico ya cargado.
 
 ### 2. Falta Flyway
 
-Once migraciones aplicadas a mano, en orden y con la aplicación detenida. `00_init_limpio.sql` se
-mantiene en paralelo para las instalaciones nuevas, así que cada cambio de esquema se escribe dos
-veces y nada garantiza que no se desincronicen.
+El esquema vive en un solo archivo, `init.sql`, que es lo que corre una instalación nueva. Eso
+sacó la duplicación de escribir cada cambio dos veces, pero no resuelve el problema de fondo: no
+hay registro de qué versión del esquema tiene una base ya cargada, y cada cambio sobre una
+instalación existente se aplica a mano, con la aplicación detenida y confiando en el `CHANGELOG`.
 
-Convertir `00_init_limpio.sql` en `V1__init.sql` y las migraciones `04`–`11` en `V2__…`–`V9__…`.
+Convertir `init.sql` en `V1__init.sql` y abrir `V2__…` para el próximo cambio de esquema. Las
+migraciones `04`–`13`, que llevaron el esquema hasta la 0.6.0, quedaron en el historial de git
+(`git show 5ad8e94:script/database/…`).
 
-**Prioridad:** alta. Cuanto más se demore, más scripts hay que ordenar.
+**Prioridad:** alta. Cuanto más se demore, más lejos queda el esquema de cualquier base en
+producción sin forma de saberlo.
 
 ### 3. No hay tests de integración
 

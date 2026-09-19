@@ -15,8 +15,7 @@ Hace falta Java 21 y un MySQL 8. El wrapper de Maven viene incluido, no hay que 
 
 ```bash
 docker run -d --name minimarket-db -p 3306:3306 -e MYSQL_ROOT_PASSWORD=test123 mysql:8.0
-docker exec -i minimarket-db mysql -uroot -ptest123 --default-character-set=utf8mb4 < script/database/00_init_limpio.sql
-docker exec -i minimarket-db mysql -uroot -ptest123 --default-character-set=utf8mb4 < script/database/01_seed.sql
+docker exec -i minimarket-db mysql -uroot -ptest123 --default-character-set=utf8mb4 < script/database/init.sql
 ```
 
 > **`--default-character-set=utf8mb4` no es opcional.** El cliente `mysql` del contenedor usa
@@ -24,8 +23,10 @@ docker exec -i minimarket-db mysql -uroot -ptest123 --default-character-set=utf8
 > "Almacén" queda guardada como `Almacén` y la API la devuelve así. Las columnas ya son
 > `utf8mb4`; lo que rompe es la conexión del cliente.
 
-`00_init_limpio.sql` es el esquema completo y autocontenido: una instalación nueva **no** necesita
-las migraciones numeradas. `01_seed.sql` carga un superadmin y un admin de desarrollo.
+`init.sql` es el único script de la base: crea el esquema completo y carga el seed mínimo —un
+superadmin, un admin de desarrollo y un catálogo chico—. Es idempotente, así que volver a correrlo
+no rompe nada. Para un catálogo grande con el que probar listados y paginado, `seed_demo.sql`
+agrega 81 productos con su stock; es opcional.
 
 **2. La configuración.** Copiá `.env.example` y completá `JWT_SECRET`, que es la única variable
 obligatoria — sin ella la app no arranca, a propósito:
@@ -65,9 +66,9 @@ docker compose up --build
 Compose lee el `.env` del directorio **solo**, así que acá no hace falta el `set -a; source .env`.
 Si falta alguna de las dos variables obligatorias, falla antes de construir nada y dice cuál.
 
-La primera vez, MySQL corre `00_init_limpio.sql` y `01_seed.sql` desde el volumen y queda con el
-esquema y los usuarios de desarrollo. **Esos scripts no vuelven a correr**: el `docker-entrypoint`
-solo los aplica con el volumen vacío. Para rehacer la base desde cero:
+La primera vez, MySQL corre `init.sql` desde el volumen y queda con el esquema y los usuarios de
+desarrollo. **Ese script no vuelve a correr**: el `docker-entrypoint` solo lo aplica con el
+volumen vacío. Para rehacer la base desde cero:
 
 ```bash
 docker compose down -v && docker compose up --build
@@ -76,9 +77,9 @@ docker compose down -v && docker compose up --build
 Tres cosas que el compose resuelve y conviene saber que están ahí:
 
 - **La imagen no migra la base.** Arranca con `JPA_DDL_AUTO=none` y espera el esquema ya aplicado;
-  mientras no exista Flyway, las migraciones de `script/database/` se corren a mano y con la
-  aplicación detenida. El contenedor no lo hace solo y no va a avisar: una columna que falta
-  aparece como un error de Hibernate en el primer request que la toca.
+  mientras no exista Flyway, todo cambio de esquema sobre una base ya cargada se aplica a mano y
+  con la aplicación detenida. El contenedor no lo hace solo y no va a avisar: una columna que
+  falta aparece como un error de Hibernate en el primer request que la toca.
 - **El charset.** `docker/mysql/utf8mb4.cnf` fuerza `utf8mb4` en el cliente del contenedor. Sin
   eso los scripts de inicialización entran doble-codificados y la categoría "Almacén" queda
   guardada como `Almacén`, con las columnas ya en `utf8mb4` y sin ningún error a la vista.
@@ -124,7 +125,7 @@ src/main/java/…/minimarket/
 ├── shared/        utilidades transversales, mails, excepciones y su handler
 └── modules/       auth, usuarios, categorias, proveedores, productos,
                    inventario, ventas, compras, caja, reportes
-script/database/   esquema, seeds y migraciones numeradas
+script/database/   init.sql (esquema + seed) y seed_demo.sql (datos de demo)
 docker/mysql/      configuración del MySQL del compose
 docs/              documentación (ver docs/README.md)
 ```
@@ -146,12 +147,16 @@ comunica con los demás **solo** a través de su interfaz `XxxApi`.
 
 ## Actualizar una instalación existente
 
-Las migraciones de `script/database/` se aplican **a mano, en orden y con la aplicación
-detenida**. Cada versión del `CHANGELOG` dice cuáles hacen falta; cada script abre con una
-consulta de diagnóstico y cierra con una de verificación.
+`init.sql` es para bases nuevas: crea las tablas con `IF NOT EXISTS`, así que **no** modifica una
+base ya cargada. Mientras no exista Flyway, los cambios de esquema sobre una instalación en
+producción se aplican a mano y con la aplicación detenida.
+
+Las migraciones numeradas que llevaron el esquema hasta la 0.6.0 (`04_…` a `13_…`) quedaron en el
+historial de git, en el commit `5ad8e94`, y se recuperan con:
 
 ```bash
-mysql -u root -p < script/database/09_stock_de_productos_con_lotes.sql
+git show 5ad8e94:script/database/13_importes_decimal_ventas.sql
 ```
 
-Incorporar Flyway es trabajo pendiente, anotado en el roadmap.
+Cada versión del `CHANGELOG` dice cuáles hacen falta. Incorporar Flyway es trabajo pendiente,
+anotado en el roadmap.

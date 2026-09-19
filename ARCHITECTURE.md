@@ -111,7 +111,7 @@ Logout -> revoca el refresh token (idempotente)
   exige mando estricto, de modo que un ADMIN no puede tocar a otro ADMIN ni al SUPERADMIN, y
   nadie se bloquea ni se borra a sí mismo.
 - **SUPERADMIN:** llave maestra, no se crea por API (ningún rol manda sobre su propio nivel).
-  Sale del seed de la base; ver `script/database/01_seed.sql`.
+  Sale del seed de la base; ver `script/database/init.sql`.
 - **Contraseñas:** BCrypt.
 - **Estado de cuenta:** `PENDIENTE` / `ACTIVO` / `BLOQUEADO`, independiente del borrado lógico.
   Solo un usuario `ACTIVO` puede autenticarse y operar.
@@ -189,7 +189,7 @@ Logout -> revoca el refresh token (idempotente)
 ### Relaciones
 
 No hay relaciones JPA (`@ManyToOne`): los vínculos son campos `UUID` y las claves foráneas se
-declaran en el esquema (`script/database/00_init.sql`), con `ON DELETE RESTRICT`, seguro porque
+declaran en el esquema (`script/database/init.sql`), con `ON DELETE RESTRICT`, seguro porque
 todos los borrados de la aplicación son lógicos.
 
 ```
@@ -445,19 +445,19 @@ Scripts en `script/database/`:
 
 | Script | Contenido |
 |---|---|
-| `00_init.sql` | Esquema existente, se conserva por compatibilidad |
-| `00_init_limpio.sql` | Esquema final autocontenido para una base nueva |
-| `01_seed.sql` | Datos de desarrollo (admin, catálogo de ejemplo) |
-| `02_parche_migraciones.sql` | Parche acumulado para una base existente anterior al esquema final |
-| `02_seed_productos.sql`, `03_seed_stock.sql` | Datos de prueba opcionales: catálogo con existencias |
-| `04` a `13` | Migraciones numeradas, una por cambio de esquema. Ver el `CHANGELOG` de cada versión |
+| `init.sql` | Esquema completo y seed mínimo, en un solo archivo autocontenido e idempotente |
+| `seed_demo.sql` | Datos de prueba opcionales: 81 productos con sus existencias |
 
 El esquema está alineado con las entidades: la app puede arrancar con
-`spring.jpa.hibernate.ddl-auto=validate` y no reporta discrepancias. Las migraciones numeradas se
-aplican **a mano, en orden y con la aplicación detenida**; cada una abre con una consulta
-informativa de los datos que podrían frenar el `ALTER` y cierra con una de verificación. Una
-instalación nueva no las necesita: `00_init_limpio.sql` ya las trae incorporadas. Incorporar
-Flyway es trabajo pendiente.
+`spring.jpa.hibernate.ddl-auto=validate` y no reporta discrepancias.
+
+Hasta la 0.6.0 el repo mantuvo en paralelo un esquema limpio y una serie de migraciones
+numeradas, con lo cual cada cambio se escribía dos veces. Esa duplicación se eliminó: queda
+`init.sql` como única fuente del esquema, y las migraciones `04`–`13` viven en el historial de
+git (`git show 5ad8e94:script/database/…`), que es donde las necesita quien actualiza una
+instalación anterior. Mientras no exista Flyway, un cambio de esquema sobre una base ya cargada
+sigue aplicándose **a mano y con la aplicación detenida**; el `CHANGELOG` de cada versión dice
+cuál. Incorporar Flyway es trabajo pendiente.
 
 Configuración por variables de entorno (ver `.env.example`): `DB_URL`, `DB_USERNAME`,
 `DB_PASSWORD`, `JWT_SECRET` (obligatoria), `JWT_EXPIRATION_HOURS`, `SERVER_PORT`,

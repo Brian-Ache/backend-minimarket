@@ -17,7 +17,7 @@ public enum Rol {
      * bloquea y los da de baja.
      *
      * <p>No se puede crear por API —ningún rol manda sobre su propio nivel—: el SUPERADMIN
-     * llega por el seed de la base ({@code 01_seed.sql}). Es a propósito: si el alta de
+     * llega por el seed de la base ({@code init.sql}). Es a propósito: si el alta de
      * superadmins fuera un endpoint, alcanzaría con tomar una sesión de superadmin para
      * fabricarse otro y volver irreversible el compromiso.
      */

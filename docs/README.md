@@ -14,7 +14,7 @@ Fuera de `docs/`:
 |---|---|
 | [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | Cómo está construido el sistema y **por qué** quedó así: módulos, seguridad, modelo de datos, concurrencia |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | Qué cambió en cada versión, con los cambios incompatibles y las migraciones |
-| [`../script/database/`](../script/database/) | Esquema, seeds y migraciones numeradas |
+| [`../script/database/`](../script/database/) | `init.sql`: esquema y seed en un solo archivo. `seed_demo.sql`: datos de prueba opcionales |
 
 ## Dónde buscar
 

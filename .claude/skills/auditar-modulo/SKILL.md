@@ -16,7 +16,7 @@ existen — empezar por `ls src/main/java/.../modules/` y no dar por sabido qué
 1. **Leer el módulo entero de una**, no de a archivos sueltos:
    `for f in $(find <ruta-del-modulo> -type f | sort); do echo "== $f"; cat -n "$f"; done`
 2. **Mirar afuera**, que es donde aparecen la mitad de los bugs:
-   - Esquema: la tabla en `script/database/00_init.sql` (índices, FKs, columnas NULLables).
+   - Esquema: la tabla en `script/database/init.sql` (índices, FKs, columnas NULLables).
    - Consumidores: `grep -rn "<Nombre>Api\|<Nombre>Repository" --include="*.java" src/main`
      fuera del módulo. Un servicio que se traga un `ResourceNotFoundException` suele estar
      ocultando un dato, no manejando un error.
@@ -80,11 +80,16 @@ entre servicios no arranca: revienta al levantar el contexto. Si el módulo A ya
 comentado en el campo para que nadie lo "corrija" después. Antes de agregar una dependencia,
 `grep` de quién depende de quién.
 
-**Migraciones.** `spring.jpa.hibernate.ddl-auto=none`: el esquema es de los scripts. Cada cambio
-va en un `script/database/NN_descripcion.sql` nuevo (seguir la numeración) **y** en los dos
-`00_init*.sql`, para que una instalación limpia quede igual. El script abre con un comentario
-que explica el porqué, sigue con una consulta informativa de los datos que podrían frenar el
-`ALTER`, y cierra con un `SELECT` de verificación contra `information_schema`.
+**Cambios de esquema.** `spring.jpa.hibernate.ddl-auto=none`: el esquema es de
+`script/database/init.sql`, que es el único archivo y vale para una instalación nueva. Todo
+cambio se escribe ahí, en la tabla que corresponda.
+
+Como `init.sql` no toca una base ya cargada (todo es `CREATE TABLE IF NOT EXISTS`), un cambio que
+además tenga que aplicarse sobre una instalación existente necesita su `ALTER`. Ese `ALTER` va en
+el `CHANGELOG` de la versión, dentro del bloque de migración: un comentario con el porqué, una
+consulta informativa de los datos que podrían frenarlo, y un `SELECT` de verificación contra
+`information_schema`. No volver a crear scripts `NN_…` sueltos: esa convención se eliminó en la
+0.6.0 justamente porque obligaba a escribir cada cambio dos veces.
 
 **Unicidad con baja lógica**, el patrón del repo — buscar los índices `uk_*_activo` existentes
 como referencia:
