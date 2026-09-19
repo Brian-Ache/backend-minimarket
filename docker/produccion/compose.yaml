@@ -1,0 +1,113 @@
+# =====================================================================
+# backend-minimarket — compose de PRODUCCIÓN (plantilla)
+# =====================================================================
+# Este archivo no lo usa el workflow: es la plantilla para la puesta a punto inicial del VPS.
+# Se copia una vez al directorio del proyecto en el servidor, junto con su `.env`, y desde
+# ahí el deploy corre `docker compose pull && docker compose up -d`.
+#
+# En qué se diferencia del `compose.yaml` de la raíz, que es el de desarrollo:
+#
+#   * baja la imagen publicada en vez de construirla;
+#   * no siembra la base — el seed de desarrollo trae usuarios con contraseñas conocidas;
+#   * no publica el 3306 a internet, y la API solo escucha en 127.0.0.1, detrás de nginx;
+#   * MySQL corre con un usuario dedicado, no con root.
+#
+# La imagen NO migra la base. Arranca con JPA_DDL_AUTO=none y espera el esquema ya aplicado:
+# mientras no exista Flyway, un cambio de esquema se aplica a mano y con la app detenida,
+# ANTES de mergear a main. Ver el CHANGELOG de cada versión.
+# =====================================================================
+
+services:
+  api:
+    # `latest` es lo que publica el push a main. Para congelar una versión —o para hacer
+    # rollback— se pone el tag exacto acá y se corre `docker compose up -d`.
+    image: ${IMAGEN:?falta IMAGEN en el .env}:${IMAGEN_TAG:-latest}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # Solo loopback: quien entra desde afuera es nginx, no internet. Sin el `127.0.0.1`
+      # esto publica el 8080 en todas las interfaces y deja la API expuesta sin TLS.
+      - "127.0.0.1:8080:8080"
+    environment:
+      DB_URL: "jdbc:mysql://db:3306/minimarket?allowPublicKeyRetrieval=true&useSSL=false&characterEncoding=UTF-8"
+      DB_USERNAME: ${DB_USERNAME:?falta DB_USERNAME en el .env}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en el .env}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en el .env — generalo con openssl rand -base64 48}
+      JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-24}
+      # `validate`, no `none`, y esta es la diferencia con el compose de desarrollo.
+      #
+      # Hibernate no modifica nada con `validate`: compara el esquema con las entidades al
+      # arrancar y, si falta una tabla o una columna, la aplicación no levanta. Eso es lo que
+      # hace que un despliegue con la base sin migrar FALLE en el `--wait` del workflow, en
+      # vez de quedar verde y que el problema aparezca como un 500 en la caja media hora
+      # después. Con `none` el contenedor se reporta sano incluso contra una base vacía —el
+      # health solo hace ping a MySQL—, que es justamente el modo de fallar que no queremos.
+      #
+      # El precio: un cambio de esquema hay que aplicarlo ANTES de mergear a main, que es lo
+      # que el CHANGELOG ya manda hacer. Si un día hay que arrancar igual, `none` acá y a
+      # revisar por qué.
+      JPA_DDL_AUTO: "validate"
+      JPA_SHOW_SQL: "false"
+      # El dominio real del front. Con esto mal puesto, el navegador bloquea cada request.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?falta CORS_ALLOWED_ORIGINS en el .env}
+      # Base de los enlaces que viajan dentro de los mails de invitación y de reseteo.
+      FRONTEND_URL: ${FRONTEND_URL:?falta FRONTEND_URL en el .env}
+      # Sin esto el contenedor corre en UTC y fecharía cada venta, cada movimiento de caja y
+      # cada corte tres horas adelantados. Con el sync importa todavía más: la fecha del
+      # ticket la manda el dispositivo y se valida contra este reloj.
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75}
+      # SMTP. No es obligatoria a propósito: sin ella la app arranca igual y vende igual, solo
+      # que las invitaciones y los reseteos quedan en el log en vez de salir por mail. Hacerla
+      # obligatoria impediría desplegar a quien todavía no tiene SMTP, que es una situación
+      # legítima; que falten los mails, en cambio, se nota el día que se invita a alguien.
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@minimarket.local}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Minimarket}
+    # El healthcheck viene en la imagen (ver Dockerfile): es lo que hace que el
+    # `docker compose up -d --wait` del deploy espere a que la app esté lista.
+    restart: unless-stopped
+    logging:
+      # Sin esto, el log de un contenedor que corre meses llena el disco del VPS.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?falta DB_ROOT_PASSWORD en el .env}
+      MYSQL_DATABASE: minimarket
+      # La app NO entra como root: usuario dedicado con permisos solo sobre `minimarket`.
+      MYSQL_USER: ${DB_USERNAME:?falta DB_USERNAME en el .env}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en el .env}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    # Sin `ports`: la base no se publica. Se llega por la red interna del compose, y para
+    # entrar con un cliente, por un túnel SSH:
+    #   ssh -L 3307:127.0.0.1:3306 usuario@vps  →  y adentro, `docker compose exec db mysql`
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./utf8mb4.cnf:/etc/mysql/conf.d/utf8mb4.cnf:ro
+      # A propósito NO se monta ningún script de initdb: el esquema de producción se aplica
+      # a mano la primera vez, con `script/database/init.sql` del repo y sin el seed de
+      # desarrollo. El superadmin se crea en ese momento, con una contraseña propia.
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  db_data:

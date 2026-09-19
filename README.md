@@ -116,6 +116,61 @@ cada PR contra ellas, con JDK 21 y cache de Maven. Para que un PR con un test ro
 mergear hay que marcar el check **Build y tests** como obligatorio en la protección de rama de
 GitHub (*Settings → Branches*); el workflow por sí solo reporta, no bloquea.
 
+## Despliegue
+
+**Producción es `main`, y nada más que `main`.** Un push a `developer` compila y testea; un push
+a `main` construye la imagen, la publica en Docker Hub y actualiza el VPS
+(`.github/workflows/deploy.yml`). La única forma de llegar a producción es un merge a `main`.
+
+### Secrets que hay que cargar en GitHub
+
+*Settings → Secrets and variables → Actions.* Sin ellos el workflow falla en el primer paso.
+
+| Secret | Qué es |
+|---|---|
+| `DOCKERHUB_USERNAME` | Usuario de Docker Hub; también es el prefijo del repositorio de la imagen |
+| `DOCKERHUB_TOKEN` | Access token de Docker Hub, no la contraseña |
+| `VPS_HOST` | IP o dominio del servidor |
+| `VPS_USER` | Usuario SSH con permiso sobre Docker |
+| `VPS_SSH_KEY` | Clave privada SSH completa, con sus líneas `BEGIN`/`END` |
+| `VPS_RUTA_PROYECTO` | Directorio del VPS donde viven el compose y el `.env` |
+| `URL_PUBLICA` | `https://api.tudominio.com`, para verificar el despliegue desde afuera |
+
+### Puesta a punto del VPS, una sola vez
+
+`docker/produccion/` tiene las plantillas. El `.env` de producción **no se versiona**: vive en el
+servidor y nada más.
+
+1. Copiar al directorio del proyecto en el VPS: `compose.yaml`, `utf8mb4.cnf` y `.env.example`
+   como `.env`, completado y con `chmod 600`.
+2. Aplicar el esquema, que la imagen **no** migra sola — y sin el seed de desarrollo, que trae
+   contraseñas conocidas:
+   ```bash
+   docker compose up -d db
+   docker compose exec -T db mysql -uroot -p"$DB_ROOT_PASSWORD" \
+       --default-character-set=utf8mb4 < init.sql
+   ```
+   Después cambiar la contraseña del superadmin y del admin que el seed deja puestas.
+3. nginx: `docker/produccion/nginx.conf` en `/etc/nginx/sites-available/`, enlazado en
+   `sites-enabled/`, con el dominio real reemplazado. El TLS lo pone certbot:
+   `sudo certbot --nginx -d api.tudominio.com`.
+4. `docker compose up -d` y listo: a partir de ahí despliega el workflow.
+
+### Por qué un despliegue falla en vez de quedar verde y roto
+
+En producción la app corre con `JPA_DDL_AUTO=validate`, no con `none`. Hibernate no modifica
+nada: compara el esquema con las entidades al arrancar y, si falta una tabla o una columna, no
+levanta. El contenedor nunca llega a `healthy`, el `docker compose up -d --wait` del workflow
+falla y el despliegue se corta ahí.
+
+Sin eso, una base sin migrar pasa desapercibida: el healthcheck solo hace ping a MySQL, así que
+el contenedor se reporta sano **incluso contra una base vacía** y el problema aparece media hora
+después como un 500 en la caja. El precio es que un cambio de esquema hay que aplicarlo **antes**
+de mergear a `main`.
+
+El rollback es fijar el tag anterior en `IMAGEN_TAG` del `.env` del VPS y correr
+`docker compose up -d`.
+
 ## Estructura
 
 ```
@@ -126,7 +181,8 @@ src/main/java/…/minimarket/
 └── modules/       auth, usuarios, categorias, proveedores, productos,
                    inventario, ventas, compras, caja, reportes
 script/database/   init.sql (esquema + seed) y seed_demo.sql (datos de demo)
-docker/mysql/      configuración del MySQL del compose
+docker/mysql/      configuración del MySQL del compose de desarrollo
+docker/produccion/ plantillas del VPS: compose, nginx y .env de producción
 docs/              documentación (ver docs/README.md)
 ```
 

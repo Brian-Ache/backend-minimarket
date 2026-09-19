@@ -944,14 +944,24 @@ tests con Testcontainers alcanza con ponerles el mismo tag. Falta un paso manual
 el repo: marcar el check *Build y tests* como obligatorio en la protección de rama de GitHub, sin
 lo cual el workflow reporta pero no bloquea el merge.
 
-### Fase B3 · Publicación de la imagen
+### Fase B3 · Publicación de la imagen — **ESCRITA** (2026-09-19), falta cargar los secrets
 
 Workflow que **solo en el push a `main`** —o en un tag `v*`— construye y publica en Docker Hub, con
 `docker/login-action` y `docker/build-push-action`, tags `latest` y la versión del `pom.xml`.
 Secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`. Un push a `developer` no publica nada: la imagen
 que existe en el registry es, por definición, lo que está o va a estar en producción.
 
-### Fase B4 · Despliegue al VPS y nginx
+**Cómo quedó.** `.github/workflows/deploy.yml`, job `publicar`. La versión sale de
+`mvnw help:evaluate` sobre el `pom.xml`, así que `0.6.0` es el tag al que volver y `latest` lo que
+baja el VPS. Caché de buildx entre runs (`type=gha`) para no rebajar medio Maven Central en cada
+push. El filtro de rama está puesto dos veces —en `on.push` y en un `if` por job— para que un
+`workflow_dispatch` desde otra rama no publique.
+
+**Falta:** cargar `DOCKERHUB_USERNAME` y `DOCKERHUB_TOKEN` en los secrets del repo. Si el
+repositorio de Docker Hub no se llama `usuario/backend-minimarket`, es un solo renglón del
+workflow.
+
+### Fase B4 · Despliegue al VPS y nginx — **ESCRITA** (2026-09-19), falta el servidor
 
 Job de deploy —**solo `main`**, encadenado a B3— que entra por SSH (`appleboy/ssh-action`, con
 `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`) y corre `docker compose pull && docker compose up -d` en el
@@ -972,6 +982,44 @@ intervención manual, y el rollback es volver al tag anterior de la imagen.
 el `docker compose up -d` no puede esperar a que la app esté lista y nginx puede servir 502 unos
 segundos. Agregar `spring-boot-starter-actuator` con solo `/actuator/health` expuesto es la vía
 corta, y hay que decidir si se hace acá.
+
+> **CERRADA (2026-09-19): sí, se hace acá.** `SecurityConfig` ya tenía `/actuator/health` en la
+> lista de rutas públicas, o sea que la decisión estaba medio tomada y la ruta devolvía 404. Entró
+> `spring-boot-starter-actuator` exponiendo **solo** `health`, sin detalles ni componentes: el
+> resto de los endpoints publicaría el entorno y las variables sin pedir token.
+
+**Cómo quedó.** `.github/workflows/deploy.yml`, job `desplegar`, encadenado a `publicar` con
+`needs`. `appleboy/ssh-action` con `script_stop`, `docker compose pull && up -d --wait`, y
+`docker image prune` porque en un VPS chico las imágenes viejas llenan el disco. Después del SSH
+hay un paso que consulta `URL_PUBLICA/actuator/health` desde el runner: cubre nginx y el
+certificado, que es justo lo que el healthcheck de adentro del contenedor no mira. `concurrency`
+sin `cancel-in-progress`: cancelar a mitad de un `up -d` es peor que esperar.
+
+Las plantillas del servidor quedaron en `docker/produccion/` —compose, `nginx.conf`, `utf8mb4.cnf`
+y el `.env.example` de producción—, y el README suma la sección *Despliegue* con los siete secrets
+y la puesta a punto inicial. El compose de producción baja la imagen en vez de construirla, no
+siembra nada, publica la API solo en `127.0.0.1` y corre MySQL con un usuario dedicado.
+
+**Tres cosas que aparecieron al probarlo y no estaban previstas:**
+
+- **El healthcheck daba DOWN por el SMTP.** El `MailHealthIndicator` que trae
+  `spring-boot-starter-mail` abre una conexión al servidor de correo en cada consulta y arrastra
+  el health entero a 503. Un punto de venta no está caído porque el proveedor de mail esté lento,
+  y sin `MAIL_HOST` —el modo de desarrollo— fallaba siempre. Se apaga con
+  `management.health.mail.enabled=false`. La base sí cuenta: sin MySQL, DOWN es correcto.
+- **Con la base vacía el contenedor se reportaba `healthy`.** El health hace ping a MySQL, y el
+  ping funciona aunque no haya una sola tabla: un despliegue sobre una base sin migrar quedaba
+  verde y el error salía después como 500 en la caja. Por eso el compose de producción corre con
+  `JPA_DDL_AUTO=validate` y no con `none` —Hibernate no modifica nada, pero si falta una tabla la
+  app no levanta, el `--wait` falla y el despliegue se corta—. Verificado en los dos sentidos:
+  con la base vacía el arranque muere con `missing table [anulaciones_pendientes]`, y después de
+  aplicar `init.sql` levanta sano.
+- **`MAIL_HOST` no puede ser obligatoria en el compose.** Serlo impediría desplegar a quien
+  todavía no tiene SMTP, que es una situación legítima; la app vende igual y deja los mails en el
+  log.
+
+**Falta:** el servidor. Cargar los cinco secrets del VPS, copiar las plantillas, aplicar el
+esquema, instalar nginx y correr certbot. El workflow no se puede probar de punta a punta sin eso.
 
 ---
 

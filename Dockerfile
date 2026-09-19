@@ -40,6 +40,16 @@ COPY --from=build --chown=minimarket:minimarket /build/target/*.jar app.jar
 USER minimarket
 EXPOSE 8080
 
+# El healthcheck es lo que hace que `docker compose up -d --wait` espere a que la app esté
+# lista de verdad —no solo a que el proceso arranque— y, en el despliegue, que nginx no sirva
+# 502 mientras tanto. `/actuator/health` es público y no devuelve detalles: lo único que dice
+# es UP o DOWN (ver management.endpoint.health en application.properties).
+#
+# start-period cubre el arranque de Spring, que en un VPS chico pasa de los 20 segundos: los
+# fallos de ese tramo no cuentan para retries.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
+    CMD curl -fsS http://127.0.0.1:8080/actuator/health | grep -q '"status":"UP"' || exit 1
+
 # JAVA_OPTS queda a mano para ajustar memoria en el VPS sin rehacer la imagen.
 # El exec es lo que hace que el java quede como PID 1 y reciba el SIGTERM del docker stop.
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

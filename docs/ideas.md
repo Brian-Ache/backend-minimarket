@@ -31,11 +31,15 @@ _(vacío)_
 
 <!-- Lo que ya estamos discutiendo pero todavía no tiene plan cerrado. -->
 
-- **Despliegue automático al VPS con nginx.** La imagen Docker y el CI **ya están hechos**
-  (fases B1 y B2, publicadas en la 0.6.0); falta publicar la imagen y desplegar (B3 y B4), que
-  dependen de decisiones de infraestructura: cuenta de Docker Hub, VPS y dominio. Queda además
-  una decisión abierta: si se agrega `spring-boot-starter-actuator` para tener un healthcheck
-  real, o se convive con unos segundos de 502 en cada despliegue.
+- **Despliegue automático al VPS con nginx.** Las cuatro fases del Track B **ya están escritas**:
+  imagen y CI (B1, B2) publicadas en la 0.6.0, y el workflow de publicación y despliegue
+  (B3, B4) en `.github/workflows/deploy.yml`, con las plantillas del servidor en
+  `docker/produccion/`. La decisión del healthcheck quedó cerrada: entró
+  `spring-boot-starter-actuator` con solo `/actuator/health` expuesto.
+
+  **Lo que falta no es código:** la cuenta de Docker Hub, el VPS y el dominio. Concretamente, los
+  siete secrets del repo y la puesta a punto del servidor que documenta el README. Hasta que eso
+  exista, el workflow no se puede probar de punta a punta.
 - **Sincronización offline-first de tickets.** **Hecha y publicada en la 0.6.0**: el Track A
   entero, de A1 a A7. El contrato para el front está en
   [`api-endpoints.md`](api-endpoints.md) y el porqué de cada regla en

@@ -50,6 +50,15 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
+		<!-- Solo por /actuator/health, que es lo que el healthcheck del contenedor necesita
+		     para que `docker compose up -d` espere a que la app esté lista en vez de dejar
+		     que nginx sirva 502 unos segundos en cada despliegue. SecurityConfig ya tenía
+		     esa ruta en la lista de públicas. El resto de los endpoints del actuator quedan
+		     sin exponer: ver management.endpoints en application.properties. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
 
 		<dependency>
 			<groupId>com.mysql</groupId>
