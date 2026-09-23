@@ -87,9 +87,11 @@ jobs:
       # 3306—. En `docker/produccion/` hay una plantilla de los dos archivos para la puesta a
       # punto inicial; ver la sección "Despliegue" del README.
       #
-      # La imagen NO migra la base: arranca con JPA_DDL_AUTO=none y espera el esquema ya
-      # aplicado. Un cambio de esquema se aplica a mano y con la app detenida, antes de
-      # mergear a main. Ver el CHANGELOG de cada versión.
+      # La imagen NO migra la base. En producción arranca con JPA_DDL_AUTO=validate: Hibernate
+      # no toca nada, pero compara el esquema con las entidades y no levanta si falta una tabla
+      # o una columna. Por eso un cambio de esquema se aplica a mano y con la app detenida,
+      # ANTES de mergear a main; si no, este deploy falla en el `--wait` de abajo. Ver el
+      # CHANGELOG de cada versión.
       - name: docker compose pull && up -d
         uses: appleboy/ssh-action@v1
         with:

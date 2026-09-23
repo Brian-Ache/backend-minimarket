@@ -91,6 +91,31 @@ Tres cosas que el compose resuelve y conviene saber que están ahí:
 > publica el puerto de MySQL. El despliegue al VPS usa su propio compose, que baja la imagen
 > publicada en vez de construirla.
 
+### Correr en local la imagen de Docker Hub
+
+Lo de arriba construye la imagen con el código de tu working copy. Para correr en cambio la que
+está publicada —la misma que corre en el VPS— está `compose.hub.yaml`, que es un override:
+reemplaza de dónde sale la imagen de la API y deja el resto igual, MySQL de desarrollo incluido.
+
+```bash
+# en el .env:  IMAGEN="tu-usuario/backend-minimarket"
+docker compose -f compose.yaml -f compose.hub.yaml pull
+docker compose -f compose.yaml -f compose.hub.yaml up -d
+```
+
+`IMAGEN_TAG` por defecto es `latest`. Poniendo el número de versión —`IMAGEN_TAG="0.6.1"`— corrés
+en la máquina exactamente la imagen que está en producción, que es para lo que esto sirve: repetir
+un bug del VPS sin tener que entrar al VPS.
+
+Para no repetir los dos `-f` en cada comando, `COMPOSE_FILE=compose.yaml:compose.hub.yaml` en el
+`.env`. Con eso puesto, `docker compose up` deja de construir **siempre**; para volver a la imagen
+local es `docker compose -f compose.yaml up --build`.
+
+Una advertencia: con la imagen de Hub seguís apuntando a tu volumen de MySQL local, y el compose
+de desarrollo usa `JPA_DDL_AUTO=none`. Si ese volumen quedó con un `init.sql` viejo, la app arranca
+igual y el desajuste aparece recién como un error de Hibernate en el primer request que toca la
+columna que falta. Ante la duda, `docker compose down -v` y de nuevo.
+
 ## Tests
 
 ```bash
@@ -189,6 +214,8 @@ src/main/java/…/minimarket/
 └── modules/       auth, usuarios, categorias, proveedores, productos,
                    inventario, ventas, compras, caja, reportes
 script/database/   init.sql (esquema + seed) y seed_demo.sql (datos de demo)
+compose.yaml       entorno local: construye la API y levanta su MySQL
+compose.hub.yaml   override del anterior: baja la imagen de Docker Hub en vez de construirla
 docker/mysql/      configuración del MySQL del compose de desarrollo
 docker/produccion/ plantillas del VPS: compose, nginx y .env de producción
 docs/              documentación (ver docs/README.md)

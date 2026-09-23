@@ -66,6 +66,13 @@ services:
       MAIL_PORT: ${MAIL_PORT:-587}
       MAIL_USERNAME: ${MAIL_USERNAME:-}
       MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      # Los tres de abajo casi nunca hay que tocarlos —los defaults sirven para Gmail, SendGrid
+      # y cualquier SMTP con STARTTLS en el 587—, pero van acá igual porque el día que el
+      # proveedor pida otra cosa, o que tarde más de 10 segundos en responder, la alternativa
+      # sería rehacer y volver a publicar la imagen para cambiar un timeout.
+      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-true}
+      MAIL_SMTP_STARTTLS: ${MAIL_SMTP_STARTTLS:-true}
+      MAIL_TIMEOUT_MS: ${MAIL_TIMEOUT_MS:-10000}
       MAIL_FROM: ${MAIL_FROM:-no-reply@minimarket.local}
       MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Minimarket}
     # El healthcheck viene en la imagen (ver Dockerfile): es lo que hace que el

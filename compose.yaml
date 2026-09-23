@@ -37,6 +37,23 @@ services:
       JPA_SHOW_SQL: ${JPA_SHOW_SQL:-false}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:1420}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      # SMTP de las invitaciones y del reseteo de contraseña. Todo opcional: **sin MAIL_HOST el
+      # mail no se manda y queda en el log del contenedor, con el enlace incluido**, que es el
+      # modo de desarrollo normal. Pasar la variable vacía no lo rompe: EmailService decide por
+      # `spring.mail.host` en blanco y no por la existencia del bean, así que un host vacío cae
+      # igual en el log en vez de intentar conectarse a la nada.
+      #
+      # Los enlaces que viajan adentro se arman con FRONTEND_URL, que va acá arriba: apuntarlo
+      # mal manda mails con enlaces que no abren.
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-true}
+      MAIL_SMTP_STARTTLS: ${MAIL_SMTP_STARTTLS:-true}
+      MAIL_TIMEOUT_MS: ${MAIL_TIMEOUT_MS:-10000}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@minimarket.local}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Minimarket}
       # Sin esto el contenedor corre en UTC y un punto de venta argentino fecharía cada venta,
       # cada movimiento de caja y cada corte tres horas adelantados.
       TZ: ${TZ:-America/Argentina/Buenos_Aires}
