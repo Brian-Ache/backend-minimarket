@@ -183,13 +183,18 @@ credencial es el token del mail.
 ```json
 {
   "token": "string (el del enlace del mail)",
-  "password": "string (min 8, max 72)",
+  "password": "string (min 8 caracteres, max 72 bytes)",
   "username": "string (opcional, min 1, max 50, sin @)"
 }
 ```
 
 Sin `username` queda el que se derivó del email al invitar — el mismo que devuelve el `GET` de
 arriba como `usernameSugerido`.
+
+> **El máximo de la contraseña es en bytes, no en caracteres**, acá y en los otros dos endpoints
+> que la definen (`password-reset/confirm` y `change-password`). Es el límite de BCrypt. En ASCII
+> da lo mismo, pero un acento ocupa dos bytes y un emoji cuatro: 72 caracteres acentuados son 144
+> bytes y se rechazan con `400`. El mínimo, en cambio, sí se cuenta en caracteres.
 
 **Response `200`** — después hay que loguearse normalmente.
 
@@ -225,7 +230,7 @@ Confirma el reseteo con el token generado.
 ```json
 {
   "token": "string",
-  "newPassword": "string (min 8, max 72)"
+  "newPassword": "string (min 8 caracteres, max 72 bytes)"
 }
 ```
 
@@ -466,7 +471,7 @@ nivel. El id sale de `GET /api/users/v1?incluirBajas=true`.
 ```json
 {
   "passActual": "string",
-  "nuevoPass": "string (min 8, max 72)"
+  "nuevoPass": "string (min 8 caracteres, max 72 bytes)"
 }
 ```
 

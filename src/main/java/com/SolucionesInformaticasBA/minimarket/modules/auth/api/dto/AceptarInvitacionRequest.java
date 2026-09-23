@@ -1,5 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto;
 
+import com.SolucionesInformaticasBA.minimarket.shared.validation.Password;
+
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -16,7 +18,7 @@ public class AceptarInvitacionRequest {
     private String token;
 
     @NotBlank
-    @Size(min = 8, max = 72)
+    @Password
     private String password;
 
     /**

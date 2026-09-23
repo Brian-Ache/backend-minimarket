@@ -1,7 +1,8 @@
 package com.SolucionesInformaticasBA.minimarket.modules.auth.api.dto;
 
+import com.SolucionesInformaticasBA.minimarket.shared.validation.Password;
+
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 @Data
@@ -11,6 +12,6 @@ public class PasswordResetConfirmRequest {
     private String token;
 
     @NotBlank
-    @Size(min = 8, max = 72)
+    @Password
     private String newPassword;
 }
