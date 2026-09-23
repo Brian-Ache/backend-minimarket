@@ -127,12 +127,26 @@ public class AuthService implements AuthApi {
     /**
      * Responde igual exista o no la cuenta, para no revelar qué emails están registrados. Por
      * eso, a diferencia de la invitación, un fallo de SMTP se traga y se loguea en vez de propagar.
+     *
+     * <p>Tragarse ese fallo tiene una consecuencia que conviene tener presente: como la
+     * transacción igual confirma, el enlace anterior ya quedó invalidado y el nuevo nunca sale.
+     * Quien pida el reseteo justo mientras el SMTP está caído se queda sin ninguno de los dos y
+     * tiene que volver a pedirlo. Es el precio de que un pedido nuevo deje sin efecto a los
+     * viejos, que es lo que evita la pila de enlaces vivos.
      */
     @Override
     @Transactional
     public void requestPasswordReset(PasswordResetRequest request) {
         usuarioApi.buscarPorIdentificador(request.getUsername())
                 .ifPresent(u -> {
+                    // Un pedido nuevo deja sin efecto a los anteriores: pedir el reseteo cinco
+                    // veces dejaba cinco enlaces vivos a la vez, una hora cada uno.
+                    //
+                    // Va antes de emitir el nuevo y no después: invalidateAuthTokens barre todos
+                    // los tokens sin usar del tipo, así que invertir el orden se llevaría puesto
+                    // al recién creado y el mail saldría con un enlace ya muerto.
+                    tokenService.invalidateAuthTokens(u.getId(), TokenType.PASSWORD_RESET);
+
                     String token = tokenService.generatePasswordResetToken(u.getId());
                     try {
                         emailService.enviarResetPassword(u.getEmail(), u.getNombre(), token,

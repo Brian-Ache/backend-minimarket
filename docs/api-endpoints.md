@@ -220,6 +220,12 @@ servidor.
 
 El enlace vence en **1 hora** y sirve una sola vez.
 
+**Un pedido nuevo invalida los anteriores**: siempre hay a lo sumo un enlace vivo por cuenta, y es
+el del último mail. Pedirlo cinco veces no deja cinco enlaces abiertos.
+
+> Ojo con la combinación de las dos reglas: si el SMTP está caído, el enlace anterior ya quedó
+> invalidado y el nuevo nunca sale. Hay que volver a pedirlo cuando el correo funcione.
+
 ---
 
 ### `POST /api/auth/v1/password-reset/confirm`

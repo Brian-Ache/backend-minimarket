@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -188,6 +189,44 @@ class AuthServiceInvitacionTest {
 
         verify(emailService).enviarResetPassword(u.getEmail(), u.getNombre(), "tok-reset",
                 TokenService.PASSWORD_RESET_TOKEN_DURATION_HOURS);
+    }
+
+    @Test
+    @DisplayName("un pedido nuevo invalida los anteriores: no quedan cinco enlaces vivos por pedir cinco veces")
+    void resetInvalidaLosAnteriores() {
+        UsuarioResponse u = usuario();
+        when(usuarioApi.buscarPorIdentificador("ana@ejemplo.com")).thenReturn(Optional.of(u));
+        when(tokenService.generatePasswordResetToken(u.getId())).thenReturn("tok-reset");
+
+        service.requestPasswordReset(passwordResetRequest("ana@ejemplo.com"));
+
+        verify(tokenService).invalidateAuthTokens(u.getId(), TokenType.PASSWORD_RESET);
+    }
+
+    @Test
+    @DisplayName("invalida antes de emitir: al revés se llevaría puesto al token recién creado")
+    void resetInvalidaAntesDeEmitir() {
+        UsuarioResponse u = usuario();
+        when(usuarioApi.buscarPorIdentificador("ana@ejemplo.com")).thenReturn(Optional.of(u));
+        when(tokenService.generatePasswordResetToken(u.getId())).thenReturn("tok-reset");
+
+        service.requestPasswordReset(passwordResetRequest("ana@ejemplo.com"));
+
+        // invalidateAuthTokens barre todos los tokens sin usar del tipo, el nuevo incluido: el
+        // orden no es cosmético, es lo que hace que el enlace del mail sirva.
+        var orden = inOrder(tokenService);
+        orden.verify(tokenService).invalidateAuthTokens(u.getId(), TokenType.PASSWORD_RESET);
+        orden.verify(tokenService).generatePasswordResetToken(u.getId());
+    }
+
+    @Test
+    @DisplayName("una cuenta inexistente no invalida nada: ni siquiera se sabe de quién sería")
+    void cuentaInexistenteNoInvalidaNada() {
+        when(usuarioApi.buscarPorIdentificador(anyString())).thenReturn(Optional.empty());
+
+        service.requestPasswordReset(passwordResetRequest("nadie@ejemplo.com"));
+
+        verify(tokenService, never()).invalidateAuthTokens(any(), any());
     }
 
     @Test
