@@ -29,6 +29,8 @@ public interface ProductoRepository extends JpaRepository<Producto,UUID>{
 
     boolean existsByIdAndDeletedAtIsNull(UUID id);
 
+    boolean existsByIdCategoriaAndDeletedAtIsNull(UUID idCategoria);
+
     @Query("SELECT p FROM Producto p WHERE p.deletedAt IS NULL")
     Page<Producto> findAllPaginated(Pageable pageable);
 

@@ -1,0 +1,36 @@
+# =====================================================================
+# backend-minimarket — correr en local la imagen publicada en Docker Hub
+# =====================================================================
+# Este archivo NO se usa solo: es un override de `compose.yaml`. Reemplaza lo único que hay
+# que cambiar para no construir —de dónde sale la imagen de la API— y deja el resto igual,
+# incluido el MySQL con su `init.sql` y su seed de desarrollo.
+#
+#   docker compose -f compose.yaml -f compose.hub.yaml pull
+#   docker compose -f compose.yaml -f compose.hub.yaml up -d
+#
+# Requiere `IMAGEN` en el `.env` (el repositorio de Docker Hub). `IMAGEN_TAG` por defecto es
+# `latest`; poniendo el número de versión se reproduce en la máquina exactamente la imagen que
+# está corriendo en el VPS, que es para lo que esto sirve.
+#
+# Para no repetir los dos `-f` en cada comando, en el `.env`:
+#
+#   COMPOSE_FILE=compose.yaml:compose.hub.yaml
+#
+# Ojo con eso: a partir de ahí `docker compose up` deja de construir, también cuando querés
+# que construya. Para volver a la imagen local es `docker compose -f compose.yaml up --build`.
+#
+# **Esto sigue sin ser producción.** El MySQL de abajo es el de desarrollo: siembra usuarios con
+# contraseñas conocidas y publica el 3306. Lo que cambia es la imagen de la API, nada más.
+# =====================================================================
+
+services:
+  api:
+    # `!reset` borra el `build:` que hereda de compose.yaml. Sin esto, compose reconstruye la
+    # imagen con el código de la máquina y la pisa: terminarías probando tu working copy
+    # creyendo que probás lo publicado, que es el error exacto que este archivo evita.
+    build: !reset null
+    image: ${IMAGEN:?falta IMAGEN en el .env — el repositorio de Docker Hub, p. ej. tu-usuario/backend-minimarket}:${IMAGEN_TAG:-latest}
+    # La imagen publicada trae JPA_DDL_AUTO=none por el compose de la raíz, así que no valida
+    # el esquema contra sus entidades: si tu volumen local quedó con un `init.sql` viejo, la
+    # app arranca igual y el desajuste aparece recién como error de Hibernate en el request que
+    # toca la columna que falta. Ante la duda, `docker compose down -v` y de nuevo.

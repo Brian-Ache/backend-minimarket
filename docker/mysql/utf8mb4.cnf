@@ -1,0 +1,10 @@
+# El cliente `mysql` del contenedor elige su charset por el locale del sistema, y en la imagen
+# no hay locale: cae en latin1. Eso es lo que hace que los scripts de /docker-entrypoint-initdb.d
+# entren doble-codificados y la categoría "Almacén" quede guardada como "AlmacÃ©n", con las
+# columnas ya en utf8mb4 y sin ningún error a la vista. Es el mismo motivo por el que el README
+# pide `--default-character-set=utf8mb4` al cargar los scripts a mano.
+[client]
+default-character-set = utf8mb4
+
+[mysql]
+default-character-set = utf8mb4

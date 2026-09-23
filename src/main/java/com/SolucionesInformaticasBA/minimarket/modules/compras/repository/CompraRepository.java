@@ -17,13 +17,26 @@ import java.time.LocalDateTime;
 public interface CompraRepository extends JpaRepository<Compra, UUID> {
     Optional<Compra> findByIdAndDeletedAtIsNull(UUID id);
 
-    // Rango semiabierto [desde, hasta), igual que en ventas.
+    /**
+     * Un mismo proveedor no puede repetir el número dentro del mismo tipo de comprobante. Dos
+     * proveedores distintos sí pueden coincidir, y un mismo proveedor puede tener un remito y
+     * una factura con el mismo número: cada tipo lleva su propia numeración.
+     *
+     * <p>El COALESCE sobre el tipo replica exactamente lo que hace el índice único de la base:
+     * sin él, un tipo nulo compararía con {@code = NULL}, no encontraría nada, y el alta
+     * terminaría rebotando contra la base con un 409 en vez de un mensaje entendible.
+     */
     @Query("""
-            SELECT c FROM Compra c
-             WHERE c.createdAt >= :desde AND c.createdAt < :hasta
-               AND c.deletedAt IS NULL
+            SELECT COUNT(c) > 0 FROM Compra c
+             WHERE c.deletedAt IS NULL
+               AND c.idProveedor = :idProveedor
+               AND c.nroComprobante = :nroComprobante
+               AND COALESCE(c.tipoComprobante, '') = COALESCE(:tipoComprobante, '')
             """)
-    List<Compra> findEnRango(@Param("desde") LocalDateTime desde, @Param("hasta") LocalDateTime hasta);
+    boolean existeComprobante(@Param("idProveedor") UUID idProveedor,
+                              @Param("tipoComprobante") String tipoComprobante,
+                              @Param("nroComprobante") String nroComprobante);
+
     /**
      * Query unificado de compras con filtros opcionales.
      *
@@ -40,7 +53,7 @@ public interface CompraRepository extends JpaRepository<Compra, UUID> {
            "AND (:idProveedor IS NULL OR c.idProveedor = :idProveedor) " +
            "AND (:tipoComprobante IS NULL OR c.tipoComprobante = :tipoComprobante) " +
            "AND (:desde IS NULL OR c.createdAt >= :desde) " +
-           "AND (:hasta IS NULL OR c.createdAt <= :hasta)")
+           "AND (:hasta IS NULL OR c.createdAt < :hasta)")
     Page<Compra> findAllFiltered(
         @Param("idProveedor") UUID idProveedor,
         @Param("tipoComprobante") String tipoComprobante,
@@ -48,16 +61,17 @@ public interface CompraRepository extends JpaRepository<Compra, UUID> {
         @Param("hasta") LocalDateTime hasta,
         Pageable pageable);
 
-    // MÉTODOS COMENTADOS: Se reemplazaron por findAllFiltered() que cubre todos los casos
-    // con un solo query parametrizado. Se mantienen comentados por si en el futuro
-    // se necesitan endpoints dedicados (ej: historial por un usuario específico).
-
-    // @Query("SELECT c FROM Compra c WHERE c.deletedAt IS NULL ORDER BY c.createdAt DESC")
-    // Page<Compra> findAllPaginated(Pageable pageable);
-
-    // @Query("SELECT c FROM Compra c WHERE c.deletedAt IS NULL AND c.createdAt BETWEEN :desde AND :hasta ORDER BY c.createdAt DESC")
-    // Page<Compra> findByCreatedAtBetweenAndDeletedAtIsNull(LocalDateTime desde, LocalDateTime hasta, Pageable pageable);
-
-    // @Query("SELECT c FROM Compra c WHERE c.deletedAt IS NULL AND c.idUsuario = :idUsuario ORDER BY c.createdAt DESC")
-    // Page<Compra> findByIdUsuarioAndDeletedAtIsNull(UUID idUsuario, Pageable pageable);
+    /**
+     * Fecha y total de cada compra del rango, sin nada más. Es lo único que necesita el reporte
+     * de ganancias, y pedirlo así evita armar la CompraResponse completa: esa trae todos los
+     * detalles y resuelve un proveedor por compra, o sea cientos de consultas para datos que el
+     * reporte descarta.
+     */
+    @Query("""
+            SELECT c.createdAt, c.total FROM Compra c
+             WHERE c.deletedAt IS NULL
+               AND c.createdAt >= :desde AND c.createdAt < :hasta
+            """)
+    List<Object[]> fechasYTotalesEnRango(@Param("desde") LocalDateTime desde,
+                                         @Param("hasta") LocalDateTime hasta);
 }

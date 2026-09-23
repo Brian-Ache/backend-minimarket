@@ -1,18 +1,478 @@
 # Changelog
 
-## Sin publicar
+## 0.6.1 (2026-09-23)
 
-Cierre del alta por invitación y limpieza de los límites entre los módulos `auth` y `usuarios`.
+**Auditoría de `auth` y `usuarios`.** Solo arreglos: no hay endpoints nuevos, ni campos nuevos, ni
+cambios de esquema. Tres errores del cliente que salían `500`, dos agujeros de permisos y de
+credenciales, y el techo que le faltaba al login.
+
+**Al actualizar hay que mirar dos cosas.** Ninguna es una migración —la base no cambia—, pero las
+dos pueden morder:
+
+- **Si se actualiza el nginx del VPS desde la plantilla, son dos archivos.** `nginx.conf` ahora
+  nombra zonas de límite de tasa que se declaran en `nginx-ratelimit.conf`, que va en
+  `/etc/nginx/conf.d/`. Instalar uno sin el otro **impide que nginx arranque**, con un error que
+  no menciona ningún archivo: `[emerg] zero size shared memory zone "minimarket_login"`. Ver
+  *Configuración*.
+- **El front tiene que guardar el refresh token nuevo en cada renovación.** Siempre debió hacerlo,
+  pero ahora reintentar con el anterior tiene consecuencias: pasados 30 segundos, cierra todas las
+  sesiones de esa persona. Ver *Seguridad*.
+
+### Seguridad
+
+- **La rotación del refresh token no servía de nada.** `validateRefreshToken` buscaba solo entre
+  los tokens activos, así que uno robado y ya rotado daba vacío exactamente igual que uno
+  inventado: al ladrón le alcanzaba con no insistir. Ahora se busca sin filtrar por estado, que es
+  lo que permite distinguirlos, y un token rotado que reaparece cierra **todas** las sesiones del
+  usuario. No hay forma de saber si quien renovó recién fue la persona o el ladrón, así que
+  vuelven a loguearse los dos y entra el que sabe la contraseña.
+  - **Hay 30 segundos de gracia** para el caso honesto: si la respuesta de la rotación se perdió y
+    el front reintenta con el token viejo, el pedido se rechaza pero no se cierra nada. En un
+    local con mala conexión eso pasa de verdad, y cerrarle las sesiones sería castigar a la red.
+  - El rechazo es idéntico al de un token inexistente: quien tenga la copia no debería poder
+    deducir que disparó la detección.
+- **`PATCH /api/users/v1/{id}` no validaba la jerarquía de roles.** Era la única operación del
+  módulo que no lo hacía. Los `@PreAuthorize` del controller solo ven el rol de quien llama, así
+  que `hasRole('ADMIN')` alcanzaba para que un ADMIN le cambiara el nombre y el apellido al
+  SUPERADMIN o a otro ADMIN. Ahora rige la jerarquía de siempre, salvo sobre la cuenta propia:
+  editarse uno mismo es el único caso en que operar sobre la propia cuenta no es un error.
+- **Un pedido de reseteo de contraseña invalida los anteriores.** Antes, pedirlo cinco veces
+  dejaba cinco enlaces vivos a la vez, una hora cada uno. La invitación ya se comportaba así; el
+  reseteo no. Con el SMTP caído esto tiene un costo que conviene saber: el enlace anterior queda
+  invalidado y el nuevo nunca sale, así que hay que volver a pedirlo cuando el correo funcione.
+- **`POST /api/auth/v1/login` tiene límite de tasa**, por IP, en nginx: 10 por minuto con 10 de
+  arranque inmediato para la apertura del local. El resto de `/api/auth/` va más holgado —ahí no
+  se adivina nada, los tokens son de 256 bits— y se limita por otra razón: que nadie use el
+  reseteo como generador de mails ni para dejar a alguien sin su enlace. **El resto de la API
+  queda sin límite a propósito**, porque el lote de sincronización llega en ráfaga después de un
+  corte y ponerle techo convertiría la vuelta de la conexión en una tanda de `429`.
+  - Lo que esto **no** resuelve: es por IP, así que no hace nada contra un ataque distribuido, y a
+    10 intentos por minuto un diccionario de los mil peores passwords se agota en un par de horas
+    desde una sola IP. Contra eso va el bloqueo por cuenta, que no está y tiene su propio costo.
+
+### Correcciones
+
+- **Una contraseña de más de 72 bytes respondía `500`.** Los DTO validaban `@Size(max = 72)`, que
+  cuenta **caracteres**, y BCrypt corta en 72 **bytes**: 72 caracteres acentuados son 144 bytes,
+  pasaban la validación del request y reventaban en `encode()` con un `IllegalArgumentException`
+  que no tiene handler. Alcanzaba a los tres endpoints que hashean —aceptar invitación, confirmar
+  el reseteo y cambiar la contraseña—; el login no, porque `matches()` devuelve `false` sin
+  romperse. Es el mismo límite que la 0.6.0 arregló para la contraseña de relleno de una cuenta
+  invitada, ahora del lado de la que escribe la persona.
+- **`PATCH /api/users/v1/{id}` con un nombre vacío respondía `500`.** Un `""` o un `"   "` cumplía
+  el `@Size` del DTO, se asignaba igual, y el `@NotBlank` de la entidad reventaba recién en el
+  flush con una `ConstraintViolationException` que tampoco tiene handler. Ahora es `400` y nombra
+  el campo. El nulo sigue significando "este campo no se toca": es un `PATCH`.
+- **Nombre y apellido se recortan**, en el alta y en la edición. La colación de la base es
+  `utf8mb4_0900_ai_ci`, que es NO PAD: `"Juan "` y `"Juan"` convivían como valores distintos.
+- **El logout documentaba `204` siempre.** El código está bien —un body sin el `refreshToken`
+  obligatorio es un request mal armado y responde `400`—; lo que faltaba era decirlo. La
+  idempotencia es sobre tokens que no sirven, no sobre pedidos incompletos.
+
+### Configuración
+
+- **`docker/produccion/nginx-ratelimit.conf`** — nuevo, va en `/etc/nginx/conf.d/`. Declara las
+  zonas de límite de tasa que las `location` de `/api/auth` de `nginx.conf` aplican. Son dos
+  archivos y no uno porque `limit_req_zone` solo vale en el contexto `http`, y lo que vive en
+  `sites-available` son bloques `server`: meter las zonas en la plantilla del sitio hace que nginx
+  no arranque.
+- **`docker/produccion/nginx.conf`** — los `proxy_set_header` y los timeouts suben a nivel
+  `server` en vez de repetirse en cada `location`. Ojo con la herencia de nginx si se tocan: una
+  `location` que declare **un** `proxy_set_header` propio pierde **todos** los heredados, no solo
+  el que repite.
+
+### Base de datos
+
+- **Ninguna migración.** El esquema no cambia, así que actualizar es reemplazar el jar o la imagen.
+
+## 0.6.0 (2026-09-15)
+
+**Sincronización offline-first.** El front puede vender con internet caído y mandar los tickets
+por lote cuando vuelve la conexión. Es la versión que más cambia el corazón del módulo de ventas:
+el id y la fecha de un ticket pasan a venir del dispositivo, los importes de ventas dejan de ser
+`float`, y anular deja de ser una operación exclusiva de administrador.
+
+Además, el proyecto salta a **Spring Boot 4.1** (Hibernate 7, Spring Security 7, Jackson 3,
+JUnit 6), y el repo estrena **CI** e **imagen Docker**.
+
+**Al actualizar hay que aplicar las migraciones `12` y `13`** en orden y con la aplicación
+detenida; ver *Base de datos*. Una instalación nueva no las necesita.
 
 ### Cambios que rompen compatibilidad
 
+- **Los importes de ventas son `decimal` y ya no `float`.** Alcanza a `total` y `montoRecibido`
+  de la venta, y a `precioUnitario` y `costoUnitario` de cada línea, en el request y en el
+  response. Un cliente que los leía como `float` sigue funcionando; uno que comparaba strings
+  puede ver `4850.10` donde antes veía `4850.1`. El motivo es el sync: el total lo suma también
+  el front y las dos cuentas tienen que dar exactamente igual. Compras, caja y los precios del
+  catálogo **siguen en `float`**.
+- **`DELETE /api/ventas/v1/{id}` ya no es solo de ADMIN.** Un `EMPLEADO` puede anular **sus
+  propias** ventas dentro de una ventana de 7 días, medida sobre la apertura del turno de esa
+  venta. Un `ADMIN` sigue pudiendo anular cualquiera sin ventana. `DELETE /api/compras/**` no
+  cambia.
+- **Una venta cobrada ahora se anula.** Antes respondía `400 No se puede anular una venta ya
+  cobrada`. Era coherente mientras no existiera una ventana; con siete días, el 100% de lo
+  anulable está cobrado. Si movió efectivo, la anulación **exige un turno de caja abierto** donde
+  devolver la plata y responde `400` si no lo hay.
+- **La reversa de caja de una anulación va al turno abierto de hoy**, no al turno en que se
+  cobró. El corte viejo no se toca —ya está firmado— y el de hoy cuadra con el efectivo que
+  realmente sale del cajón. Es distinto de lo que hace `compras`, que se niega a anular si el
+  turno cerró; acá esa regla vaciaría la ventana de siete días al segundo día.
+- **`created_at` y `deleted_at` de `ventas` y `detalles_ventas` cambiaron de significado.** Ya no
+  son auditoría de la fila sino cuándo **ocurrió** el ticket y cuándo se **anuló**. En una venta
+  online no cambia nada; en una offline las manda el dispositivo y pueden ser de hace días. El
+  dato nuevo es `sincronizado_en`, que es cuándo llegó a MySQL.
+- **`CajaApi.registrarEntradaAutomatica` y `registrarSalidaAutomatica` cambiaron de firma**: un
+  parámetro `LocalDateTime fecha` al final. Es una interfaz interna entre módulos, no de la API
+  HTTP.
+- **Spring Boot 4.1.** Java 21 sigue siendo el mínimo. El salto trae Jackson 3, que es más
+  estricto con los DTO sin constructor vacío —ver *Correcciones*—.
+
+### Agregado
+
+- **`POST /api/ventas/v1/sync`** — recibe la cola de eventos de una caja que estuvo sin conexión.
+  Cuatro tipos de evento (`CREAR`, `ANULAR`, `ABRIR_SESION`, `CERRAR_SESION`), hasta 100 por
+  lote, y **siempre responde `200`** con un resultado por ítem: un ticket que falla no impide que
+  entren los otros diecinueve. Lo puede llamar cualquiera que pueda vender.
+  - **Una transacción por evento, no una por lote.** Un lote a medio procesar deja la base
+    consistente, que es exactamente lo que pasa cuando la respuesta se pierde en el camino.
+  - **Idempotente por `tipo` + `uuid`.** Reenviar un lote entero es inofensivo y devuelve la
+    misma respuesta, marca de revisión incluida.
+  - **Los eventos se aplican en el orden en que pasaron en el local**, no en el del array.
+- **`GET /api/ventas/v1/revision`** (ADMIN, paginado) — lo que la sincronización dejó marcado:
+  stock que hubo que regularizar y totales que no coincidieron. No son ventas con problemas: son
+  ventas válidas que apuntan a uno.
+- **`VentaResponse` suma cuatro campos**: `origen` (`ONLINE`/`OFFLINE`), `dispositivo`,
+  `sincronizadoEn` y `requiereRevision`. `DetalleVentaResponse` expone `costoUnitario`, que ya se
+  guardaba.
+- **UUIDv7 en las tablas que reciben ids del front** (`ventas`, `detalles_ventas`,
+  `sesiones_caja`), con `shared/Uuid7`. Los 48 bits altos son el timestamp, así que las
+  inserciones vuelven a ser casi secuenciales en vez de fragmentar el clustered index como un v4.
+  El endpoint de sync **rechaza** un uuid que no sea v7.
+- **Regularización de stock en las ventas offline.** Un faltante ya no puede rechazar un ticket:
+  la venta es física y ya ocurrió. Entra un `AJUSTE` por la diferencia y después la `VENTA`
+  completa, y el ticket queda marcado para revisión.
+- **CI** (`.github/workflows/ci.yml`): compila y corre los tests en cada push a `main` o
+  `developer` y en cada PR. No publica ni despliega.
+- **Imagen Docker** (`Dockerfile` multi-stage, usuario no root) y `compose.yaml` para levantar la
+  API con su MySQL sin instalar nada más.
+
+### Cambiado
+
+- **El FEFO de un ticket offline prefiere los lotes que ya existían a la fecha de la venta.** Sin
+  eso, un lote que ingresó ayer podría absorber la venta de anteayer, cuando físicamente no
+  estaba en el local. El filtro se hace en memoria sobre los lotes que la consulta de bloqueo ya
+  tomó: una segunda consulta ordenada por fecha de alta tomaría los locks en un orden distinto al
+  canónico y abriría un ciclo de deadlock.
+- **La fecha del ticket baja hasta el kardex y la caja.** El movimiento de stock y el de caja de
+  una venta offline quedan fechados cuando salió la mercadería, no cuando llegó el lote. Sin
+  esto, el kardex mostraba la mercadería saliendo dos días después de la venta que la sacó.
+- **El movimiento de retiro del corte se fecha con el cierre** y no con el reloj del servidor. En
+  un turno sincronizado caía fuera de la vida de su propio turno.
+- **El turno de caja se puede sincronizar.** `ABRIR_SESION` y `CERRAR_SESION` viajan en el lote,
+  con el uuid y las fechas del dispositivo. Sigue habiendo un solo turno abierto a la vez: la
+  apertura que choca responde `SESION_YA_ABIERTA` reintentable, no una violación de índice cruda.
+
+### Correcciones
+
+- **Invitar un usuario respondía `500` en Spring Security 7.** La contraseña de relleno de una
+  cuenta invitada eran dos UUID con un guion, o sea 73 bytes, y BCrypt no acepta más de 72.
+  Security 6 truncaba en silencio y funcionaba de casualidad; la 7 tira
+  `IllegalArgumentException` y se llevaba puesta la invitación entera.
+- **Diez DTO de request respondían `500` con Jackson 3.** Eran `@Data @Builder` sin constructor
+  vacío: Lombok omite el de `@Data` cuando `@Builder` ya declaró uno, y Jackson 2 lo toleraba vía
+  `-parameters`. Afectaba al alta de producto, las compras, los ajustes de stock y de lotes, el
+  precio de referencia y los movimientos de stock.
+- **`save()` hacía un `SELECT` antes de cada `INSERT`** en las entidades con id asignado: Spring
+  Data decide que una entidad con id no es nueva y pasa por `merge()`. Un ticket de diez líneas
+  eran once consultas de más, y un lote de cien tickets, más de mil. Resuelto implementando
+  `Persistable`.
+
+### Base de datos
+
+- **`12_ventas_offline.sql` — columnas de sincronización en `ventas`.** `sincronizado_en`,
+  `origen`, `dispositivo`, `id_usuario_sync` (FK a `usuarios`) y `requiere_revision`, más el
+  índice `ix_ventas_revision`. Toda venta existente queda con `origen = 'ONLINE'`, que es lo que
+  efectivamente es. Agrega también la tabla `anulaciones_pendientes`, **sin FK a `ventas`** a
+  propósito: guarda anulaciones que llegaron antes que el ticket que anulan, así que la venta
+  puede no existir todavía.
+- **`13_importes_decimal_ventas.sql` — importes de ventas a `DECIMAL(12,2)`.** `ventas.total`,
+  `ventas.monto_recibido`, `detalles_ventas.precio_unitario` y `costo_unitario`.
+  - **Ojo con esto, que es contraintuitivo:** la cabecera y las líneas se redondean por separado,
+    así que la conversión puede **descuadrar una venta que en `float` cuadraba**. Un total de
+    `999.999` queda en `1000.00` y su línea de `3 × 333.333` en `3 × 333.33 = 999.99`. El script
+    lista las ventas que terminaron así **después** de convertir: antes no se ven. Esas
+    diferencias no se corrigen solas —el total es la plata que el cliente pagó—, y una diferencia
+    grande no es redondeo y hay que mirarla.
+- Aplicar en orden y con la aplicación detenida. `00_init_limpio.sql` ya trae todo: una
+  instalación nueva no necesita las migraciones.
+
+## 0.5.0 (2026-09-05)
+
+Cuatro trabajos que venían anotados como pendientes: el alta de producto pasa a cargar sus
+existencias iniciales, los productos que manejan lotes ganan un ajuste manual por lote, cada
+proveedor puede tener un precio de referencia por producto, y terminan de paginarse los seis
+listados que quedaban sin techo.
+
+**Al actualizar hay que aplicar las migraciones `09` a `11`** en orden y con la aplicación
+detenida; ver *Base de datos*. Una instalación nueva no las necesita.
+
+### Cambios que rompen compatibilidad
+
+- **Se eliminó `POST /api/inventario/v1/stock`.** Era inalcanzable: el alta de producto siempre
+  había creado la fila de stock, así que este endpoint respondía `400 El producto ya tiene stock
+  inicializado` para cualquier producto dado de alta por la API. Las existencias iniciales ahora
+  se cargan en `POST /api/productos/v1`. Se fueron con él `InventarioApi.crear(StockRequest)` y
+  el DTO `StockRequest`.
+- **Un producto que maneja lotes ya no lleva fila de `stock`.** Sus existencias son la suma de
+  sus lotes y esa fila no la leía nadie: no se actualizaba al entrar o salir mercadería por lote
+  y ocupaba el índice único sin representar nada. El alta dejó de crearla y la migración `09` da
+  de baja las que quedaron.
+- **`PUT /api/productos/v1/{id}` puede responder `400` al cambiar `manejaLotes`.** El cambio
+  mueve la fuente de las existencias del producto —la tabla `stock` para los comunes, la suma de
+  lotes para los que manejan lotes—, así que con unidades cargadas las hacía desaparecer de toda
+  la aplicación: seguían en la base y ningún reporte volvía a mostrarlas, sin movimiento ni
+  error. Ahora hay que descargarlas primero.
+- **Los seis listados que faltaban devuelven un `Page`.** `GET /api/inventario/v1/lotes` y sus
+  cuatro variantes por estado y vencimiento, `GET /api/caja/v1/corte/historial`,
+  `GET /api/reportes/v1/inventario`, `GET /api/categorias/v1`, `GET /api/proveedores/v1` y
+  `GET /api/users/v1`. Todos aceptan `?page=` y `?size=` (1 a 100) y devuelven `content`,
+  `totalElements`, `totalPages`, `number` y `size` en vez de un array. Los parámetros que ya
+  tenían —`?incluirBajas=` en usuarios y proveedores— se conservan tal cual.
+
+### Agregado
+
+- **`POST /api/productos/v1` carga las existencias iniciales.** Suma `cantidadInicial` (opcional,
+  0 por defecto) y `loteInicial` con `numeroLote` y `fechaVencimiento`. Producto, existencias y
+  movimiento de stock se escriben en la misma transacción, así que la pantalla de registrar
+  stock ya no tiene que mandar al usuario de vuelta al formulario de producto ni completar el
+  alta con una segunda llamada que, si fallaba, dejaba un producto en cero sin avisar.
+  - Sin lotes: fila de `stock` con la cantidad, más un movimiento `AJUSTE` "Carga inicial de
+    stock" cuando es mayor a cero.
+  - Con lotes: el lote de `loteInicial` con esa cantidad y su movimiento, **sin** fila de stock.
+  - `400` si `manejaLotes` es `false` y viene `loteInicial`, si es `true` con cantidad y sin
+    `loteInicial`, o si viene `loteInicial` con la cantidad en cero.
+- **`POST /api/inventario/v1/lotes/ajustar` — conteo físico por lote.** Es el equivalente de
+  `/controlar` para los productos que manejan lotes, que hasta ahora **no tenían ningún camino
+  de corrección**: `controlarStock` los rechazaba, y con razón, porque escribiría una tabla que
+  para ellos nadie lee. Hace falta porque el consumo reparte por vencimiento pero en la góndola
+  el cliente agarra cualquier envase: con el tiempo el total puede seguir siendo correcto y el
+  reparto por lote no serlo.
+  - **Parcial**: solo se tocan los lotes que vienen en `conteos`. Un conteo incompleto no borra
+    existencias que nadie miró.
+  - Un movimiento `AJUSTE` por lote con diferencia, con su `idLote` y la diferencia firmada. Un
+    conteo sin diferencias deja **un solo** movimiento en cero y sin lote: lo que se registra es
+    que alguien contó.
+  - Valida todo el conteo antes de escribir nada, así que un lote ajeno en la última línea no
+    deja aplicadas las anteriores.
+  - Solo ADMIN, igual que `/controlar`.
+- **`GET /api/inventario/v1/lotes/ajustables/{idProducto}`** — los lotes que conviene ofrecer en
+  esa pantalla: sin los vencidos, que corresponden a una merma y no a un ajuste de conteo, y sin
+  los que están en cero desde hace más de 30 días (`EstadoLote.DIAS_LOTE_AGOTADO`). Es un filtro
+  de la lista, no del ajuste: el `POST` acepta cualquier lote activo, porque si no un error de
+  carga sobre un lote vencido no tendría forma de corregirse.
+- **Precio de referencia por proveedor.** Cada producto puede tener el precio que **lista** cada
+  proveedor, cargado y corregido siempre a mano. No es lo que se pagó la última vez ni influye
+  en ninguna compra ni en ningún cálculo: es el dato que se consulta al momento de comprar.
+  - `GET /api/productos/v1/{id}/proveedores`, del más barato al más caro.
+  - `PUT /api/productos/v1/{id}/proveedores/{idProveedor}` — upsert, para que el front no tenga
+    que saber de antemano si la referencia ya existía. Solo ADMIN.
+  - `DELETE /api/productos/v1/{id}/proveedores/{idProveedor}` — baja lógica, que libera el par
+    para volver a cargarlo. Solo ADMIN.
+- **`GET /api/compras/v1/producto/{idProducto}/proveedores`** — a quién se le puede comprar el
+  producto y a cuánto: cruza el precio de referencia con **lo que realmente se pagó** la última
+  vez a cada proveedor. Ordena primero los del catálogo por precio y después, por nombre, los
+  que solo aparecen en el historial. Es de consulta y no interviene en el alta de la compra.
+
+### Cambiado
+
+- **`findParaDescuentoFifo` pasó a llamarse `findParaDescuentoFefo`,** y con ella los
+  comentarios y el motivo que se guarda en los movimientos (`"Venta realizada (FEFO)"`). El
+  comportamiento no cambia: la consulta siempre ordenó por fecha de vencimiento, o sea que ya
+  era FEFO —*first expired, first out*— y no FIFO. Se consume primero el lote que vence antes,
+  no el que entró antes, que es lo que corresponde en un minimarket. Los movimientos ya escritos
+  conservan el texto viejo: el kardex es append-only.
+- **El error de `POST /api/inventario/v1/controlar` sobre un producto con lotes ahora dice por
+  dónde sí se ajusta,** en vez de describir el problema y dejar al usuario sin camino.
+- **La baja de un producto también da de baja sus precios de referencia,** igual que ya hacía
+  con su stock y sus lotes. Si sobrevivían, el índice único las seguía contando y volver a
+  cargar el mismo par producto-proveedor chocaba contra una fila de un producto que ya no
+  existe.
+- **La baja de un proveedor NO borra sus precios de referencia,** y es a propósito: la baja es
+  reversible con `/restaurar`, así que perder el catálogo en cada una sería destructivo. Las
+  referencias se siguen mostrando con `deletedAt` cargado. Lo que sí se rechaza es cargar una
+  referencia **nueva** a un proveedor dado de baja.
+- **El techo del tamaño de página vive en `shared/Paginacion`.** Estaba declarado como constante
+  privada en cinco controladores, y esta versión lo habría llevado a nueve: basta con que una
+  quede desactualizada para que dos listados de la misma API acepten tamaños distintos.
+
+### Rendimiento
+
+- **`GET /api/reportes/v1/inventario` dejó de traerse el sistema entero.** Pedía el catálogo
+  completo con `PageRequest.of(0, Integer.MAX_VALUE)` —resolviendo además la categoría de cada
+  fila— y encima las existencias de **todos** los productos. Ahora pagina y resuelve las
+  existencias solo de los productos de la página, con `InventarioApi.getExistenciasPorProductos`,
+  que son las mismas dos consultas agregadas acotadas con un `IN`.
+- **Los listados de lotes resuelven los nombres de producto en un solo pedido por página**, no
+  uno por fila: el mapa se arma con el contenido de la página y recién después se mapea.
+- **La última compra por proveedor sale de una subconsulta correlacionada** sobre el máximo de
+  `created_at`, no trayendo el historial completo del producto para descartar en memoria. Un
+  producto que se compra hace años tiene cientos de líneas y solo interesa la última de cada
+  proveedor.
+
+### Correcciones
+
+- **Cambiar `manejaLotes` con existencias cargadas hacía desaparecer la mercadería.** Ver
+  *Cambios que rompen compatibilidad*.
+- **El alta creaba una fila de `stock` inútil para los productos con lotes.** Ver *Cambios que
+  rompen compatibilidad* y la migración `09`.
+- **El orden de los proveedores que solo aparecen en el historial es estable.** Salía de un
+  `HashMap`, así que cambiaba entre dos llamadas iguales.
+- **El historial de cortes ordena por `fecha_cierre` con un índice que lo acompaña.** El único
+  que había ordenaba por `created_at`, que no es el mismo orden: un turno puede abrirse antes
+  que otro y cerrarse después.
+- **La matriz de permisos de `docs/api-endpoints.md` decía que todo inventario era para
+  `EMPLEADO`.** Era inexacto desde la 0.4.0: `/controlar` y `DELETE /stock/**` son de ADMIN.
+
+### Base de datos
+
+- **`09_stock_de_productos_con_lotes.sql` — baja de las filas de `stock` huérfanas.** Da de baja
+  lógica las filas en cero de productos que manejan lotes, que son las que dejó el alta vieja.
+  Solo toca las que están en **cero**: una fila con unidades es un dato real que se perdería de
+  vista, y además significa que en algún momento se cambió `manejaLotes` con existencias
+  cargadas —justo lo que esta versión pasa a rechazar—, así que el script las lista aparte para
+  revisarlas a mano.
+- **`10_producto_proveedor.sql` — tabla nueva del catálogo de precios de referencia.** Un precio
+  activo por par `(id_producto, id_proveedor)`, con el mismo patrón de columna generada que
+  `uk_stock_producto_activo`: borrar la referencia libera el par. `productos.id_proveedor` **no
+  se toca**, sigue siendo el proveedor habitual; son dos datos distintos.
+  - `precio_referencia` es `DECIMAL(12,2)` y no `FLOAT`, a diferencia del resto de los importes
+    del sistema. Eso es deuda conocida; una columna nueva no tiene por qué nacer con el
+    problema, y esta no se suma con ninguna otra.
+- **`11_indice_cierre_sesiones.sql` — índice para el historial de cortes paginado.**
+  `ix_sesiones_estado_cierre (estado, deleted_at, fecha_cierre)`. El índice viejo se conserva:
+  lo usan las otras consultas por estado, que siguen ordenando por `created_at`.
+- Aplicar en orden y con la aplicación detenida. `00_init_limpio.sql` ya trae la tabla y el
+  índice nuevos: una instalación nueva no necesita las migraciones.
+
+## 0.4.0 (2026-09-04)
+
+Cierre del alta por invitación y limpieza de los límites entre los módulos `auth` y `usuarios`,
+más la auditoría módulo por módulo de todo el resto del sistema: catálogo —productos, categorías
+y proveedores—, inventario, ventas, compras, caja y reportes. Es la versión con más cambios
+incompatibles del proyecto: la mayoría son listados que pasaron a paginar y errores del cliente
+que respondían `500`.
+
+**Al actualizar hay que aplicar las migraciones `04` a `08`** en orden y con la aplicación
+detenida; ver *Base de datos*. Una instalación nueva no las necesita.
+
+> Esta entrada absorbe el diario de trabajo que se llevaba aparte en `CHANGELOG-BACKEND.md`, que
+> registraba los mismos cambios archivo por archivo y quedó eliminado: el changelog es uno solo.
+
+### Cambios que rompen compatibilidad
+
+- **`GET /api/users/v1` cambió de forma.** Acepta `?incluirBajas=` y `UsuarioResponse` trae un
+  campo nuevo, `deletedAt`. El comportamiento por defecto no cambia: sin el parámetro devuelve
+  solo las cuentas en pie, igual que antes.
+- **Se eliminó `POST /api/users/v1`, el alta directa.** La invitación queda como **única**
+  forma de dar de alta a alguien: el front tiene que llamar a
+  `POST /api/users/v1/invitaciones`, que no lleva contraseña. El alta directa contradecía el
+  modelo —quien invita nunca conoce la credencial del invitado— y dejaba dos caminos para lo
+  mismo. Se fueron con él `UsuarioApi.crear` y el DTO `CrearUsuarioRequest`.
 - **Se eliminó `POST /api/auth/v1/verify-email`.** El circuito de verificación de email había
   quedado sin emisor cuando se sacó el autorregistro: nadie llamaba a
   `generateVerificationToken`, así que el endpoint validaba tokens que el sistema nunca creaba.
   Si el front todavía lo invoca, ahora recibe `404`.
+- **`PUT /api/productos/v1/{id}` pasa a ser un reemplazo total.** Los campos opcionales que se
+  omitan o vengan en `null` ahora **se borran**. Antes se salteaban, y eso hacía imposible
+  desasignar la categoría, el proveedor, el costo o el margen: el pedido se aceptaba con `200` y
+  el valor viejo quedaba intacto. Un formulario que hoy manda solo lo que cambió tiene que pasar
+  a mandar la representación completa.
+- **`DELETE /api/productos/v1/{id}` y `DELETE /api/categorias/v1/{id}` pueden responder `400`.**
+  El producto se rechaza si todavía tiene existencias —stock o lotes con unidades— y la
+  categoría si tiene productos asignados. Antes las dos bajas se llevaban puesto ese dato en
+  silencio.
+- **`GET /api/proveedores/v1` cambió de forma.** Acepta `?incluirBajas=` y `ProveedorResponse`
+  trae `deletedAt`. Sin el parámetro devuelve solo los proveedores en pie, igual que antes.
+- **`GET /api/inventario/v1/movimientos/{idProducto}` devuelve un `Page`.** Era una lista sin
+  techo sobre la única tabla del módulo que crece con cada venta y cada compra. Acepta
+  `?page=` y `?size=` (1 a 100) y ordena del movimiento más reciente al más viejo.
+- **`PUT /api/inventario/v1/stock/aumentar` y `/disminuir` solo aceptan `tipo` `AJUSTE` o
+  `MERMA`.** `COMPRA` y `VENTA` los escribe el sistema al registrar el comprobante. Ver
+  *Seguridad*.
+- **`POST /api/inventario/v1/controlar` y `DELETE /api/inventario/v1/stock/{idProducto}` pasaron
+  a ser solo de ADMIN.** Un `EMPLEADO` que los use recibe `403`.
+- **Una compra con productos que manejan lotes exige la fecha de vencimiento de cada línea.**
+  El alta del lote pasó a hacerse por el módulo de inventario, que ya la exigía; la compra lo
+  creaba a mano y se salteaba esa validación, así que podía dejar lotes en `SIN_FECHA`, invisibles
+  para el control de vencimientos.
+- **Un proveedor no puede repetir número dentro del mismo tipo de comprobante.** Cargar dos
+  veces el mismo remito duplicaba el ingreso de stock y la salida de caja sin dejar señal. La
+  regla es por proveedor y por tipo: dos proveedores distintos pueden emitir el mismo número, y
+  un mismo proveedor puede tener un remito y una factura con el mismo número porque cada tipo
+  lleva su propia numeración. Ver *Base de datos*.
+- **El corte de caja pide `montoRetirado`.** Al cerrar hay que declarar cuánto se saca de la
+  caja; lo que no se retira queda para el turno siguiente, que lo declara al abrir. Sin ese
+  dato el resumen del día contaba dos veces la misma plata. `CorteResponse` suma `montoRetirado`
+  y `saldoDejado`, y `SesionCajaResponse` suma `diferenciaApertura`.
+- **`GET /api/caja/v1/movimientos` devuelve un `Page` y exige las dos fechas o ninguna.**
+  Acepta `?page=` y `?size=` (1 a 100). Antes, con solo `hasta`, el rango arrancaba en el año
+  2000 y se traía sin paginar la tabla que suma una fila por cada venta cobrada en efectivo,
+  cada compra pagada por caja y cada reversa.
+- **Los tres listados de ventas devuelven un `Page`.** `GET /api/ventas/v1`,
+  `/api/ventas/v1/usuario/{idUsuario}` y `/api/ventas/v1/fecha` aceptan `?page=` y `?size=`
+  (1 a 100) y ya no devuelven una lista. El primero traía **todas** las ventas de la historia
+  del comercio con todos sus detalles en cada request, sobre la tabla que más rápido crece del
+  sistema.
+- **Un `EMPLEADO` solo ve sus propias ventas.** Vale para los tres listados y para
+  `GET /api/ventas/v1/{id}`, que responde `403` con la venta de otro. `GET /api/ventas/v1`
+  devuelve ahora cosas distintas según quién llame: todas para un `ADMIN`, las propias para el
+  resto. Antes cualquier autenticado veía las de todos y podía listar las de un compañero por
+  id de usuario.
+- **`montoRecibido` dejó de ser obligatorio al cobrar, salvo en efectivo.** Con `TARJETA` o
+  `TRANSFERENCIA` se ignora y la venta queda con el campo en `null`: antes había que mandar un
+  número —normalmente el total exacto— para que el cobro pasara, y ese número quedaba guardado
+  como si fuera la plata que entregó el cliente. En efectivo sigue siendo obligatorio y tiene
+  que alcanzar para el total.
+- **Los reportes con fechas acotan el rango a 366 días.** `GET /api/reportes/v1/ventas`,
+  `/ganancias` y `/productos-mas-vendidos` responden `400` si el período es más largo o si
+  `desde` es posterior a `hasta`. Cada reporte devuelve una fila por día del rango y carga en
+  memoria las ventas del período con sus detalles: con `desde=0001-01-01&hasta=9999-12-31` se
+  armaban más de tres millones de filas en una sola respuesta.
+- **`limite` de `GET /api/reportes/v1/productos-mas-vendidos` va de 1 a 100.** Fuera de ese
+  rango es `400`; antes un valor negativo respondía `500` y uno arbitrariamente grande se
+  aceptaba.
+- **`porDia` del reporte de ganancias cubre el rango completo.** Los días sin ventas ni compras
+  ahora salen en cero, como ya hacía `/reportes/ventas`. Devolvían arrays de distinto largo para
+  el mismo período, así que no se podían graficar juntos sin rellenarlos en el front.
+- **`GET /api/compras/v1` devuelve un `Page` y absorbió a los otros dos listados.**
+  `GET /api/compras/v1/fecha` y `GET /api/compras/v1/usuario/{idUsuario}` **se eliminaron**: sus
+  filtros pasaron a ser parámetros opcionales del listado único, junto con `proveedor`,
+  `tipoComprobante` y `sortTotal`. Acepta `?page=` y `?size=` (1 a 100). Eran tres endpoints que
+  hacían la misma consulta con un filtro distinto cada uno, y ninguno paginaba.
+- **`DELETE /api/compras/v1/{id}` ya no lleva el header `idUsuario`.** Era el último endpoint que
+  lo exigía, contra lo que la documentación viene diciendo desde hace dos versiones. Si el front
+  lo sigue mandando, se ignora; si antes lo omitía, dejaba de responder `500`.
 
 ### Agregado
 
+- **`POST /api/users/v1/{id}/restaurar` — reactivación de una cuenta dada de baja.** Vuelve
+  como `PENDIENTE`, con la contraseña anterior invalidada y una invitación nueva, así la persona
+  define otra credencial y de paso confirma que sigue teniendo ese mail. Restaura la fila
+  original en lugar de crear una cuenta nueva: el id lo referencian `ventas`, `compras`,
+  `movimientos_caja`, `movimientos_stock` y `sesiones_caja` con `ON DELETE RESTRICT`, así que un
+  alta nueva con el mismo email partiría el historial de esa persona en dos. Conserva su rol y
+  rige la jerarquía de siempre. Si el mail no sale, la restauración se revierte.
+- **`GET /api/users/v1?incluirBajas=true`** para listar también las cuentas dadas de baja, que
+  en el listado normal son invisibles: sin esto el administrador no tiene de dónde sacar el id
+  para restaurarlas. **`UsuarioResponse` suma `deletedAt`**, null salvo en ese listado.
+- **El `400` de un email ya tomado ahora dice qué hacer**, según el estado de la cuenta que lo
+  ocupa: dada de baja → restaurala; `PENDIENTE` → reenviale la invitación en vez de invitarla de
+  nuevo; en pie → la persona ya está en el sistema. Antes los tres casos compartían
+  `"El email ya está registrado"`, y el administrador quedaba sin salida en los dos primeros.
+  La acción sugerida aparece **solo si la cuenta está por debajo del nivel de quien invita**,
+  que es lo que exigen restaurar y reenviar: a un ADMIN que tropieza con la cuenta de otro
+  ADMIN se le informa el hecho, pero no se le propone algo que le daría `403`.
 - **El invitado elige su nombre de usuario.** `POST /api/auth/v1/invitacion/aceptar` acepta un
   campo `username` opcional (1-50 caracteres, sin `@`). Si no viene, queda el que se derivó del
   email al invitarlo, como hasta ahora. Un nombre ya tomado responde `400` y no se desambigua
@@ -23,6 +483,25 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
 - **Documentación OpenAPI del módulo `auth`**: los siete endpoints de `/api/auth` salen en
   `/swagger-ui.html` con resumen, descripción y los códigos de error que devuelve cada uno. El
   resto de los controllers sigue con la documentación autogenerada, sin anotar.
+- **`POST /api/proveedores/v1/{id}/restaurar` — reactivación de un proveedor dado de baja.**
+  Vuelve sobre la fila original, no sobre un alta nueva: las compras la referencian por id, así
+  que un proveedor nuevo con los mismos datos partiría el historial en dos. Los dados de baja se
+  listan con `GET /api/proveedores/v1?incluirBajas=true`. Se rechaza si el proveedor está en pie
+  o si mientras tanto se dio de alta otro activo con el mismo nombre.
+- **`409` para los cruces de concurrencia sobre el inventario.** Espera de lock agotada o
+  deadlock resuelto por la base dejan de salir como `500`: el pedido estaba bien y se puede
+  reintentar tal cual.
+- **El historial de movimientos de stock expone `idLote`, `idReferencia` e `idUsuario`.** Sin
+  esos tres no alcanzaba para auditar: no se podía saber de qué lote salió cada unidad, qué
+  comprobante lo originó ni quién lo cargó.
+- **`POST /api/inventario/v1/stock/batch` — existencias de varios productos en un pedido.**
+  Recibe una lista de ids en el body y devuelve el `idProducto` y la `cantidad` de cada uno. Es
+  lo que necesita una pantalla que muestra el stock de toda una grilla: uno por uno era una
+  request por fila.
+- **`margen` y `precioVenta` en cada línea de una compra.** Los dos son opcionales. El front ya
+  calcula el precio de venta a partir del costo y el margen que el operador carga en la pantalla
+  de compra; mandarlos evita que el backend rehaga esa cuenta y termine con un precio distinto
+  del que la persona vio en pantalla por un redondeo.
 
 ### Cambiado
 
@@ -39,6 +518,39 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
 - **El login responde con un único mensaje de error.** Antes distinguía "credenciales inválidas
   o cuenta sin acceso" de "credenciales inválidas"; esa diferencia dejaba deducir qué cuentas
   existen y en qué estado están.
+- **El inventario se escribe con la fila bloqueada.** Aumentar, disminuir, el ajuste manual, el
+  descuento FIFO de una venta y las reversas de anulación leen la fila de stock o de lote con
+  `SELECT ... FOR UPDATE`. Antes leían y reescribían sin bloqueo: dos ventas simultáneas del
+  mismo producto partían de la misma cantidad y una pisaba a la otra, con lo que se vendía de
+  más y el faltante no quedaba registrado en ningún lado. Los locks se toman siempre en el mismo
+  orden —productos por id ascendente y, dentro de cada uno, sus lotes por vencimiento—, así que
+  dos operaciones no pueden trabarse cruzadas. El detalle de una venta o una compra se sigue
+  guardando y devolviendo en el orden en que se cargó.
+- **Dar de baja un producto limpia su stock y sus lotes.** Quedaban activos y seguían sumando en
+  los reportes de existencias, que leen esas tablas sin pasar por el catálogo.
+- **Dar de baja un proveedor ya no lo borra del historial.** Deja de poder usarse en compras
+  nuevas y de asignarse a un producto, pero las compras ya registradas y los productos que lo
+  tenían lo siguen mostrando, con `deletedAt` cargado. Antes el historial pasaba a mostrar
+  `proveedor: null`, o sea que una baja borraba a quién se le había comprado.
+- **El nombre de una categoría dada de baja vuelve a estar disponible.** Ver *Base de datos*.
+- **Registrar una compra le reescribe al producto el costo, el margen, el precio y el
+  proveedor.** El costo sale del precio unitario de la línea; el margen y el precio de venta,
+  solo si vienen en el request; el proveedor, el de la compra. Antes una compra dejaba el
+  catálogo intacto, así que el costo con el que se calculaba la ganancia era el de la primera
+  carga y había que ir a corregirlo a mano producto por producto. **Anular la compra no lo
+  revierte**, y es a propósito: se anula por motivos que no tienen nada que ver con el precio
+  —el proveedor no entregó, se cargó dos veces— y en ninguno corresponde volver atrás el precio
+  de venta vigente. Si lo que estaba mal era el precio, se corrige por el ABM de productos.
+- **Crear un producto crea su fila de stock en cero.** Sin ella, la primera compra de ese
+  producto fallaba con `"Stock no encontrado"`: el alta del catálogo y el alta de existencias
+  eran dos pasos y nada obligaba a hacer el segundo.
+- **El catálogo se lista del más reciente al más viejo**, por `updatedAt` descendente y con el
+  `id` de desempate.
+- **El ajuste manual de stock crea la fila si falta y rechaza los productos con lotes.** Un
+  producto sin fila de stock es stock 0 y no un error, igual que en la lectura; antes el
+  operador veía 0 y el ajuste sobre ese mismo producto respondía `404`. Y ajustar por stock un
+  producto que lleva lotes escribía una fila que el cálculo de existencias después ignora: el
+  ajuste quedaba registrado y no cambiaba nada de lo que ve el usuario.
 
 ### Eliminado
 
@@ -47,9 +559,37 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
   `UsuarioApi.activarCuenta` y los DTO `VerifyEmailRequest` y `RegisterRequest` —este último ya
   no lo referenciaba nadie desde que el alta pasó al módulo de usuarios.
 - `AuthApi.crear`, que solo delegaba en `UsuarioApi.crear` y ningún controller exponía.
+- `UsuarioApi.crear`, `UsuarioService.crear` y `CrearUsuarioRequest`, con el endpoint de alta
+  directa que los exponía.
 
 ### Correcciones
 
+- **El `barcode` del top de productos más vendidos salía siempre en `null`.** El detalle de la
+  venta congela el nombre y el precio, no el código, y el reporte nunca lo buscaba, aunque el
+  campo estaba en la respuesta y documentado. Ahora se resuelve en una sola consulta y solo para
+  los productos que quedaron en el top.
+- **El top de productos empatados salía en cualquier orden.** Se ordenaba solo por cantidad
+  vendida, así que entre dos productos con la misma cantidad el corte del `limite` podía dejar
+  afuera a uno u otro sin criterio y cambiar entre dos llamadas idénticas. Desempata por importe
+  y después por id.
+- **Un invitado que reseteaba la contraseña en vez de aceptar la invitación quedaba afuera para
+  siempre.** `POST /api/auth/v1/password-reset` alcanza a las cuentas `PENDIENTE`, pero
+  confirmar el reseteo cambiaba el hash sin tocar el estado, y el login exige una cuenta activa:
+  la persona terminaba con una contraseña válida y un `401` inexplicable. Ahora el reseteo
+  **activa la cuenta pendiente** —el token viajó al email de la cuenta, la misma prueba de
+  identidad que pide la invitación—. Una cuenta bloqueada no se destraba por ese camino.
+- **La invitación deja de valer cuando la cuenta ya se activó.** Es la contracara del punto
+  anterior: si no, el enlace del mail seguiría sirviendo por las horas que le quedaran para
+  cambiarle la contraseña a una cuenta activa sin conocer la actual. `getCuentaInvitada` y
+  `establecerPasswordInicial` ahora exigen estado `PENDIENTE`, no solo que la cuenta no esté
+  bloqueada ni dada de baja.
+- **Invitar con el email de una cuenta dada de baja devolvía un `409` incomprensible.** La
+  validación del alta miraba `deleted_at` y las unique keys `uk_usuarios_email` /
+  `uk_usuarios_username` no: el alta pasaba la validación y reventaba en el INSERT con
+  `"La operación choca con una restricción de datos existente"`. Ahora se rechaza antes, con
+  `400` y un mensaje que lo explica (`"El email pertenece a una cuenta dada de baja"`). El
+  username derivado del email también cuenta las bajas lógicas al desambiguar con sufijo, así
+  que ya no puede proponer uno ocupado por una cuenta borrada.
 - **La aplicación no arrancaba.** `AuthService` y `UsuarioService` quedaron dependiendo uno del
   otro al pasar auth a consumir `UsuarioApi`, y Spring rechaza las referencias circulares desde
   Boot 2.6: el contexto moría con `BeanCurrentlyInCreationException`. Se corta con `@Lazy` sobre
@@ -59,6 +599,125 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
 - **Swagger no levantaba.** `springdoc-openapi` estaba en `2.5.0`, de la serie que acompaña a
   Spring Boot 3.2, contra el `3.5.13` del proyecto: el arranque cortaba con `NoSuchMethodError`
   en `ControllerAdviceBean`. Actualizado a `2.8.9`.
+- **Un producto dado de baja seguía siendo editable.** El `update` lo buscaba sin mirar
+  `deleted_at`: respondía `200` y hasta dejaba moverle el código de barras encima del de un
+  producto activo. Ahora es `404`.
+- **Varios errores del cliente salían como `500`.** Un `page` negativo o un `size` fuera de rango
+  reventaban dentro de `PageRequest.of`; el alta de producto con un usuario inexistente lanzaba
+  un `RuntimeException` pelado; y la validación de los parámetros de consulta no tenía handler,
+  así que caía en el catch-all. Todos responden `400` con su mensaje.
+- **La paginación del catálogo repetía y salteaba filas.** Ordenaba solo por `updatedAt`, que se
+  mueve solo porque cada compra reescribe el costo y el precio del producto, y que no desempata
+  entre productos cargados juntos. Se agregó el `id` como segundo criterio.
+- **Un producto sin nombre tiraba abajo los cinco endpoints de lotes.** El mapa de nombres se
+  armaba con `Collectors.toMap`, que no admite valores nulos, y la columna sí los admite.
+- **El listado de lotes por estado barría todo.** Traía el catálogo entero y todos los lotes para
+  descartar en memoria; ahora cada estado es un rango de fechas resuelto en una consulta.
+- **La fila de stock se podía borrar con existencias**, que era además la forma de saltearse la
+  validación equivalente de la baja de producto.
+- **El listado de compras contaba de más en el borde del rango.** El filtro por fechas era
+  inclusivo en `hasta`, pero el reporte de ganancias le pasa el día siguiente a medianoche
+  esperando un rango semiabierto —que es como está escrito el otro query del mismo repositorio y
+  como funciona ventas—. Una compra registrada exactamente a las `00:00:00.000000` del día
+  siguiente entraba en el reporte del día anterior.
+- **El resumen diario de caja inflaba el saldo esperado con cada turno.** Sumaba el saldo de
+  apertura de todas las sesiones del día, y como lo que un turno declara al abrir es la plata
+  que dejó el anterior, la misma plata se contaba una vez por turno. Ahora el día arranca con el
+  primer turno y los retiros de cada cierre salen como movimiento, así que el día cierra con lo
+  que efectivamente quedó en la caja.
+- **El origen de un movimiento de caja era un `String` suelto que viajaba entre tres módulos.**
+  El resumen clasificaba comparando por igualdad exacta, así que un `"Venta"` mal tipeado
+  compilaba, pasaba la validación de Java y quedaba fuera de todas las categorías del arqueo
+  aunque sí sumara al saldo esperado. Ahora es un enum y el compilador señala cualquier valor
+  que no exista. La columna guarda los mismos nombres, así que no hace falta migrar nada.
+- **Los movimientos automáticos aceptaban cualquier id de turno.** Ventas y compras siempre
+  pasan el de la sesión abierta, pero la API no lo validaba: bastaba equivocarse para imputarle
+  plata a un turno ya cerrado y correrle el arqueo a un corte firmado. Ahora responde `400` si
+  el turno está cerrado y `404` si no existe.
+- **De la caja podía salir plata que no estaba.** Una salida manual no miraba el saldo del
+  turno: se podían sacar $50.000 de una caja con $3.000 y el arqueo informaba un saldo esperado
+  negativo, que físicamente no significa nada.
+- **El corte de caja se archivaba con la fecha equivocada si el turno cruzaba la medianoche.**
+  Un turno que abre a las 22:00 y cierra a las 02:00 quedaba fechado al día siguiente, y el
+  corte es un documento contable: esa fecha queda guardada. Lo mismo pasaba en el resumen que
+  el cajero mira antes de cerrar. Ahora las dos salen de la apertura del turno.
+- **Dos cortes simultáneos se pisaban.** El cierre leía el turno, calculaba el arqueo y lo
+  escribía sin bloquear la fila, así que dos cierres a la vez —dos terminales, o un doble
+  clic— lo cerraban los dos: el segundo pisaba el saldo real, la diferencia y el desglose del
+  primero, que ya le había devuelto al usuario un corte que no quedó guardado. El índice único
+  de sesión abierta no alcanzaba, porque cerrar libera ese lugar en vez de ocuparlo.
+- **El listado de movimientos de caja no validaba el rango**: invertido devolvía vacío en
+  silencio.
+- **El resumen de ventas de un turno se fechaba con el día en que se lo consultaba.**
+  `GET /api/ventas/v1/resumen/sesion/{idSesion}` usaba la fecha de hoy en lugar de la del turno,
+  así que un turno que abre a las 22:00 y cierra a las 02:00 salía fechado al día siguiente, y
+  consultar hoy el turno de ayer devolvía la fecha equivocada. Es el endpoint que se mira al
+  cerrar caja. Ahora sale de la apertura de la sesión.
+- **Un rango de fechas invertido devolvía un listado vacío en silencio**, y quien preguntaba se
+  quedaba pensando que no hubo ventas en vez de que se equivocó de fechas. Ahora es `400`. La
+  amplitud del rango no se acota: los listados paginan, así que un rango grande no trae más
+  filas por request.
+- **Faltar un query param obligatorio respondía `500`.** `GET /api/ventas/v1/fecha` sin fechas
+  caía en el catch-all; ahora es `400` y dice cuál falta. Alcanza a todos los endpoints con
+  parámetros obligatorios.
+- **El listado de ventas levantaba también las anuladas para descartarlas en memoria**, con un
+  `findAll()` que ignoraba el índice de `deleted_at`.
+- **`tipoComprobante` se guardaba tal cual venía y el filtro comparaba por igualdad exacta**, así
+  que `"factura"`, `"Factura"` y `"FACTURA "` eran tres tipos distintos: una compra cargada con
+  uno no aparecía al filtrar por otro. Ahora se recorta y se guarda en mayúsculas, y la búsqueda
+  usa el mismo criterio.
+- **Anular una compra cuya mercadería ya se vendió explicaba mal el problema** cuando el producto
+  no manejaba lotes: salía "Stock insuficiente. Disponible: 3, solicitado: 10", correcto pero
+  desorientador. Ahora dice que ya se vendió parte de lo que ingresó esa compra y nombra el
+  producto, igual que la rama de lotes.
+- **La paginación de compras repetía y salteaba filas**, y un `page` o un `size` fuera de rango
+  salían `500`. Ordenaba solo por fecha o solo por importe, sin desempate: las compras cargadas
+  en el mismo lote comparten `createdAt` y por importe la colisión es todavía más probable.
+
+### Seguridad
+
+- **El módulo de inventario estaba entero abierto a cualquier usuario autenticado.** No tenía
+  ninguna regla propia en `SecurityConfig`. El ajuste manual de stock y la baja de la fila de
+  stock —las dos operaciones que pueden tapar un faltante sin dejar rastro operativo— pasaron a
+  ADMIN, junto con el resto de lo sensible. Aumentar y disminuir siguen abiertos: son el
+  movimiento normal del día.
+- **Quien anulaba una compra elegía con qué identidad quedaba registrado.** El `idUsuario` de
+  `DELETE /api/compras/v1/{id}` salía de un header que mandaba el cliente, así que se podía
+  firmar la reversa de stock y la entrada de caja con el id de otro usuario: justo las dos
+  tablas con las que después se audita quién tocó qué. Ahora sale del JWT, como en la anulación
+  de ventas y como el resto del sistema.
+- **Un movimiento cargado a mano podía hacerse pasar por el de una venta.** El endpoint aceptaba
+  `tipo` e `idReferencia` del cliente, y son justo los dos campos que lee la reversa de una
+  anulación para saber qué reponer. Ahora el tipo se limita a `AJUSTE` o `MERMA`, la referencia
+  del body se descarta y el usuario sale siempre del JWT.
+
+### Rendimiento
+
+- **El catálogo resolvía la categoría y el proveedor de cada producto fila por fila.** Una página
+  de 20 eran 41 consultas, y el reporte de inventario —que pide el catálogo entero— más de 200,
+  lo que anulaba el trabajo de las consultas agregadas de existencias. Ahora se resuelve una vez
+  por id distinto.
+- **Los listados de categorías y proveedores traían la tabla entera y filtraban en memoria**,
+  incluidas las filas dadas de baja, ignorando el índice de `deleted_at`.
+- **El tamaño de página del catálogo tiene techo** (100). Sin límite, un solo pedido podía exigir
+  un trabajo arbitrariamente grande.
+- **El reporte de ganancias pedía el listado completo de compras del período.** Ese listado arma
+  la respuesta entera de cada compra —todos sus detalles y una consulta de proveedor por fila—
+  para que el reporte se quedara solo con la fecha y el importe: un mes con 300 compras eran 300
+  consultas de más. Ahora las compras se piden como totales por día.
+
+### Configuración
+
+- **`ventas.reserva-stock.minutos`** (default 120) — cuánto tiempo una venta sin cobrar retiene
+  el stock que descontó al armarse. El descuento ocurre al armar la venta y no al cobrarla, así
+  que un ticket que nadie cerró dejaba mercadería reservada para siempre, invisible en el stock
+  disponible y sin nada que lo mostrara. Pasado ese plazo un barrido la anula y devuelve la
+  mercadería, con su movimiento de reversa. En **`0`** queda apagado, que es el comportamiento
+  anterior.
+- **`ventas.reserva-stock.revision-ms`** (default 300000) — cada cuánto corre ese barrido.
+- **`CORS_ALLOWED_ORIGINS`** — orígenes permitidos, separados por coma. El default suma
+  `http://localhost:1420` al `5173` de siempre: es el puerto en el que sirve Vite dentro de
+  Tauri, y sin él el preflight del login se bloqueaba desde la aplicación de escritorio.
 
 ### Base de datos
 
@@ -68,10 +727,38 @@ Cierre del alta por invitación y limpieza de los límites entre los módulos `a
   arranca antes de la migración, cualquier consulta que toque una de esas filas revienta.
 - `00_init_limpio.sql` ya crea `token_type` como `ENUM('PASSWORD_RESET','INVITATION')`: una
   instalación nueva no necesita la migración.
+- **`05_unicidad_barcode.sql` — unicidad de `barcode` entre los productos activos.** El chequeo
+  vivía solo en el servicio, entre un `SELECT` y un `INSERT`: dos altas simultáneas con el mismo
+  código pasaban las dos, y desde ahí la consulta por código devolvía más de un resultado y
+  respondía `500` de forma permanente. El índice va sobre una columna generada que vale el código
+  mientras la fila está activa y `NULL` cuando está borrada, así que los productos dados de baja
+  no reservan el código.
+- **`06_nombre_categoria_reutilizable.sql` — el nombre de una categoría borrada se libera.**
+  `uk_categorias_nombre` abarcaba también las filas borradas, mientras que el servicio validaba
+  filtrando por `deleted_at`: daba el nombre por libre y el `INSERT` chocaba con un `409`
+  inentendible, sin forma de recrear la categoría nunca más. Se reemplaza por el mismo patrón de
+  columna generada.
+- **`07_unicidad_comprobante_por_proveedor.sql` — un proveedor no repite comprobante.** Índice
+  único sobre `(id_proveedor, tipo_comprobante, nro_comprobante)` entre las compras activas, con
+  el mismo patrón de columna generada. Quedan fuera, a propósito, las compras sin proveedor, las
+  que no traen número y las anuladas: anular libera el número para volver a cargar la compra
+  bien. El tipo sin cargar cuenta como un valor más, así que no abre un agujero por el que se
+  cuelen duplicados.
+- **`08_retiro_de_cierre_de_caja.sql` — reparto del efectivo al cerrar el turno.** Suma
+  `monto_retirado`, `saldo_dejado` y `diferencia_apertura` a `sesiones_caja`, y agrega `RETIRO`
+  a los orígenes válidos de un movimiento de caja. Los turnos ya cerrados quedan con las
+  columnas nuevas en `NULL`, que es "no se sabe" y no "no se retiró nada".
+- Las cinco migraciones abren con una consulta informativa de los datos que podrían frenar el
+  `ALTER`. Aplicar en orden y con la aplicación detenida. `00_init.sql` y `00_init_limpio.sql` ya
+  traen todo eso: una instalación nueva no necesita las migraciones.
+- **`02_seed_productos.sql` y `03_seed_stock.sql` — datos de prueba, opcionales.** 81 productos
+  de las tres categorías del seed con sus existencias iniciales. No van a producción: sirven
+  para levantar un entorno con el catálogo cargado. Cada uno cierra con un `SELECT` de
+  verificación.
 
 ## 0.3.0 (2026-08-21)
 
-Primeros puntos de [`docs/cambios.md`](docs/cambios.md). El sistema se despliega **una instancia
+Primeros puntos de [`docs/historico/0.2.0-requerimientos.md`](docs/historico/0.2.0-requerimientos.md). El sistema se despliega **una instancia
 por comercio**, así que no hay multi-inquilino: el aislamiento entre comercios lo da el
 despliegue, no el modelo de datos.
 
@@ -90,7 +777,7 @@ despliegue, no el modelo de datos.
     apoderarse de una sesión de superadmin alcanzaría para fabricarse otro.
   - Las reglas por URL no cambiaron: el filtro JWT publica las authorities del rol **y las de
     los roles inferiores**, así que los `hasRole('ADMIN')` existentes ya incluyen al SUPERADMIN.
-- **Alta por invitación con SMTP**, el flujo que pedía `docs/cambios.md`:
+- **Alta por invitación con SMTP**, el flujo que pedían los requerimientos de la 0.2.0:
   - `POST /api/users/v1/invitaciones` — el administrador carga nombre, apellido, email y rol; la
     cuenta nace `PENDIENTE` con una contraseña aleatoria que nadie conoce, y a la persona le
     llega un mail para definir la suya. `username` es opcional: si no viene se deriva del email.
@@ -144,17 +831,17 @@ despliegue, no el modelo de datos.
 - Para una instalación nueva usar `00_init_limpio.sql` y, opcionalmente, `01_seed.sql`. El init
   contiene el esquema final de esta versión y no requiere ejecutar migraciones adicionales.
 
-### Pendiente de `docs/cambios.md`
+### Pendiente de los requerimientos de la 0.2.0
 
 - Permisos configurables por empleado — descartado por ahora: todas las funciones activas.
 
-Con esto queda cubierto todo `docs/cambios.md` salvo ese último punto.
+Con esto queda cubierto todo el documento de requerimientos salvo ese último punto.
 
 ## 0.2.0 (2026-08-18)
 
 Relevamiento y corrección de 25 bugs del MVP. Todos los defectos fueron reproducidos contra la
 API real antes de corregirlos, y cada corrección verificada del mismo modo. El detalle completo
-—causa, solución y evidencia de cada uno— está en [`docs/plan-correccion-bugs.md`](docs/plan-correccion-bugs.md).
+—causa, solución y evidencia de cada uno— está en [`docs/historico/0.4.0-correccion-de-bugs.md`](docs/historico/0.4.0-correccion-de-bugs.md).
 
 ### Cambios que rompen compatibilidad
 

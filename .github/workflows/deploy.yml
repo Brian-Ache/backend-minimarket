@@ -1,0 +1,144 @@
+name: Publicar y desplegar
+
+# Fases B3 y B4 del plan de la 0.6.0. Construye la imagen, la publica en Docker Hub y
+# actualiza el VPS.
+#
+# **Solo `main`.** Producción es `main` y nada más que `main`: un push a `developer` compila y
+# testea (ci.yml) pero no publica ni despliega. El filtro está puesto dos veces —en `on.push`
+# y en un `if` por job— a propósito: sin el `if`, un `workflow_dispatch` desde otra rama
+# desplegaría esa rama a producción.
+#
+# Este workflow no corre los tests: los corrió `ci.yml` en el push a `main`. Si hiciera falta
+# que el deploy espere ese resultado, el cambio es pasar a `workflow_run` sobre ci.yml.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# Dos despliegues en paralelo dejarían el VPS en un estado que no es ni uno ni otro. A
+# diferencia de ci.yml, acá NO se cancela el run en curso: cancelar a mitad de un
+# `docker compose up -d` es peor que esperar.
+concurrency:
+  group: deploy-produccion
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    name: Publicar imagen
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # El JDK es solo para leer la versión del pom; el jar lo construye el Dockerfile.
+      - name: JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      # La versión del pom es la que etiqueta la imagen: `0.6.0` es el tag al que volver
+      # cuando un despliegue sale mal, y `latest` es lo que el VPS baja.
+      - name: Versión del pom
+        id: version
+        run: |
+          VERSION=$(./mvnw -B -ntp -q help:evaluate -Dexpression=project.version -DforceStdout)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Versión a publicar: $VERSION"
+
+      - name: Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login en Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Si el repositorio de Docker Hub se llama de otra forma, estas dos líneas son lo único
+      # que hay que cambiar.
+      - name: Construir y publicar
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/backend-minimarket:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/backend-minimarket:${{ steps.version.outputs.version }}
+          # La caché entre runs evita volver a bajar medio Maven Central en cada push.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  desplegar:
+    name: Desplegar al VPS
+    runs-on: ubuntu-latest
+    needs: publicar
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      # El `.env` de producción y el compose viven en el VPS y no se versionan: el compose de
+      # este repo es el de desarrollo —siembra usuarios con contraseñas conocidas y publica el
+      # 3306—. En `docker/produccion/` hay una plantilla de los dos archivos para la puesta a
+      # punto inicial; ver la sección "Despliegue" del README.
+      #
+      # La imagen NO migra la base. En producción arranca con JPA_DDL_AUTO=validate: Hibernate
+      # no toca nada, pero compara el esquema con las entidades y no levanta si falta una tabla
+      # o una columna. Por eso un cambio de esquema se aplica a mano y con la app detenida,
+      # ANTES de mergear a main; si no, este deploy falla en el `--wait` de abajo. Ver el
+      # CHANGELOG de cada versión.
+      - name: docker compose pull && up -d
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          # Sin esto, un fallo a mitad del script deja el job en verde.
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd ${{ secrets.VPS_RUTA_PROYECTO }}
+            docker compose pull
+            docker compose up -d --remove-orphans
+
+            # --wait espera a que el healthcheck del contenedor pase, no solo a que arranque.
+            # Es lo que hace que el job falle acá y no con nginx sirviendo 502.
+            docker compose up -d --wait --wait-timeout 120
+
+            # Las imágenes viejas se acumulan rápido en un VPS chico. Se borran las que no
+            # usa ningún contenedor; el tag de la versión anterior sigue en Docker Hub, que
+            # es de donde sale el rollback.
+            docker image prune -f
+
+      # Prueba desde afuera: que el dominio real responda, no solo el contenedor. Cubre nginx
+      # y el certificado, que es justo lo que el paso anterior no mira.
+      - name: Verificar que la API responde
+        run: |
+          for i in $(seq 1 10); do
+            if curl -fsS --max-time 10 "${{ secrets.URL_PUBLICA }}/actuator/health" | grep -q '"status":"UP"'; then
+              echo "La API responde UP en el intento $i."
+              exit 0
+            fi
+            echo "Intento $i sin respuesta, reintento en 6s."
+            sleep 6
+          done
+          echo "La API no respondió UP después de 10 intentos."
+          exit 1
+
+      - name: Resumen
+        if: always()
+        run: |
+          {
+            echo "### Despliegue"
+            echo ""
+            echo "- Versión: \`${{ needs.publicar.outputs.version }}\`"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Resultado: \`${{ job.status }}\`"
+            echo ""
+            echo "Rollback: en el VPS, fijar el tag anterior en el compose y \`docker compose up -d\`."
+          } >> "$GITHUB_STEP_SUMMARY"

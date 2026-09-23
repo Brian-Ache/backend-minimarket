@@ -3,7 +3,6 @@ package com.SolucionesInformaticasBA.minimarket.modules.inventario.entity;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import com.SolucionesInformaticasBA.minimarket.modules.inventario.enums.TipoMovimiento;
@@ -46,7 +45,14 @@ public class MovimientoStock {
     @Column(name = "id_referencia")
     private UUID idReferencia;
 
-    @CreationTimestamp
+    /**
+     * Cuándo ocurrió el movimiento, que no siempre es cuándo se insertó la fila: un ticket
+     * creado sin conexión llega dos días después, y el kardex tiene que mostrarlo el día en que
+     * la mercadería salió del local.
+     *
+     * <p>Sin {@code @CreationTimestamp}, que pisa el valor en cada INSERT. Quien conoce la
+     * fecha real la pone; el resto la deja en null y vale el reloj del servidor.
+     */
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -57,4 +63,12 @@ public class MovimientoStock {
     @Column(name = "deleted_at")
     @Builder.Default
     private LocalDateTime deletedAt = null;
+
+    /** Si nadie la puso, el movimiento ocurre ahora: es el caso de todo el flujo online. */
+    @PrePersist
+    void fecharSiNoVino() {
+        if (createdAt == null) {
+            createdAt = LocalDateTime.now();
+        }
+    }
 }

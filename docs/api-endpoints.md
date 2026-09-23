@@ -63,22 +63,26 @@ Errores de validación (`400`):
 |---|:---:|:---:|:---:|
 | Vender, cobrar, comprar | ✅ | ✅ | ✅ |
 | Abrir caja, movimientos manuales | ✅ | ✅ | ✅ |
-| Inventario: stock, lotes, ajustes | ✅ | ✅ | ✅ |
+| Inventario: movimientos de stock y alta de lotes | ✅ | ✅ | ✅ |
+| Inventario: ajuste contra conteo físico (`/controlar`, `/lotes/ajustar`) y baja de la fila de stock | ✅ | ✅ | ❌ |
 | Consultar catálogo (GET productos/categorías/proveedores) | ✅ | ✅ | ✅ |
 | Ver y editar su propio usuario, cambiar su contraseña | ✅ | ✅ | ✅ |
 | Crear/editar/borrar productos, categorías y proveedores | ✅ | ✅ | ❌ |
-| Anular ventas y compras (DELETE) | ✅ | ✅ | ❌ |
+| Anular **compras** (DELETE) | ✅ | ✅ | ❌ |
+| Anular **ventas** (DELETE) | ✅ sin ventana | ✅ sin ventana | ✅ solo las propias, hasta 7 días |
+| Sincronizar tickets creados sin conexión (`/ventas/v1/sync`) | ✅ | ✅ | ✅ |
+| Ver lo que la sincronización dejó marcado (`/ventas/v1/revision`) | ✅ | ✅ | ❌ |
 | Corte de caja | ✅ | ✅ | ❌ |
 | Reportes | ✅ | ✅ | ❌ |
 | Listar y ver usuarios | ✅ | ✅ | ❌ |
-| Invitar, dar de alta, bloquear y dar de baja a un EMPLEADO | ✅ | ✅ | ❌ |
-| Invitar, dar de alta, bloquear y dar de baja a un ADMIN | ✅ | ❌ | ❌ |
+| Invitar, bloquear, dar de baja y restaurar a un EMPLEADO | ✅ | ✅ | ❌ |
+| Invitar, bloquear, dar de baja y restaurar a un ADMIN | ✅ | ❌ | ❌ |
 | Promover o degradar entre ADMIN y EMPLEADO | ✅ | ❌ | ❌ |
-| Alta, bloqueo, baja o asignación del rol SUPERADMIN | ❌ | ❌ | ❌ |
+| Invitación, bloqueo, baja o asignación del rol SUPERADMIN | ❌ | ❌ | ❌ |
 
 Nadie gestiona a un usuario de su mismo nivel ni de uno superior, y **nadie se bloquea ni se
 borra a sí mismo**. De ahí que no exista alta de SUPERADMIN por API: la llave maestra sale del
-seed de la base (`01_seed.sql`). Si el alta de superadmins fuera
+seed de la base (`init.sql`). Si el alta de superadmins fuera
 un endpoint, tomar una sesión de superadmin alcanzaría para fabricarse otro.
 
 Cambiar la contraseña exige conocer la actual, así que **ni el ADMIN ni el SUPERADMIN pueden
@@ -90,11 +94,10 @@ hacerlo por otro usuario**: para eso está el flujo de reseteo.
 
 Todas públicas (no requieren token).
 
-> **`POST /api/auth/v1/register` fue dado de baja.** El alta la hace un administrador,
-> invitando ([`POST /api/users/v1/invitaciones`](#post-apiusersv1invitaciones)) o directamente
-> ([`POST /api/users/v1`](#post-apiusersv1)). La lógica de autorregistro sigue implementada en
-> `AuthApi.register` pero sin endpoint: no hay caso de uso para que alguien se dé de alta solo
-> en el sistema de un comercio.
+> **No hay autorregistro ni alta directa.** La única forma de entrar al sistema es que un
+> administrador invite ([`POST /api/users/v1/invitaciones`](#post-apiusersv1invitaciones)) y que
+> la persona cierre el alta desde el mail. Nadie se da de alta solo en el sistema de un
+> comercio, y quien invita nunca conoce la contraseña de quien invitó.
 
 ### `POST /api/auth/v1/login`
 
@@ -130,6 +133,20 @@ Rota el refresh token (invalida el anterior, genera uno nuevo).
 
 **Response `200`:** nuevo par accessToken + refreshToken
 
+**Error `400`:** token inválido, vencido o ya rotado
+
+**Presentar un token ya rotado cierra todas las sesiones del usuario.** Si un token que ya se
+usó vuelve a aparecer, es que hay una copia dando vueltas, y no hay forma de saber cuál de las
+dos partes es la legítima: se cierra todo y ambas vuelven a loguearse. Quien sabe la contraseña
+entra; quien solo tenía el token, no.
+
+> Hay una ventana de gracia de **30 segundos** para el caso honesto: si la respuesta de la
+> rotación se perdió y el front reintenta con el token viejo, el pedido se rechaza pero **no** se
+> cierra nada. Pasada la ventana, se asume lo peor.
+>
+> El front tiene que guardar el refresh token nuevo en cada renovación. Reintentar con el
+> anterior fuera de esa ventana deja a todos los dispositivos de esa persona afuera.
+
 ---
 
 ### `POST /api/auth/v1/logout`
@@ -143,6 +160,9 @@ también devuelve `204`.
 ```
 
 **Response `204`**
+
+**Error `400`:** falta el `refreshToken` o vino vacío. La idempotencia es sobre tokens que no
+sirven, no sobre pedidos incompletos: un body sin el campo es un request mal armado.
 
 > El refresh token va en el **body**, no en el header. El access token sigue siendo válido
 > hasta que expire (`jwt.expiration-hours`).
@@ -165,8 +185,8 @@ para distinguir un enlace vencido antes de hacer llenar el formulario.
 }
 ```
 
-`400` si el token es inválido, expirado o ya usado, o si la cuenta se bloqueó o se dio de baja
-desde que se envió la invitación.
+`400` si el token es inválido, expirado o ya usado, o si la cuenta dejó de estar `PENDIENTE`:
+se bloqueó, se dio de baja o **ya se activó** desde que se envió la invitación.
 
 ---
 
@@ -180,7 +200,7 @@ credencial es el token del mail.
 ```json
 {
   "token": "string (el del enlace del mail)",
-  "password": "string (min 8, max 72)",
+  "password": "string (min 8 caracteres, max 72 bytes)",
   "username": "string (opcional, min 1, max 50, sin @)"
 }
 ```
@@ -188,11 +208,16 @@ credencial es el token del mail.
 Sin `username` queda el que se derivó del email al invitar — el mismo que devuelve el `GET` de
 arriba como `usernameSugerido`.
 
+> **El máximo de la contraseña es en bytes, no en caracteres**, acá y en los otros dos endpoints
+> que la definen (`password-reset/confirm` y `change-password`). Es el límite de BCrypt. En ASCII
+> da lo mismo, pero un acento ocupa dos bytes y un emoji cuatro: 72 caracteres acentuados son 144
+> bytes y se rechazan con `400`. El mínimo, en cambio, sí se cuenta en caracteres.
+
 **Response `200`** — después hay que loguearse normalmente.
 
-**Errores `400`:** token inválido, vencido o ya usado · token de otro tipo · la cuenta fue
-bloqueada o dada de baja entre la invitación y la aceptación · el `username` elegido ya está
-tomado por otra cuenta
+**Errores `400`:** token inválido, vencido o ya usado · token de otro tipo · la cuenta dejó de
+estar `PENDIENTE` entre la invitación y la aceptación —bloqueada, dada de baja o ya activada por
+el reseteo de contraseña— · el `username` elegido ya está tomado por otra cuenta
 
 ---
 
@@ -212,6 +237,12 @@ servidor.
 
 El enlace vence en **1 hora** y sirve una sola vez.
 
+**Un pedido nuevo invalida los anteriores**: siempre hay a lo sumo un enlace vivo por cuenta, y es
+el del último mail. Pedirlo cinco veces no deja cinco enlaces abiertos.
+
+> Ojo con la combinación de las dos reglas: si el SMTP está caído, el enlace anterior ya quedó
+> invalidado y el nuevo nunca sale. Hay que volver a pedirlo cuando el correo funcione.
+
 ---
 
 ### `POST /api/auth/v1/password-reset/confirm`
@@ -222,11 +253,19 @@ Confirma el reseteo con el token generado.
 ```json
 {
   "token": "string",
-  "newPassword": "string (min 8, max 72)"
+  "newPassword": "string (min 8 caracteres, max 72 bytes)"
 }
 ```
 
 **Response `200`**
+
+> Si la cuenta todavía estaba `PENDIENTE`, este endpoint además **la activa**: el token viajó al
+> email de la cuenta, la misma prueba de identidad que pide la invitación. Sin eso, quien
+> resetea en vez de aceptar la invitación se quedaría con una contraseña válida y sin poder
+> entrar nunca. Una cuenta **bloqueada** no se destraba por acá.
+
+**Errores:** `400` token inválido, vencido, ya usado o de otro tipo · `404` el usuario ya no
+existe
 
 ---
 
@@ -238,8 +277,8 @@ Confirma el reseteo con el token generado.
 un mail a la persona con un enlace para que **defina su propia contraseña**. Quien invita nunca
 conoce la contraseña del invitado.
 
-**ADMIN o SUPERADMIN**, con las mismas reglas de jerarquía que el alta directa: solo se invita
-por debajo del propio nivel.
+**ADMIN o SUPERADMIN**. Es la **única** alta del sistema. Solo se invita por debajo del propio
+nivel: el SUPERADMIN invita ADMIN y EMPLEADO, el ADMIN solo EMPLEADO.
 
 **Request:**
 ```json
@@ -258,8 +297,28 @@ cambio, da `400`: ahí sí hubo una elección que respetar.
 
 **Response `201`:** `{ ...UsuarioResponse }` con `estado: "PENDIENTE"`
 
-**Errores:** `400` email ya registrado o username explícito en uso · `403` sin rol ADMIN o rol
-pedido no permitido · `502` el mail no se pudo enviar
+**Errores:** `400` email ocupado (ver abajo) o username explícito en uso · `403` sin rol ADMIN o
+rol pedido no permitido · `502` el mail no se pudo enviar
+
+Un email ya tomado devuelve `400` con un mensaje que dice **qué pasa con ese email y qué hacer
+al respecto**:
+
+| Estado de la cuenta que lo ocupa | Mensaje | Salida |
+|---|---|---|
+| Dada de baja | `"El email pertenece a una cuenta dada de baja: restaurala para volver a darle acceso"` | [`POST /{id}/restaurar`](#post-apiusersv1idrestaurar) |
+| `PENDIENTE` | `"Ese email ya tiene una invitación pendiente: reenviásela en lugar de invitarlo de nuevo"` | [`POST /{id}/invitaciones/reenviar`](#post-apiusersv1idinvitacionesreenviar) |
+| `ACTIVO` o `BLOQUEADO` | `"El email ya está registrado"` | ninguna: la persona ya está en el sistema |
+
+Las dos primeras existen porque el email y el username de una cuenta dada de baja **siguen
+ocupados** —la baja es lógica y las unique keys no miran `deleted_at`—, y porque reinvitar a
+alguien que ya tiene una invitación en curso es reenviar, no dar de alta otra vez. El id para
+esos dos endpoints sale de `GET /api/users/v1?incluirBajas=true`.
+
+> **La salida se ofrece solo si la cuenta está por debajo del nivel de quien invita**, porque
+> restaurar y reenviar exigen esa misma jerarquía. Un ADMIN que tropieza con la cuenta de otro
+> ADMIN lee el mensaje cortado —`"El email pertenece a una cuenta dada de baja"`, sin el
+> `": restaurala…"`—: el hecho le sirve para entender por qué el email está tomado, pero la
+> instrucción lo mandaría a un `403`.
 
 > Si el envío falla, **el alta se revierte**: no queda una cuenta muerta ocupando ese email y
 > ese username que nadie puede activar. El `502` distingue "reintentá" de "corregí los datos".
@@ -282,37 +341,6 @@ Solo sobre cuentas en estado `PENDIENTE`, y con las mismas reglas de jerarquía 
 
 ---
 
-### `POST /api/users/v1`
-
-Alta **directa**, con una contraseña elegida por quien la crea. Sigue disponible para altas sin
-mail de por medio (importar usuarios, entornos sin SMTP); para el día a día está la
-[invitación](#post-apiusersv1invitaciones), donde la contraseña la elige su dueño.
-
-**ADMIN o SUPERADMIN** (`403` para EMPLEADO). El usuario se crea en estado `ACTIVO`, listo para
-loguearse.
-
-Solo se puede dar de alta **por debajo del propio nivel**: el SUPERADMIN crea ADMIN y EMPLEADO,
-el ADMIN solo EMPLEADO. `rol` es opcional y por defecto es `EMPLEADO`.
-
-**Request:**
-```json
-{
-  "nombre": "string (max 50)",
-  "apellido": "string (max 50)",
-  "email": "email (max 100)",
-  "username": "string (max 50)",
-  "password": "string (min 8, max 72)",
-  "rol": "ADMIN | EMPLEADO (opcional, default EMPLEADO)"
-}
-```
-
-**Response `201`:** `{ ...UsuarioResponse }`
-
-**Errores:** `400` email o username ya en uso · `403` sin rol ADMIN, o el rol pedido no está por
-debajo del propio (`"Un ADMIN no puede dar de alta a un ADMIN"`)
-
----
-
 ### `GET /api/users/v1/me`
 
 Perfil del usuario autenticado.
@@ -329,11 +357,21 @@ Perfil del usuario autenticado.
 
 ---
 
-### `GET /api/users/v1`
+### `GET /api/users/v1?incluirBajas=false`
 
-Lista todos los usuarios activos.
+Lista los usuarios. Por defecto solo los que están en pie; con `incluirBajas=true` suma las
+cuentas dadas de baja, que vienen con `deletedAt` cargado.
 
-**Response `200`:** `[ ...UsuarioResponse ]`
+Es cómo el front encuentra una cuenta para
+[restaurarla](#post-apiusersv1idrestaurar): en el listado normal no aparecen.
+
+**Query params:** `?incluirBajas=false&page=0&size=20` — `page` arranca en 0, `size` va de 1 a
+100.
+
+**Response `200`:** `Page<UsuarioResponse>` (`content`, `totalElements`, `totalPages`, `number`,
+`size`)
+
+Ordena por `username`, con el `id` como desempate.
 
 ---
 
@@ -341,15 +379,25 @@ Lista todos los usuarios activos.
 
 Actualiza nombre y/o apellido.
 
+El campo ausente (`null`) se deja como está: es un `PATCH`, no un reemplazo. El campo **presente
+pero vacío** —`""` o solo espacios— es un error, no una forma de borrarlo: los dos son
+obligatorios en la cuenta. Los espacios de los costados se recortan.
+
+Cada uno se edita a sí mismo sin restricción. Sobre **otra** cuenta rige la jerarquía de siempre:
+tiene que estar por debajo tuyo. Un ADMIN no le cambia el nombre al SUPERADMIN ni a otro ADMIN.
+
 **Request:**
 ```json
 {
-  "nombre": "string (max 50, opcional)",
-  "apellido": "string (max 50, opcional)"
+  "nombre": "string (1-50, opcional)",
+  "apellido": "string (1-50, opcional)"
 }
 ```
 
 **Response `200`:** `{ ...UsuarioResponse }`
+
+**Errores:** `400` un campo vino vacío (`"El campo 'nombre' no puede estar vacío"`) · `403` el
+objetivo no está por debajo tuyo (`"Un ADMIN no puede editar a un SUPERADMIN"`)
 
 ---
 
@@ -423,13 +471,40 @@ sí mismo.
 
 ---
 
+### `POST /api/users/v1/{id}/restaurar`
+
+**Reactiva una cuenta dada de baja.** Vuelve como `PENDIENTE`, con la contraseña anterior
+invalidada, y le llega una **invitación nueva** para que defina otra. Es la contracara del
+`DELETE`.
+
+Restaura la fila original en vez de crear una cuenta nueva: el id del usuario lo referencian
+`ventas`, `compras`, `movimientos_caja`, `movimientos_stock` y `sesiones_caja` con `ON DELETE
+RESTRICT`, así que un alta nueva con el mismo email partiría su historial en dos. Conserva
+además su rol: la restauración devuelve el acceso, no lo redefine.
+
+No puede chocar con nada: el email y el username siguieron reservados durante toda la baja,
+porque las unique keys de la tabla no miran `deleted_at`.
+
+**Mismas reglas de jerarquía que `bloquear` y el `DELETE`**: se restaura por debajo del propio
+nivel. El id sale de `GET /api/users/v1?incluirBajas=true`.
+
+**Response `200`:** `{ ...UsuarioResponse }` con `estado: "PENDIENTE"` y `deletedAt: null`
+
+**Errores:** `400` la cuenta no está dada de baja · `403` el objetivo no está por debajo tuyo ·
+`404` no existe · `502` el mail no se pudo enviar
+
+> Si el envío falla, **la restauración se revierte** y la cuenta sigue dada de baja: revivirla
+> sin que nadie pueda entrar es peor que dejarla como estaba.
+
+---
+
 ### `POST /api/users/v1/{id}/change-password`
 
 **Request:**
 ```json
 {
   "passActual": "string",
-  "nuevoPass": "string (min 8, max 72)"
+  "nuevoPass": "string (min 8 caracteres, max 72 bytes)"
 }
 ```
 
@@ -451,9 +526,13 @@ sí mismo.
   "rol": "SUPERADMIN | ADMIN | EMPLEADO",
   "estado": "PENDIENTE | ACTIVO | BLOQUEADO",
   "createdAt": "datetime",
-  "updatedAt": "datetime"
+  "updatedAt": "datetime",
+  "deletedAt": "datetime | null"
 }
 ```
+
+`deletedAt` viene con valor **solo** en `GET /api/users/v1?incluirBajas=true`, que es el único
+endpoint que devuelve cuentas dadas de baja.
 
 ---
 
@@ -471,23 +550,47 @@ sí mismo.
   "costo": "float (>= 0, opcional)",
   "margen": "float (>= 0, opcional)",
   "idCategoria": "UUID (opcional)",
-  "idProveedor": "UUID (opcional)"
+  "idProveedor": "UUID (opcional)",
+  "cantidadInicial": "int (>= 0, opcional, default 0)",
+  "loteInicial": {
+    "numeroLote": "string (opcional)",
+    "fechaVencimiento": "date (obligatoria dentro de loteInicial)"
+  }
 }
 ```
 
-**Response `200`:** `{ ...ProductoResponse }`
+El alta carga las existencias iniciales en la misma transacción, así que no hace falta una
+segunda llamada. De dónde salen depende de `manejaLotes`:
 
-**Error `400`:** si el barcode ya existe, o la categoría/proveedor no existen
+| `manejaLotes` | `cantidadInicial` | Qué crea |
+|---|---|---|
+| `false` | `0` | Fila de stock en 0, sin movimiento |
+| `false` | `> 0` | Fila de stock con la cantidad + movimiento `AJUSTE` "Carga inicial de stock" |
+| `true` | `0` | Nada: el producto nace vacío y **no lleva fila de stock** |
+| `true` | `> 0` | El lote de `loteInicial` + movimiento `AJUSTE` con `idLote`. **Sin fila de stock** |
+
+**Response `200`:** `{ ...ProductoResponse }` — sin las existencias: se consultan con
+`GET /api/inventario/v1/stock/{idProducto}` o con el listado de lotes.
+
+**Error `400`:** si el barcode ya existe; si la categoría o el proveedor no existen (o están
+dados de baja); si `manejaLotes` es `false` y viene `loteInicial`; si `manejaLotes` es `true`
+con `cantidadInicial > 0` y sin `loteInicial`; o si viene `loteInicial` con `cantidadInicial`
+en 0 (un lote sin unidades no se crea)
 
 ---
 
 ### `GET /api/productos/v1`
 
-Lista todos los productos activos. Acepta filtros opcionales.
+Lista paginada de productos activos. Todos los filtros son opcionales y se combinan entre sí.
 
-**Query params:** `?categoria=UUID&proveedor=UUID`
+**Query params:** `?q=texto&categoria=UUID&proveedor=UUID&page=0&size=20`
 
-**Response `200`:** `[ ...ProductoResponse ]`
+`page` arranca en 0; `size` va de 1 a 100. Orden: `updatedAt` descendente, con el `id` como
+desempate para que la paginación sea estable.
+
+**Response `200`:** `Page<ProductoResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
+**Error `400`:** `page` negativo, o `size` fuera de 1..100
 
 ---
 
@@ -507,27 +610,106 @@ Busca por código de barras.
 
 ### `GET /api/productos/v1/search`
 
-Búsqueda por nombre (case-insensitive, top 20).
+Búsqueda por nombre (case-insensitive). Equivale a `GET /api/productos/v1?q=texto`.
 
-**Query params:** `?q=texto`
+**Query params:** `?q=texto&page=0&size=20`
 
-**Response `200`:** `[ ...ProductoResponse ]`
+**Response `200`:** `Page<ProductoResponse>`
+
+**Error `400`:** `page` negativo, o `size` fuera de 1..100
 
 ---
 
 ### `PUT /api/productos/v1/{id}`
 
-**Request:** mismo body que POST
+Reemplazo total: el body es la representación completa del producto. Los campos opcionales que
+se omitan o vengan en `null` **se borran** (es la forma de desasignar categoría, proveedor,
+costo o margen).
+
+**Request:** mismo body que POST, sin `cantidadInicial` ni `loteInicial`: si vienen se ignoran.
+Corregir existencias es un ajuste de stock y tiene que quedar en el kardex como tal, no
+escondido en una edición de catálogo.
 
 **Response `200`:** `{ ...ProductoResponse }`
+
+**Error `400`:** si el barcode ya existe, si la categoría o el proveedor no existen, o si se
+cambia `manejaLotes` con el producto teniendo existencias. Ese cambio mueve la fuente de las
+existencias —la tabla `stock` para los productos comunes, la suma de lotes para los que manejan
+lotes—, así que con unidades cargadas las hacía desaparecer de toda la aplicación sin dejar
+movimiento. Hay que descargarlas primero, con una venta o un ajuste.
+
+**Error `404`:** el producto no existe o está dado de baja
+
+---
+
+### `GET /api/productos/v1/{id}/proveedores`
+
+Catálogo de precios de referencia del producto: lo que **cada proveedor lista** por él. Se carga
+y se corrige siempre a mano; no es lo que se pagó la última vez ni influye en ninguna compra.
+
+Del más barato al más caro.
+
+**Response `200`:**
+```json
+[
+  {
+    "proveedor": { "...ProveedorResponse" },
+    "precioReferencia": "decimal",
+    "actualizado": "datetime"
+  }
+]
+```
+
+Un proveedor dado de baja **conserva** sus precios y sigue apareciendo, con `deletedAt` cargado:
+la baja es reversible y perder el catálogo en cada una sería destructivo.
+
+> Para verlo junto con lo que realmente se pagó está
+> [`GET /api/compras/v1/producto/{idProducto}/proveedores`](#get-apicomprasv1productoidproductoproveedores).
+
+---
+
+### `PUT /api/productos/v1/{id}/proveedores/{idProveedor}`
+
+Carga o corrige el precio de referencia de ese proveedor. **Solo ADMIN.**
+
+Es un **upsert**: si el par ya existía reescribe el precio, si no lo crea. El front no tiene por
+qué saber de antemano cuál de los dos casos es.
+
+**Request:**
+```json
+{ "precioReferencia": "decimal (>= 0, hasta 2 decimales)" }
+```
+
+**Response `200`:** `{ ...PrecioReferenciaResponse }`
+
+**Error `400`:** el proveedor no existe o está dado de baja — una referencia **nueva** a alguien
+con quien no se puede operar no tiene sentido (las que ya existían sí sobreviven a su baja)
+
+**Error `403`:** sin rol ADMIN
+
+**Error `404`:** el producto no existe
+
+---
+
+### `DELETE /api/productos/v1/{id}/proveedores/{idProveedor}`
+
+Saca al proveedor del catálogo de referencia del producto. **Solo ADMIN.** Baja lógica, y libera
+el par para volver a cargarlo más adelante.
+
+**Response `204`**
+
+**Error `404`:** el producto no tiene un precio de referencia de ese proveedor
 
 ---
 
 ### `DELETE /api/productos/v1/{id}`
 
-Soft delete.
+Soft delete. Da de baja también la fila de stock y los lotes del producto.
 
 **Response `204`**
+
+**Error `400`:** el producto todavía tiene existencias (stock o lotes con unidades). Hay que
+descargarlas antes, con una venta o con un ajuste de stock.
 
 ---
 
@@ -556,18 +738,27 @@ Soft delete.
 **Request:**
 ```json
 {
-  "nombre": "string (max 100, único)",
+  "nombre": "string (max 100, único entre las categorías activas)",
   "descripcion": "string (max 255, opcional)"
 }
 ```
 
+`nombre` y `descripcion` se recortan antes de guardarse. El nombre de una categoría dada de baja
+queda liberado: se puede volver a crear una con ese mismo nombre.
+
 **Response `200`:** `{ ...CategoriaResponse }`
+
+**Error `400`:** ya hay una categoría activa con ese nombre
 
 ---
 
 ### `GET /api/categorias/v1`
 
-**Response `200`:** `[ ...CategoriaResponse ]`
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+**Response `200`:** `Page<CategoriaResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
+Ordena por nombre, con el `id` como desempate para que la paginación sea estable.
 
 ---
 
@@ -587,7 +778,11 @@ Soft delete.
 
 ### `DELETE /api/categorias/v1/{id}`
 
+Soft delete. Libera el nombre para una categoría nueva.
+
 **Response `204`**
+
+**Error `400`:** hay productos activos asignados a la categoría. Hay que reasignarlos antes.
 
 ---
 
@@ -612,18 +807,32 @@ Soft delete.
 {
   "nombre": "string (max 150)",
   "telefono": "string (max 50, opcional)",
-  "email": "string (max 100, opcional)",
+  "email": "string (max 100, opcional, formato email)",
   "direccion": "string (max 255, opcional)"
 }
 ```
 
+Los campos se recortan antes de guardarse.
+
 **Response `200`:** `{ ...ProveedorResponse }`
+
+**Error `400`:** ya hay un proveedor activo con ese nombre, o el email no tiene formato válido
 
 ---
 
 ### `GET /api/proveedores/v1`
 
-**Response `200`:** `[ ...ProveedorResponse ]`
+**Query params:** `?incluirBajas=false&page=0&size=20` — `page` arranca en 0, `size` va de 1 a
+100.
+
+Con `incluirBajas=true` suma los proveedores dados de baja, que vienen con `deletedAt` cargado.
+Es cómo el front encuentra el que hay que restaurar: en el listado normal no aparecen.
+
+**Response `200`:** `Page<ProveedorResponse>` (`content`, `totalElements`, `totalPages`,
+`number`, `size`)
+
+Ordena por nombre, con el `id` como desempate: dos proveedores pueden compartir nombre si uno
+está dado de baja.
 
 ---
 
@@ -643,7 +852,24 @@ Soft delete.
 
 ### `DELETE /api/proveedores/v1/{id}`
 
+Baja lógica. El proveedor deja de poder usarse en compras nuevas y de asignarse a un producto,
+pero **sigue apareciendo en el historial de compras y en los productos que lo tenían**, con
+`deletedAt` cargado. Es reversible con `/restaurar`. No exige que no tenga compras ni productos:
+conservar esa referencia es justamente el punto.
+
 **Response `204`**
+
+---
+
+### `POST /api/proveedores/v1/{id}/restaurar`
+
+Vuelve a habilitar un proveedor dado de baja. Va sobre la fila original y no sobre un alta nueva,
+para no partir el historial de compras, que lo referencia por id. Solo ADMIN.
+
+**Response `200`:** `{ ...ProveedorResponse }` (con `deletedAt` en `null`)
+
+**Error `400`:** el proveedor no está dado de baja, o mientras tanto se dio de alta otro activo
+con el mismo nombre
 
 ---
 
@@ -655,9 +881,14 @@ Soft delete.
   "nombre": "string",
   "telefono": "string | null",
   "email": "string | null",
-  "direccion": "string | null"
+  "direccion": "string | null",
+  "deletedAt": "datetime | null"
 }
 ```
+
+`deletedAt` viene con valor solo cuando el proveedor está dado de baja: desde
+`GET /api/proveedores/v1?incluirBajas=true`, desde el historial de compras y desde el catálogo
+de productos.
 
 ---
 
@@ -665,7 +896,7 @@ Soft delete.
 
 ### `POST /api/ventas/v1`
 
-Registra una venta con sus detalles. Si el producto maneja lotes, descuenta del lote más próximo a vencer (FIFO). Si no, descuenta del stock global.
+Registra una venta con sus detalles. Si el producto maneja lotes, descuenta del lote más próximo a vencer (FEFO: first expired, first out). Si no, descuenta del stock global.
 
 **Request:**
 ```json
@@ -688,18 +919,34 @@ Registra una venta con sus detalles. Si el producto maneja lotes, descuenta del 
 **Response `200`:**
 ```json
 {
-  "id": "UUID",
-  "fecha": "datetime",
-  "total": "float",
+  "id": "UUID v7",
+  "fecha": "datetime — cuándo ocurrió el ticket",
+  "total": "decimal",
   "detalles": [ "...DetalleVentaResponse" ],
   "cobrada": false,
   "fechaCobro": null,
   "metodoPago": null,
-  "montoRecibido": null
+  "montoRecibido": null,
+  "origen": "ONLINE | OFFLINE",
+  "dispositivo": "string | null — qué caja lo generó (solo OFFLINE)",
+  "sincronizadoEn": "datetime | null — cuándo llegó a MySQL (null en las ONLINE)",
+  "requiereRevision": false
 }
 ```
 
+> **Los importes de ventas son `decimal`, no `float`.** El total de un ticket lo suma también el
+> front cuando se crea sin conexión, y las dos cuentas tienen que dar exactamente igual. Un
+> `float` no representa la mayoría de los importes —`4850.10` se guarda como el binario más
+> cercano—, así que cada diferencia de redondeo aparecería como un ticket "para revisar" que no
+> tiene nada. Alcanza a `total`, `montoRecibido`, `precioUnitario` y `costoUnitario`.
+
 **Error `400`:** stock insuficiente · sin detalles · cantidad <= 0
+
+> **La venta descuenta el stock al armarse, no al cobrarse.** Una venta que queda sin cobrar
+> retiene esa mercadería, así que un barrido periódico anula las que superan la ventana
+> configurada en `ventas.reserva-stock.minutos` (por defecto 120) y devuelve el stock, dejando
+> el movimiento de reversa registrado. En `0` el barrido queda apagado y las ventas sin cobrar
+> viven indefinidamente.
 
 ---
 
@@ -715,10 +962,14 @@ cuenta billetes— ni requiere que haya una caja abierta.
 **Request:**
 ```json
 {
-  "montoRecibido": "float (>= total de la venta)",
+  "montoRecibido": "float (solo EFECTIVO: obligatorio y >= total; ignorado en los otros medios)",
   "metodoPago": "EFECTIVO | TARJETA | TRANSFERENCIA"
 }
 ```
+
+`montoRecibido` es lo que el cliente entrega, para calcular el vuelto: solo existe en efectivo.
+Con `TARJETA` o `TRANSFERENCIA` se ignora, y la venta queda con `montoRecibido` en `null` aunque
+el body haya traído un número.
 
 **Response `200`:**
 ```json
@@ -749,6 +1000,9 @@ Resumen de las ventas **cobradas** del día, desglosado por medio de pago. Filtr
 Mismo desglose, acotado a un turno de caja. Complementa el corte, que solo cuenta efectivo:
 acá se ve cuánto entró por tarjeta y transferencia en ese turno.
 
+`fecha` es la de **apertura del turno**, no la del día en que se consulta: un turno que abre a
+las 22:00 y cierra a las 02:00 se informa con el día en que abrió.
+
 **Response `200`:** `{ ...ResumenVentas }`
 
 ---
@@ -772,31 +1026,51 @@ acá se ve cuánto entró por tarjeta y transferencia en ese turno.
 
 **Response `200`:** `{ ...VentaResponse }`
 
+**Error `403`:** un `EMPLEADO` pidiendo la venta de otro
+
 ---
+
+> **Alcance por rol:** un `EMPLEADO` solo ve sus propias ventas, en cualquiera de los listados y
+> también al pedir una por id (`403` si es de otro). Un `ADMIN` ve las de todos. El alcance no se
+> acepta del cliente: sale del rol de quien pregunta, así que `GET /api/ventas/v1` devuelve cosas
+> distintas según quién llame.
+>
+> Los tres listados de abajo **paginan**: `?page=0&size=20`, con `page` desde 0 y `size` de 1 a
+> 100. Ordenan de la venta más reciente a la más vieja, con el `id` como desempate para que la
+> paginación sea estable cuando varias comparten el mismo instante. Todos responden `400` si
+> `page` es negativo o `size` queda fuera de rango.
 
 ### `GET /api/ventas/v1`
 
-Lista todas las ventas activas.
+Listado paginado de ventas activas.
 
-**Response `200`:** `[ ...VentaResponse ]`
+**Query params:** `?page=0&size=20`
+
+**Response `200`:** `Page<VentaResponse>` (`content`, `totalElements`, `totalPages`, `number`,
+`size`)
 
 ---
 
 ### `GET /api/ventas/v1/usuario/{idUsuario}`
 
-Filtra por usuario.
+Filtra por usuario. Un `EMPLEADO` solo puede pedir el suyo: con el id de otro recibe `403`.
 
-**Response `200`:** `[ ...VentaResponse ]`
+**Query params:** `?page=0&size=20`
+
+**Response `200`:** `Page<VentaResponse>`
 
 ---
 
 ### `GET /api/ventas/v1/fecha`
 
-Filtra por rango de fechas.
+Filtra por rango de fechas. El rango es **semiabierto**: incluye `desde` y excluye `hasta`.
 
-**Query params:** `desde=2026-01-01T00:00:00&hasta=2026-12-31T23:59:59`
+**Query params:** `desde=2026-01-01T00:00:00&hasta=2026-12-31T23:59:59&page=0&size=20`
 
-**Response `200`:** `[ ...VentaResponse ]`
+**Response `200`:** `Page<VentaResponse>`
+
+**Errores `400`:** falta `desde` o `hasta` · `desde` no es anterior a `hasta` —invertidas, o
+iguales, la consulta no devolvería nada y parecería que no hubo ventas
 
 ---
 
@@ -804,15 +1078,174 @@ Filtra por rango de fechas.
 
 Anula la venta: la marca como eliminada junto a sus detalles y **devuelve la mercadería al
 stock**. Si el producto maneja lotes, repone en cada lote exactamente la cantidad que se le
-descontó, incluso cuando el FIFO repartió una línea entre varios. Los movimientos originales
+descontó, incluso cuando el FEFO repartió una línea entre varios. Los movimientos originales
 no se borran: la reversa queda registrada como un movimiento `AJUSTE` adicional.
 
-**Solo ADMIN.**
+**Quién puede anular qué**
+
+| Quién | Qué |
+|---|---|
+| `EMPLEADO` | Solo ventas **propias**, y solo si el turno de caja de esa venta abrió hace **7 días o menos** |
+| `ADMIN` · `SUPERADMIN` | Cualquier venta, sin ventana |
+
+La ventana se mide sobre la **apertura del turno** de la venta y no sobre su fecha: es el turno el
+que define el período contable, y una venta de las 23:50 pertenece al turno que abrió a las 18:00.
+Una venta sin turno —las que no son en efectivo cuando no había caja abierta— cae de vuelta en su
+propia fecha. El plazo se configura con `ventas.anulacion.dias`.
+
+**Una venta cobrada sí se anula.** Estaba prohibido, y era coherente mientras no existiera una
+ventana; con siete días, el 100% de lo anulable está cobrado. Si movió efectivo, la plata vuelve
+como un movimiento `REVERSA` **en el turno abierto de hoy**, que es de donde físicamente sale
+cuando el cliente vuelve con el ticket: el corte viejo no se toca.
 
 **Response `204`**
 
-**Error `400`:** la venta ya está cobrada — movió plata y puede estar dentro de un corte
-cerrado, así que corresponde una devolución, no una anulación
+**Errores:**
+
+| Código | Cuándo |
+|---|---|
+| `403` | Un `EMPLEADO` sobre la venta de otro |
+| `400` | Un `EMPLEADO` sobre una venta fuera de su ventana de 7 días |
+| `400` | La venta fue en efectivo y **no hay ningún turno de caja abierto** donde devolver la plata |
+| `404` | La venta no existe o ya estaba anulada |
+
+---
+
+### `POST /api/ventas/v1/sync`
+
+Recibe la cola de eventos de una caja que estuvo sin conexión.
+
+Lo puede llamar **cualquier usuario autenticado que pueda vender**. Quien llama es *quien
+sincroniza*, no necesariamente quien vendió: el vendedor de cada ticket viaja en el payload
+porque es un hecho de hace dos días. Es la única excepción a la regla de que la identidad sale
+siempre del JWT, y queda auditada con el par `id_usuario_sync` / `origen = OFFLINE`.
+
+**Request:**
+```json
+{
+  "dispositivo": "caja-01",
+  "eventos": [
+    {
+      "uuid": "UUID v7 — la identidad de la ENTIDAD, no del evento",
+      "tipo": "CREAR | ANULAR | ABRIR_SESION | CERRAR_SESION",
+      "secuencia": "long — contador del dispositivo, desempata dos eventos del mismo instante",
+      "ocurridoEn": "datetime — cuándo pasó en el local. Es la fecha que se persiste"
+    }
+  ]
+}
+```
+
+El `uuid` es el de la entidad que el evento toca: el del ticket en `CREAR` y `ANULAR`, el del
+turno en los dos de caja. De ahí sale la idempotencia —la clave es siempre `tipo` + `uuid`—, así
+que **reenviar un lote entero es inofensivo**.
+
+**Carga por tipo de evento**
+
+| `tipo` | Campos propios |
+|---|---|
+| `CREAR` | `idVendedor`, `idSesion`, `total`, `metodoPago` (`EFECTIVO` · `TARJETA` · `TRANSFERENCIA`), `montoRecibido` (solo efectivo), `detalles[]` |
+| `ANULAR` | `idUsuario` (quién anuló), `motivo` (opcional) |
+| `ABRIR_SESION` | `idUsuario`, `saldoInicial` |
+| `CERRAR_SESION` | `idUsuario`, `saldoFinal` (el conteo físico), `montoRetirado`, `observaciones` |
+
+Cada línea de `detalles[]`: `tipo` (`PRODUCTO` o `MANUAL`), `idProducto` o `nombreManual` según
+el caso, `cantidad` y `precioUnitario`. **El `precioUnitario` viaja también en las líneas de
+producto y se guarda tal cual**: es el precio que el cliente pagó ese día, no el de la lista de
+hoy.
+
+> El evento `CREAR` representa siempre una venta **cerrada y cobrada** —es lo que es un ticket de
+> caja registradora—, así que no lleva un campo `cobrada` y su fecha de cobro es la misma
+> `ocurridoEn`.
+
+**Response `200`** — siempre `200`, con un resultado por evento y en el orden en que se
+procesaron, que **no** es el orden del array:
+
+```json
+{
+  "recibidos": 2,
+  "resultados": [
+    { "uuid": "…", "tipo": "ABRIR_SESION", "estado": "OK", "requiereRevision": false },
+    {
+      "uuid": "…",
+      "tipo": "CREAR",
+      "estado": "OK",
+      "requiereRevision": true,
+      "mensaje": "Se regularizaron 6 unidades de Yerba 1kg"
+    }
+  ]
+}
+```
+
+| Campo del resultado | Qué dice |
+|---|---|
+| `estado` | `OK` o `ERROR` |
+| `requiereRevision` | En un `OK`: el evento se persistió pero dejó una discrepancia. **El evento ya está sincronizado**: sale de la cola igual |
+| `codigo` | En un `ERROR`: cuál de los casos de abajo |
+| `reintentable` | En un `ERROR`: si volver a mandarlo puede cambiar algo |
+| `mensaje` | Texto para el operador o para el log |
+
+**Códigos de error por ítem**
+
+| `codigo` | Cuándo | `reintentable` |
+|---|---|---|
+| `UUID_INVALIDO` | El uuid no es versión 7 | No |
+| `FECHA_INVALIDA` | Futuro, demasiado vieja, anulación anterior a su ticket, o corte anterior a su apertura | No |
+| `VENDEDOR_INEXISTENTE` | El usuario del evento no existe. Que esté **dado de baja no es error** | No |
+| `PRODUCTO_INEXISTENTE` | Una línea referencia un producto que no existe | No |
+| `EVENTO_INVALIDO` | El payload no trae lo que su tipo necesita | No |
+| `PERMISO_INSUFICIENTE` | `ANULAR` de un `EMPLEADO` sobre una venta ajena o fuera de su ventana | No |
+| `SESION_INEXISTENTE` | El evento referencia un turno que todavía no llegó | **Sí** |
+| `SESION_YA_ABIERTA` | `ABRIR_SESION` choca con el turno abierto que ya hay | **Sí** |
+| `SESION_CERRADA` | El ticket llegó después del corte de su turno, o no hay caja abierta para la reversa | Depende |
+| `INTERNO` | Cualquier fallo inesperado del backend | **Sí** |
+
+**Errores del lote entero** —los únicos que no responden `200`:
+
+| Status | Cuándo |
+|---|---|
+| `400` | JSON ilegible, `eventos` vacío, o más de 100 eventos (el límite va en el mensaje) |
+| `401` | Token ausente, vencido o de un usuario dado de baja |
+| `403` | Autenticado sin permiso para vender |
+
+El tope se configura con `sync.lote.maximo`, y las validaciones de fecha con
+`sync.desfase-maximo-minutos` (5) y `sync.antiguedad-maxima-dias` (60).
+
+**Qué espera el backend del front**
+
+| Obligación | Por qué |
+|---|---|
+| Generar **UUID v7** para tickets y turnos | Si no, la PK se fragmenta y el evento se rechaza |
+| Mandar `ocurridoEn` con el reloj del local, y mantenerlo en hora | Es la fecha que queda en la base y la que fechan los reportes |
+| No mandar más de 100 eventos por request | Arriba de eso el lote entero se rechaza |
+| No borrar un evento de la cola hasta recibir su `OK` | Es lo único que garantiza que nada se pierda |
+| Reintentar los `ERROR` con `reintentable: true`, y **no** los de `false` | Reintentar un evento condenado es ruido infinito |
+| Incluir el `idSesion` en todo ticket | Sin eso el ticket no se puede colgar de ningún turno |
+
+**Qué puede esperar el front del backend**
+
+- Un resultado por cada evento mandado.
+- Que un evento con `OK` esté persistido y sea seguro borrarlo de la cola, incluso con
+  `requiereRevision`.
+- Que reenviar un lote entero sea inofensivo.
+- Que un `ERROR` en un ítem no afecte a los demás del mismo lote.
+
+---
+
+### `GET /api/ventas/v1/revision`
+
+Listado paginado de lo que la sincronización dejó marcado: stock que hubo que **regularizar** y
+totales declarados que **no coincidieron** con el recalculado.
+
+**Solo ADMIN.**
+
+**Query params:** `?page=0&size=20`
+
+**Response `200`:** `Page<VentaResponse>` — las marcadas traen `requiereRevision: true`
+
+> **No son ventas con problemas: son ventas válidas que apuntan a uno.** Lo que corresponde hacer
+> con una regularización de stock no es revisar el ticket —el ticket es correcto, la mercadería
+> salió del local— sino **contar ese producto**, con el ajuste contra conteo físico que ya existe
+> (`POST /api/inventario/v1/controlar` o `/lotes/ajustar`).
 
 ---
 
@@ -823,9 +1256,10 @@ cerrado, así que corresponde una devolución, no una anulación
   "idProducto": "UUID | null",
   "nombre": "string",
   "cantidad": "int",
-  "precioUnitario": "float",
-  "subtotal": "float",
-  "tipo": "PRODUCTO | MANUAL"
+  "precioUnitario": "decimal",
+  "subtotal": "decimal",
+  "tipo": "PRODUCTO | MANUAL",
+  "costoUnitario": "decimal | null — costo congelado al vender; null en los ítems MANUAL"
 }
 ```
 
@@ -853,12 +1287,19 @@ abierta (falla con `400` si no hay ninguna). Reemplaza al `idSesion` que antes m
     }
   ],
   "idProveedor": "UUID (opcional)",
-  "tipoComprobante": "REMITO | FACTURA (opcional)",
-  "nroComprobante": "string (opcional)",
+  "tipoComprobante": "REMITO | FACTURA (opcional, se guarda en mayúsculas)",
+  "nroComprobante": "string (opcional, único por proveedor y tipo)",
   "observaciones": "string (opcional)",
   "pagoEnEfectivo": "boolean (default false)"
 }
 ```
+
+Si el producto maneja lotes, la línea **debe traer `fechaVencimiento`**: el lote se da de alta
+por el módulo de inventario, que la exige. Sin ella el lote quedaría en estado `SIN_FECHA` y no
+aparecería en ningún control de vencimientos.
+
+`tipoComprobante` se recorta y se guarda en mayúsculas, y el filtro del listado busca con el
+mismo criterio: cargar `"factura"` y filtrar por `"FACTURA"` encuentra la compra.
 
 **Response `200`:**
 ```json
@@ -874,6 +1315,16 @@ abierta (falla con `400` si no hay ninguna). Reemplaza al `idSesion` que antes m
 }
 ```
 
+**Errores `400`:** el proveedor no existe o está dado de baja · algún producto no existe · **ese
+proveedor ya tiene una compra con ese número dentro del mismo tipo de comprobante** · falta la fecha de vencimiento en
+una línea de un producto que maneja lotes · no hay turno de caja abierto y se marcó
+`pagoEnEfectivo`
+
+> El número de comprobante es único **por proveedor y por tipo**: dos proveedores distintos
+> pueden emitir el mismo número, y un mismo proveedor puede tener un remito y una factura con el
+> mismo número, porque cada tipo lleva su propia numeración. Las compras sin proveedor o sin
+> número quedan fuera de la regla, y anular una compra libera su número para volver a cargarla.
+
 ---
 
 ### `GET /api/compras/v1/{id}`
@@ -884,21 +1335,61 @@ abierta (falla con `400` si no hay ninguna). Reemplaza al `idSesion` que antes m
 
 ### `GET /api/compras/v1`
 
-**Response `200`:** `[ ...CompraResponse ]`
+Listado paginado con todos los filtros opcionales y combinables. Reemplaza a los endpoints
+dedicados por usuario y por fecha, que ya no existen.
+
+**Query params:** `?proveedor=UUID&tipoComprobante=FACTURA&desde=...&hasta=...&sortTotal=asc|desc&page=0&size=20`
+
+El rango de fechas es **semiabierto**: incluye `desde` y excluye `hasta`, igual que en ventas y
+en los reportes. `page` arranca en 0; `size` va de 1 a 100. Por defecto ordena por fecha
+descendente; con `sortTotal` ordena por importe. En los dos casos desempata por `id`, para que la
+paginación sea estable cuando varias compras comparten fecha o importe.
+
+**Response `200`:** `Page<CompraResponse>` (`content`, `totalElements`, `totalPages`, `number`,
+`size`)
+
+**Error `400`:** `page` negativo, o `size` fuera de 1..100
 
 ---
 
-### `GET /api/compras/v1/usuario/{idUsuario}`
+### `GET /api/compras/v1/producto/{idProducto}/proveedores`
 
-**Response `200`:** `[ ...CompraResponse ]`
+A quién se le puede comprar este producto y a cuánto: cruza el **precio de referencia** que cada
+proveedor lista —cargado a mano desde el catálogo— con **lo que realmente se le pagó** la última
+vez.
 
----
+Es de consulta y no interviene en el alta de la compra: a quién comprarle sigue siendo criterio
+del usuario.
 
-### `GET /api/compras/v1/fecha`
+**Response `200`:**
+```json
+[
+  {
+    "proveedor": { "...ProveedorResponse" },
+    "precioReferencia": "decimal (null si nunca se cargó)",
+    "ultimaCompra": {
+      "fecha": "datetime",
+      "precioUnitario": "float",
+      "tipoComprobante": "string",
+      "nroComprobante": "string"
+    }
+  }
+]
+```
 
-**Query params:** `desde=...&hasta=...`
+`ultimaCompra` es `null` si a ese proveedor nunca se le compró el producto. Las compras anuladas
+no cuentan: si la última se anuló, vale la anterior.
 
-**Response `200`:** `[ ...CompraResponse ]`
+**Orden:** primero los del catálogo de referencia, del más barato al más caro; después, por
+nombre, los que solo aparecen en el historial de compras y nunca tuvieron un precio cargado.
+
+Sin paginar a propósito: la cantidad de proveedores de un producto es del orden de la decena.
+
+> Vive en compras y no en productos ni en proveedores porque es el único módulo que ya depende de
+> los dos. El catálogo de referencia, que es donde se cargan los precios, lo tiene productos:
+> [`GET /api/productos/v1/{id}/proveedores`](#get-apiproductosv1idproveedores).
+
+**Error `404`:** el producto no existe
 
 ---
 
@@ -908,12 +1399,17 @@ Anula la compra: saca del stock lo que había ingresado y, si se pagó por caja,
 plata al turno con un movimiento de origen `REVERSA`. Los lotes que quedan en cero se dan de
 baja.
 
+**No revierte el costo, el margen, el precio ni el proveedor que el alta le escribió al
+producto.** Una compra se anula por muchos motivos y en ninguno el precio de venta vigente tiene
+por qué volver atrás; si lo que estaba mal era el precio, se corrige con
+`PUT /api/productos/v1/{id}`.
+
 **Solo ADMIN.**
 
 **Response `204`**
 
-**Errores `400`:** ya se vendió parte de la mercadería ingresada · la compra se pagó por caja
-y ese turno ya cerró su corte (o no hay ninguno abierto)
+**Errores `400`:** ya se vendió parte de la mercadería ingresada —el mensaje nombra el producto—
+· la compra se pagó por caja y ese turno ya cerró su corte (o no hay ninguno abierto)
 
 ---
 
@@ -939,7 +1435,8 @@ Módulo unificado de caja: sesiones, movimientos manuales, resumen diario y cort
 
 ### `POST /api/caja/v1/abrir`
 
-Abre una nueva sesión de caja. Valida que no exista otra sesión abierta.
+Abre una nueva sesión de caja. Valida que no exista otra sesión abierta. `saldoInicial` es el
+efectivo **contado** al abrir.
 
 **Request:**
 ```json
@@ -955,9 +1452,15 @@ Abre una nueva sesión de caja. Valida que no exista otra sesión abierta.
   "fechaApertura": "datetime",
   "saldoInicial": "float",
   "estado": "ABIERTA",
-  "idUsuarioApertura": "UUID"
+  "idUsuarioApertura": "UUID",
+  "diferenciaApertura": "float | null"
 }
 ```
+
+`diferenciaApertura` es lo contado menos lo que dejó el cierre anterior: `0` si coincide,
+negativo si falta plata, `null` si no hay cierre previo con ese dato. **No impide abrir** —el
+comercio tiene que poder trabajar— pero deja el faltante registrado en vez de perderlo entre dos
+turnos.
 
 **Error `400`:** si ya hay una sesión abierta
 
@@ -996,43 +1499,59 @@ Registra un movimiento manual de salida (ej: "compra de café para el personal")
 **Request:**
 ```json
 {
-  "monto": "float (>= 0)",
+  "monto": "float (> 0)",
   "motivo": "string (max 255, opcional)"
 }
 ```
 
 **Response `200`:** `{ ...MovimientoCajaResponse }`
 
+**Error `400`:** el monto supera el efectivo que hay en el turno — de la caja no puede salir
+plata que no está
+
 ---
 
 ### `GET /api/caja/v1/movimientos`
 
-Lista movimientos de caja. Si no se especifica rango, usa la sesión activa.
+Listado paginado. **Sin fechas** devuelve los movimientos del turno abierto; con fechas, los del
+período. Las dos fechas van juntas: con una sola no hay período que consultar. El rango es
+**semiabierto** —incluye `desde`, excluye `hasta`— igual que en ventas y compras.
 
-**Query params:** `?desde=2026-07-12T00:00:00&hasta=2026-07-12T23:59:59`
+**Query params:** `?desde=2026-07-12T00:00:00&hasta=2026-07-13T00:00:00&page=0&size=20`
 
-**Response `200`:**
+`page` arranca en 0; `size` va de 1 a 100. Ordena del movimiento más reciente al más viejo, con
+el `id` como desempate: los movimientos automáticos de una misma operación comparten instante.
+
+**Response `200`:** `Page<MovimientoCajaResponse>` (`content`, `totalElements`, `totalPages`,
+`number`, `size`), donde cada elemento es:
+
 ```json
-[
-  {
-    "id": "UUID",
-    "idSesion": "UUID",
-    "tipo": "ENTRADA | SALIDA",
-    "monto": "float",
-    "motivo": "string | null",
-    "origen": "VENTA | COMPRA | MANUAL",
-    "idReferencia": "UUID | null",
-    "fecha": "datetime"
-  }
-]
+{
+  "id": "UUID",
+  "idSesion": "UUID",
+  "tipo": "ENTRADA | SALIDA",
+  "monto": "float",
+  "motivo": "string | null",
+  "origen": "MANUAL | VENTA | COMPRA | REVERSA | RETIRO",
+  "idReferencia": "UUID | null",
+  "fecha": "datetime"
+}
 ```
+
+**Errores `400`:** viene una sola de las dos fechas · `desde` no es anterior a `hasta` · no hay
+turno abierto y tampoco se mandó rango · `page` negativo o `size` fuera de 1..100
+
+> `origen` dice qué generó el movimiento: `MANUAL` lo carga una persona, `VENTA` y `COMPRA` los
+> escribe el sistema al registrar el comprobante, `REVERSA` es la contrapartida de una anulación
+> y `RETIRO` lo que se saca de la caja al cerrar el turno.
 
 ---
 
 ### `GET /api/caja/v1/resumen/sesion`
 
 Estado del turno abierto: es lo que se mira antes de cerrar la caja. Solo cuenta **efectivo**,
-que es lo que el cajero tiene para contar. Para ver cuánto se cobró con tarjeta o transferencia
+que es lo que el cajero tiene para contar. La `fecha` del resumen es la de **apertura del
+turno**, no la del día en que se consulta. Para ver cuánto se cobró con tarjeta o transferencia
 en ese mismo turno, usar [`GET /api/ventas/v1/resumen/sesion/{idSesion}`](#get-apiventasv1resumensesionidsesion).
 
 **Response `200`:** `{ ...ResumenCaja }`
@@ -1044,8 +1563,11 @@ en ese mismo turno, usar [`GET /api/ventas/v1/resumen/sesion/{idSesion}`](#get-a
 ### `GET /api/caja/v1/resumen/diario`
 
 Resumen de un día completo, calculado sobre los movimientos de esa fecha. **No requiere que
-haya una caja abierta**, así que sirve para consultar días ya cerrados. El saldo inicial es la
-suma de los saldos de apertura de las sesiones de ese día.
+haya una caja abierta**, así que sirve para consultar días ya cerrados.
+
+El saldo inicial es el del **primer turno** del día, no la suma de todos: lo que cada turno
+declara al abrir es la plata que dejó el anterior, así que sumarlos contaba la misma plata una
+vez por turno. Lo que sí sale es el retiro de cada cierre, que viaja como movimiento.
 
 **Query params:** `?fecha=2026-07-12` (opcional, default hoy)
 
@@ -1078,13 +1600,26 @@ suma de los saldos de apertura de las sesiones de ese día.
 
 Realiza el corte de caja: cierra la sesión activa, calcula saldo esperado y diferencia.
 
+El corte se archiva con la **fecha de apertura del turno**, no con la del día en que se cierra:
+un turno que abre a las 22:00 y cierra a las 02:00 queda fechado el día que abrió. Y se toma el
+turno con la fila bloqueada, así que dos cierres simultáneos no pueden pisarse: el segundo
+encuentra la sesión ya cerrada y recibe `400`.
+
 **Request:**
 ```json
 {
   "saldoReal": "float (>= 0)",
+  "montoRetirado": "float (>= 0, <= saldoReal)",
   "observaciones": "string (max 255, opcional)"
 }
 ```
+
+`saldoReal` es el efectivo contado al cerrar y `montoRetirado` cuánto se saca de la caja: la
+diferencia queda para el turno siguiente, que la declara como `saldoInicial` al abrir. El retiro
+se registra además como movimiento `SALIDA` con origen `RETIRO`, y es lo que evita que el
+resumen del día vuelva a sumar como apertura del turno siguiente una plata que nunca salió.
+
+**Error `400`:** `montoRetirado` mayor que `saldoReal`
 
 **Response `200`:**
 ```json
@@ -1096,6 +1631,8 @@ Realiza el corte de caja: cierra la sesión activa, calcula saldo esperado y dif
   "saldoEsperado": "float",
   "saldoReal": "float",
   "diferencia": "float (saldoReal - saldoEsperado)",
+  "montoRetirado": "float | null",
+  "saldoDejado": "float | null (saldoReal - montoRetirado)",
   "observaciones": "string | null",
   "idUsuarioApertura": "UUID",
   "idUsuarioCierre": "UUID",
@@ -1127,29 +1664,31 @@ Corte por ID. Valida que la sesión esté cerrada.
 
 El desglose (`resumen`) de cada corte queda congelado al cerrarlo, no se recalcula.
 
-Historial de todos los cortes realizados.
+Historial de cortes, del más reciente al más viejo, con el `id` como desempate.
 
-**Response `200`:** `[ ...CorteResponse ]`
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+**Response `200`:** `Page<CorteResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
 
 ---
 
 ## 9. Inventario — `/api/inventario/v1`
 
-### `POST /api/inventario/v1/stock`
+> Las operaciones que escriben cantidades (aumentar, disminuir, ajuste manual, venta, compra y
+> sus anulaciones) toman el lock de la fila de stock o de lote sobre la que trabajan, para que
+> dos pedidos simultáneos sobre el mismo producto no partan del mismo valor. Los locks se toman
+> siempre en el mismo orden —productos por id ascendente y, dentro de cada uno, sus lotes por
+> vencimiento— así que dos operaciones no pueden trabarse cruzadas. Si aun así la base corta
+> por espera de lock, la respuesta es **`409`** y el pedido se puede reintentar tal cual.
+>
+> El detalle de una venta o una compra se guarda y se devuelve en el orden en que se cargó: el
+> orden de bloqueo es interno y no cambia el comprobante.
 
-Crea registro de stock para un producto.
-
-**Request:**
-```json
-{
-  "idProducto": "UUID",
-  "cantidad": "int"
-}
-```
-
-**Response `200`:** `{ "idProducto": "UUID", "cantidad": "int" }`
-
----
+> **`POST /api/inventario/v1/stock` ya no existe.** La fila de stock la crea el alta del
+> producto, junto con sus existencias iniciales: ver `POST /api/productos/v1`. El endpoint era
+> además inalcanzable, porque el alta siempre había creado esa fila y respondía
+> `400 El producto ya tiene stock inicializado`.
 
 ### `GET /api/inventario/v1/stock/{idProducto}`
 
@@ -1157,11 +1696,35 @@ Stock actual de un producto.
 
 **Response `200`:** `{ "idProducto": "UUID", "cantidad": "int" }`
 
-**Error `404`:** sin stock registrado
+Un producto sin fila de stock devuelve `cantidad: 0`, no `404`: no tener existencias registradas
+es un estado válido, y el ajuste sobre ese mismo producto crea la fila.
+
+---
+
+### `POST /api/inventario/v1/stock/batch`
+
+Stock de varios productos en un solo pedido, para las pantallas que muestran una grilla entera:
+uno por uno era una request por fila. Es `POST` porque la lista de ids viaja en el body.
+
+**Request:** `["UUID", "UUID", …]`
+
+**Response `200`:**
+```json
+[
+  { "idProducto": "UUID", "cantidad": "int" }
+]
+```
+
+Los productos sin fila de stock **no aparecen** en la respuesta; el que pregunta los cuenta como
+0. No incluye a los productos que manejan lotes, cuya existencia es la suma de sus lotes.
 
 ---
 
 ### `PUT /api/inventario/v1/stock/aumentar`
+
+> `tipo` solo acepta **`AJUSTE`** o **`MERMA`**: `COMPRA` y `VENTA` los escribe el sistema al
+> registrar el comprobante, y son los que lee la reversa de una anulación. `idReferencia` que
+> venga en el body se descarta, y `idUsuario` sale siempre del JWT.
 
 Incrementa stock. Solo para productos que NO manejan lotes.
 
@@ -1182,6 +1745,8 @@ Incrementa stock. Solo para productos que NO manejan lotes.
 
 ### `PUT /api/inventario/v1/stock/disminuir`
 
+> Mismas reglas de `tipo`, `idReferencia` e `idUsuario` que `aumentar`.
+
 Reduce stock. Valida stock suficiente.
 
 **Request:** mismo body que aumentar
@@ -1194,15 +1759,25 @@ Reduce stock. Valida stock suficiente.
 
 ### `DELETE /api/inventario/v1/stock/{idProducto}`
 
-Soft delete.
+Soft delete de la fila de stock. **Solo ADMIN**: borrar el stock de un producto saltea las
+validaciones de la baja de producto y puede tapar un faltante sin dejar rastro operativo.
 
 **Response `204`**
+
+**Error `400`:** el producto todavía tiene existencias. Hay que ajustar el stock a 0 antes.
+
+**Error `403`:** sin rol ADMIN
 
 ---
 
 ### `POST /api/inventario/v1/controlar`
 
-Ajuste físico de stock. Registra la diferencia como movimiento `AJUSTE`.
+Ajuste físico de stock. Registra la diferencia como movimiento `AJUSTE`. **Solo ADMIN**: es la
+operación que puede hacer desaparecer un faltante, así que va con el resto de lo sensible.
+
+Si el producto todavía no tiene fila de stock, la crea: un producto sin fila es stock 0, igual
+que en `GET /stock/{idProducto}`. **No aplica a productos que manejan lotes**, cuya existencia
+es la suma de sus lotes: esos se ajustan con `POST /api/inventario/v1/lotes/ajustar`.
 
 **Request:**
 ```json
@@ -1216,25 +1791,43 @@ Ajuste físico de stock. Registra la diferencia como movimiento `AJUSTE`.
 
 **Response `200`**
 
+**Error `400`:** el producto maneja lotes, o el stock real es negativo
+
+**Error `403`:** sin rol ADMIN
+
 ---
 
 ### `GET /api/inventario/v1/movimientos/{idProducto}`
 
-Historial de movimientos de stock de un producto.
+Historial de movimientos de stock de un producto, del más reciente al más viejo.
+
+**Query params:** `?page=0&size=20`
+
+`page` arranca en 0; `size` va de 1 a 100.
+
+**Error `400`:** `page` negativo, o `size` fuera de 1..100
 
 **Response `200`:**
 ```json
-[
-  {
-    "id": "UUID",
-    "idProducto": "UUID",
-    "cantidad": "int",
-    "tipo": "COMPRA | VENTA | AJUSTE | MERMA",
-    "motivo": "string",
-    "fecha": "datetime"
-  }
-]
+`Page<MovimientoStockResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`),
+donde cada elemento es:
+
+```json
+{
+  "id": "UUID",
+  "idProducto": "UUID",
+  "cantidad": "int",
+  "tipo": "COMPRA | VENTA | AJUSTE | MERMA",
+  "motivo": "string",
+  "fecha": "datetime",
+  "idLote": "UUID | null",
+  "idReferencia": "UUID | null",
+  "idUsuario": "UUID | null"
+}
 ```
+
+`idLote` dice de qué lote salió la unidad (null si el producto no maneja lotes), `idReferencia`
+es la venta o compra que originó el movimiento, y `idUsuario` quién lo cargó.
 
 ---
 
@@ -1256,11 +1849,79 @@ Crea un lote. Valida que `producto.manejaLotes == true`.
 
 ---
 
-### `GET /api/inventario/v1/lotes`
+### `POST /api/inventario/v1/lotes/ajustar`
 
-Todos los lotes activos con estado recalculado.
+Conteo físico de un producto que maneja lotes, repartido por lote. Es el equivalente de
+`/controlar` para estos productos. **Solo ADMIN**, por el mismo motivo.
+
+Hace falta porque el consumo es **FEFO** —se descuenta primero el lote que vence antes—, pero en
+la góndola el cliente agarra cualquier envase: con el tiempo el total puede seguir siendo
+correcto y el reparto por lote no serlo.
+
+**El ajuste es parcial:** solo se tocan los lotes que vienen en `conteos`; los demás quedan como
+estaban. Un conteo incompleto no borra existencias que nadie miró.
+
+**Request:**
+```json
+{
+  "idProducto": "UUID",
+  "conteos": [
+    { "idLote": "UUID", "cantidadReal": "int (>= 0)" }
+  ],
+  "motivo": "string (opcional)"
+}
+```
+
+**Response `200`:** `[ ...LoteResponse ]` — todos los lotes del producto, ya actualizados
+
+Cada lote con diferencia deja un movimiento `AJUSTE` con su `idLote` y la diferencia firmada. Un
+conteo que no encontró ninguna diferencia deja **un solo** movimiento en 0 y sin `idLote`: lo que
+se registra es que alguien contó, no solo que hubo que corregir.
+
+Acepta cualquier lote activo del producto, incluido uno vencido — si no, un error de carga sobre
+un lote vencido no tendría forma de corregirse. Para descartar mercadería vencida corresponde una
+merma (`PUT /stock/disminuir` con `tipo` `MERMA`), no un ajuste de conteo.
+
+**Error `400`:** el producto no maneja lotes (se ajusta por `/controlar`); un `idLote` que no
+existe, está dado de baja o es de otro producto; o el mismo lote contado más de una vez. La
+validación es previa a la escritura: un request con un lote ajeno en la última línea no deja
+aplicadas las anteriores
+
+**Error `403`:** sin rol ADMIN
+
+**Error `404`:** el producto no existe
+
+---
+
+### `GET /api/inventario/v1/lotes/ajustables/{idProducto}`
+
+Los lotes que conviene ofrecer en la pantalla de ajuste: los que hoy siguen en la góndola.
+
+Deja afuera los **vencidos** —lo que corresponde ahí es una merma— y los que están en **cero
+desde hace más de 30 días** (`EstadoLote.DIAS_LOTE_AGOTADO`), que ya no están físicamente y solo
+alargan una lista que crece con cada compra.
+
+Es un filtro de la lista, no del ajuste: `POST /lotes/ajustar` acepta cualquier lote activo.
 
 **Response `200`:** `[ ...LoteResponse ]`
+
+**Error `400`:** el producto no maneja lotes
+
+**Error `404`:** el producto no existe
+
+---
+
+### `GET /api/inventario/v1/lotes`
+
+Lotes activos con estado recalculado.
+
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+**Response `200`:** `Page<LoteResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
+Los cinco listados de lotes ordenan igual: por vencimiento ascendente —el que vence antes
+primero, que es el que hay que mirar— con el `id` como desempate, porque una compra entera
+comparte fecha de vencimiento.
 
 ---
 
@@ -1268,7 +1929,10 @@ Todos los lotes activos con estado recalculado.
 
 Filtra por estado: `VIGENTE`, `PROXIMO`, `VENCIDO`, `SIN_FECHA`.
 
-**Response `200`:** `[ ...LoteResponse ]`
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+**Response `200`:** `Page<LoteResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
 
 ---
 
@@ -1278,7 +1942,10 @@ Filtra por estado: `VIGENTE`, `PROXIMO`, `VENCIDO`, `SIN_FECHA`.
 
 Shorthands para filtrar por estado.
 
-**Response `200`:** `[ ...LoteResponse ]`
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+**Response `200`:** `Page<LoteResponse>` (`content`, `totalElements`, `totalPages`, `number`, `size`)
+
 
 ---
 
@@ -1306,9 +1973,15 @@ Shorthands para filtrar por estado.
 > cobro**, con rangos sin solapamiento entre días consecutivos. `/reportes/ventas`,
 > `/reportes/ganancias` y `/ventas/resumen/diario` devuelven el mismo total para el mismo rango.
 
+> **El rango incluye las dos puntas y no puede superar los 366 días.** Un reporte devuelve una
+> fila por día y carga en memoria las ventas del período con sus detalles, así que un rango
+> abierto se comía el servidor. `desde` posterior a `hasta` también es `400`: es un error de
+> quien pregunta, no un reporte en cero. Vale para los tres endpoints con fechas.
+
 ### `GET /api/reportes/v1/ventas`
 
-Reporte de ventas por día en un rango de fechas.
+Reporte de ventas por día en un rango de fechas. `porDia` cubre el rango completo: los días sin
+ventas salen en cero.
 
 **Query params:** `desde=2026-07-01&hasta=2026-07-12`
 
@@ -1329,6 +2002,8 @@ Reporte de ventas por día en un rango de fechas.
 }
 ```
 
+**Error `400`:** `desde` posterior a `hasta`, o rango de más de 366 días
+
 ---
 
 ### `GET /api/reportes/v1/ganancias`
@@ -1342,6 +2017,9 @@ pérdida cada vez que se repone mercadería, aunque el negocio haya ganado plata
 
 `unidadesSinCosto` cuenta las unidades vendidas sin costo conocido (ítems manuales o productos
 sin costo cargado). Si es alto, la ganancia informada está sobrestimada.
+
+`porDia` cubre el rango completo, igual que el reporte de ventas: los días sin movimiento salen
+en cero, así los dos reportes del mismo período devuelven arrays del mismo largo.
 
 **Query params:** `desde=2026-07-01&hasta=2026-07-12`
 
@@ -1367,14 +2045,22 @@ sin costo cargado). Si es alto, la ganancia informada está sobrestimada.
 }
 ```
 
+**Error `400`:** `desde` posterior a `hasta`, o rango de más de 366 días
+
 ---
 
 ### `GET /api/reportes/v1/inventario`
 
-Stock actual de todos los productos. Para los productos que manejan lotes, `stockActual` es la
+Stock actual del catálogo, paginado. Para los productos que manejan lotes, `stockActual` es la
 suma de sus lotes activos (antes salía siempre en 0, porque solo se miraba la tabla `stock`).
 
-**Response `200`:**
+**Query params:** `?page=0&size=20` — `page` arranca en 0, `size` va de 1 a 100.
+
+Mismo orden que el catálogo (`updatedAt DESC`, `id ASC`): es la misma consulta, así que la
+paginación se comporta igual en los dos listados. Las existencias se resuelven **solo para los
+productos de la página**, en dos consultas agregadas.
+
+**Response `200`:** `Page<ReporteInventarioItem>`, con `content`:
 ```json
 [
   {
@@ -1394,9 +2080,12 @@ suma de sus lotes activos (antes salía siempre en 0, porque solo se miraba la t
 
 ### `GET /api/reportes/v1/productos-mas-vendidos`
 
-Top N productos más vendidos en un período.
+Top N productos más vendidos en un período. Los ítems manuales no entran: no son productos del
+catálogo. Ordena por cantidad vendida y desempata por importe y después por id, para que el corte
+del `limite` no dependa del orden en que salgan los datos.
 
-**Query params:** `desde=2026-07-01&hasta=2026-07-12&limite=10` (limite default 10)
+**Query params:** `desde=2026-07-01&hasta=2026-07-12&limite=10`. `limite` va de 1 a 100 (default
+10).
 
 **Response `200`:**
 ```json
@@ -1404,9 +2093,15 @@ Top N productos más vendidos en un período.
   {
     "idProducto": "UUID",
     "nombre": "string",
-    "barcode": "string",
+    "barcode": "string | null",
     "cantidadVendida": "int",
     "totalVendido": "float"
   }
 ]
 ```
+
+`nombre` es el que tenía el producto al venderse (queda congelado en el detalle de la venta);
+`barcode` es el vigente hoy, y es `null` si el producto no tiene código cargado.
+
+**Error `400`:** `desde` posterior a `hasta`, rango de más de 366 días, o `limite` fuera de
+1..100

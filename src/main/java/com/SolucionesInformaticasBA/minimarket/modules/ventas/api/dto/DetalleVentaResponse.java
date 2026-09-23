@@ -1,5 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto;
 
+import java.math.BigDecimal;
+
 import java.util.UUID;
 
 import lombok.Data;
@@ -9,10 +11,10 @@ public class DetalleVentaResponse {
     private UUID idProducto;
     private String nombre;
     private int cantidad;
-    private float precioUnitario;
-    private float subtotal;
+    private BigDecimal precioUnitario;
+    private BigDecimal subtotal;
     private String tipo;
 
     /** Costo congelado al momento de la venta. Null en ítems manuales o sin costo cargado. */
-    private Float costoUnitario;
+    private BigDecimal costoUnitario;
 }

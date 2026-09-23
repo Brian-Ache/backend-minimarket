@@ -1,5 +1,7 @@
 package com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto;
 
+import java.math.BigDecimal;
+
 import java.util.UUID;
 
 import jakarta.validation.constraints.NotBlank;
@@ -19,5 +21,5 @@ public class DetalleVentaRequest {
     private String nombreManual;    // null si es PRODUCTO
 
     @PositiveOrZero
-    private float precioUnitario;   // requerido si MANUAL, ignorado si PRODUCTO
+    private BigDecimal precioUnitario;  // requerido si MANUAL, ignorado si PRODUCTO
 }

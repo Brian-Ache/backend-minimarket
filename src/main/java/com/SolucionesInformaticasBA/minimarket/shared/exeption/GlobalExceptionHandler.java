@@ -3,6 +3,8 @@ package com.SolucionesInformaticasBA.minimarket.shared.exeption;
 import java.time.LocalDateTime;
 import java.util.Map;
 
+import org.springframework.context.MessageSourceResolvable;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -11,8 +13,10 @@ import org.springframework.lang.NonNull;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -76,6 +80,23 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Validación de parámetros sueltos: los {@code @Min} / {@code @Max} de un query param.
+     * Llegan por otra excepción que el {@code @Valid} del body y, sin este handler, las
+     * agarraba el catch-all: un {@code ?size=0} respondía 500, haciendo pasar un error del
+     * cliente por una falla del servidor.
+     */
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<Map<String, Object>> handleParamValidation(HandlerMethodValidationException ex) {
+        var errors = ex.getAllErrors().stream()
+                .map(MessageSourceResolvable::getDefaultMessage)
+                .toList();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(
+                "error", "Validation failed",
+                "details", errors,
+                "timestamp", LocalDateTime.now()));
+    }
+
+    /**
      * Ruta inexistente. Sin este handler la excepción caía en el catch-all de abajo y una URL
      * mal escrita respondía 500, haciendo pasar un error del cliente por una falla del servidor.
      */
@@ -91,10 +112,33 @@ public class GlobalExceptionHandler {
                 "Valor inválido para el parámetro '" + ex.getName() + "'");
     }
 
+    /**
+     * Falta un query param obligatorio. Sin este handler caía en el catch-all: pedir
+     * {@code /api/ventas/v1/fecha} sin fechas respondía 500 en vez de decir qué falta.
+     */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<Map<String, Object>> handleParametroFaltante(
+            MissingServletRequestParameterException ex) {
+        return buildResponse(HttpStatus.BAD_REQUEST,
+                "Falta el parámetro obligatorio '" + ex.getParameterName() + "'");
+    }
+
     /** JSON mal formado o ilegible. */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleNotReadable(HttpMessageNotReadableException ex) {
         return buildResponse(HttpStatus.BAD_REQUEST, "El cuerpo de la petición es inválido");
+    }
+
+    /**
+     * Dos operaciones peleando por la misma fila de stock o de lote: espera de lock agotada o
+     * deadlock resuelto por la base. El pedido estaba bien y reintentarlo probablemente
+     * funcione, así que va 409 y no el 500 del catch-all.
+     */
+    @ExceptionHandler(ConcurrencyFailureException.class)
+    public ResponseEntity<Map<String, Object>> handleConcurrencia(ConcurrencyFailureException ex) {
+        log.warn("Conflicto de concurrencia sobre el inventario", ex);
+        return buildResponse(HttpStatus.CONFLICT,
+                "La operación se cruzó con otra sobre el mismo producto. Volvé a intentarla");
     }
 
     /** Choque con una restricción de la base (único, clave foránea, etc.). */

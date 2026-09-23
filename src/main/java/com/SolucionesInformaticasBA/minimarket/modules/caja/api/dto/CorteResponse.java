@@ -16,6 +16,10 @@ public class CorteResponse {
     private float saldoEsperado;
     private float saldoReal;
     private float diferencia;
+
+    /** Cuánto se retiró al cerrar y cuánto quedó en la caja. Null en los cortes viejos. */
+    private Float montoRetirado;
+    private Float saldoDejado;
     private String observaciones;
     private UUID idUsuarioApertura;
     private UUID idUsuarioCierre;

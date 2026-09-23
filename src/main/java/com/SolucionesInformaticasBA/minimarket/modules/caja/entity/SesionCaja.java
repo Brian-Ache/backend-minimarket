@@ -6,16 +6,19 @@ import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import org.springframework.data.domain.Persistable;
+
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.EstadoSesion;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PostLoad;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -29,9 +32,13 @@ import lombok.Setter;
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
-public class SesionCaja {
+public class SesionCaja implements Persistable<UUID> {
+    /**
+     * UUIDv7 asignado a mano, como el de {@code Venta}: lo genera el backend al abrir el turno
+     * con conexión y lo trae el front cuando el turno abrió sin ella —el turno ya existía en el
+     * dispositivo antes de que el backend supiera de él—.
+     */
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
     @Column(name = "fecha_apertura", nullable = false)
@@ -50,6 +57,25 @@ public class SesionCaja {
     private Float saldoEsperado;
 
     private Float diferencia;
+
+    /**
+     * Reparto del efectivo al cerrar: cuánto se retira y cuánto queda en la caja para el turno
+     * siguiente. Null en los cortes anteriores a que esto se registrara, que es "no se sabe" y
+     * no "no se retiró nada".
+     */
+    @Column(name = "monto_retirado")
+    private Float montoRetirado;
+
+    @Column(name = "saldo_dejado")
+    private Float saldoDejado;
+
+    /**
+     * Cuánto se apartó lo contado al abrir de lo que había dejado el cierre anterior. No impide
+     * abrir —el comercio tiene que poder trabajar— pero deja el faltante o el sobrante
+     * registrado en vez de perderlo entre dos turnos.
+     */
+    @Column(name = "diferencia_apertura")
+    private Float diferenciaApertura;
 
     // Desglose del arqueo, congelado al cerrar. Un corte es un documento contable:
     // se guarda como quedó, no se recalcula al consultarlo.
@@ -95,4 +121,20 @@ public class SesionCaja {
     @Builder.Default
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt = null;
+
+    /** Ver {@code Venta#isNew()}: con el id asignado a mano hay que decirlo explícitamente. */
+    @Builder.Default
+    @Transient
+    private boolean nuevo = true;
+
+    @Override
+    public boolean isNew() {
+        return nuevo;
+    }
+
+    @PostLoad
+    @PrePersist
+    void yaEstaEnLaBase() {
+        this.nuevo = false;
+    }
 }

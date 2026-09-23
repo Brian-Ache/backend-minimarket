@@ -44,14 +44,9 @@ public class AuthService implements AuthApi {
     private final JwtProvider jwtProvider;
     private final EmailService emailService;
 
-    /**
-     * Acepta email o nombre de usuario, indistinto.
-     *
-     * <p>Un solo mensaje para todos los rechazos: cuenta inexistente, cuenta sin acceso y
-     * contraseña equivocada responden igual, para no filtrar qué cuentas existen ni en qué
-     * estado están. La distinción tampoco llega hasta acá — {@code verificarCredenciales}
-     * devuelve vacío en los tres casos.
-     */
+    // Sesión
+
+    // Acepta email o username. Mensaje único para todo rechazo: no filtra qué cuentas existen ni su estado.
     @Override
     public AuthResponse login(LoginRequest request) {
         UsuarioResponse u = usuarioApi
@@ -64,15 +59,22 @@ public class AuthService implements AuthApi {
         return toResponse(accessToken, refreshToken, u);
     }
 
+    /**
+     * Renueva la sesión rotando el refresh token.
+     *
+     * <p>El {@code noRollbackFor} no es un detalle: cuando la validación detecta que el token ya
+     * se había rotado, cierra todas las sesiones del usuario por sospecha de robo y recién
+     * después rechaza el pedido. Sin esa excepción de la regla, el rechazo revertiría la
+     * transacción y las sesiones que se acaban de cerrar volverían a abrirse solas. En ese camino
+     * no hay ninguna otra escritura pendiente que confirmar.
+     */
     @Override
-    @Transactional
+    @Transactional(noRollbackFor = RefreshTokenReusadoException.class)
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         RefreshToken refreshToken = tokenService.validateRefreshToken(request.getRefreshToken());
-
         tokenService.revokeRefreshToken(request.getRefreshToken());
 
         UsuarioResponse u = usuarioApi.getById(refreshToken.getUserId());
-
         String accessToken = jwtProvider.generateAccessToken(u.getId(), u.getRol());
         String newRefreshToken = tokenService.generateRefreshToken(u.getId());
 
@@ -90,46 +92,33 @@ public class AuthService implements AuthApi {
         log.info("Se revocaron {} sesiones del usuario {}", revocadas, userId);
     }
 
+    // Invitaciones 
+
     @Override
     @Transactional
     public void enviarInvitacion(UUID userId, String email, String nombre) {
-        // Un reenvío no puede dejar viva la invitación anterior: sería otra puerta abierta
-        // hasta que expire.
+        // Reenvío: la invitación anterior no puede seguir viva hasta que expire.
         tokenService.invalidateAuthTokens(userId, TokenType.INVITATION);
 
         String token = tokenService.generateInvitationToken(userId);
 
-        // Si el mail falla, la excepción propaga y voltea la transacción del alta: preferimos
-        // no tener el usuario a tenerlo sin que nadie pueda avisarle.
+        // Si el mail falla, la excepción propaga y revierte el alta: preferimos no tener el
+        // usuario a tenerlo sin forma de avisarle.
         emailService.enviarInvitacion(email, nombre, token,
                 TokenService.INVITATION_TOKEN_DURATION_HOURS);
 
         log.info("Invitación enviada a {}", email);
     }
 
-    /**
-     * Valida el token sin quemarlo: es una consulta, y la persona todavía no completó nada. El
-     * token se marca usado recién en {@link #aceptarInvitacion}.
-     */
+    // Valida sin quemar el token: es una consulta, se marca usado recién en {@link #aceptarInvitacion}.
     @Override
     public InvitacionResponse consultarInvitacion(String token) {
         AuthToken authToken = tokenService.validateAuthToken(token, TokenType.INVITATION);
-
         UsuarioResponse u = usuarioApi.getCuentaInvitada(authToken.getUserId());
-
-        return InvitacionResponse.builder()
-                .nombre(u.getNombre())
-                .apellido(u.getApellido())
-                .email(u.getEmail())
-                .usernameSugerido(u.getUsername())
-                .build();
+        return toInvitacionResponse(u);
     }
 
-    /**
-     * El token prueba quién es; definir la contraseña y el nombre de usuario, y habilitar la
-     * cuenta, es de usuarios, que además decide si la invitación sigue en pie —la cuenta pudo
-     * darse de baja o bloquearse entre el envío y la aceptación—.
-     */
+    // El token prueba la identidad; establecer contraseña/username y habilitar la cuenta es de usuarios. 
     @Override
     @Transactional
     public void aceptarInvitacion(AceptarInvitacionRequest request) {
@@ -142,19 +131,31 @@ public class AuthService implements AuthApi {
         log.info("Invitación aceptada por el usuario {}", authToken.getUserId());
     }
 
+    // Reseteo de contraseña
+
     /**
-     * Acepta email o username, igual que el login: quien entra con su nombre de usuario va a
-     * escribir eso mismo acá. El mail de recuperación se manda de todos modos a su email.
+     * Responde igual exista o no la cuenta, para no revelar qué emails están registrados. Por
+     * eso, a diferencia de la invitación, un fallo de SMTP se traga y se loguea en vez de propagar.
      *
-     * <p>Responde igual exista o no la cuenta, para no revelar qué emails están registrados. Por
-     * eso, a diferencia de la invitación, un fallo de SMTP se traga y se loguea: devolver 502
-     * solo cuando la cuenta existe delataría cuáles existen.
+     * <p>Tragarse ese fallo tiene una consecuencia que conviene tener presente: como la
+     * transacción igual confirma, el enlace anterior ya quedó invalidado y el nuevo nunca sale.
+     * Quien pida el reseteo justo mientras el SMTP está caído se queda sin ninguno de los dos y
+     * tiene que volver a pedirlo. Es el precio de que un pedido nuevo deje sin efecto a los
+     * viejos, que es lo que evita la pila de enlaces vivos.
      */
     @Override
     @Transactional
     public void requestPasswordReset(PasswordResetRequest request) {
         usuarioApi.buscarPorIdentificador(request.getUsername())
                 .ifPresent(u -> {
+                    // Un pedido nuevo deja sin efecto a los anteriores: pedir el reseteo cinco
+                    // veces dejaba cinco enlaces vivos a la vez, una hora cada uno.
+                    //
+                    // Va antes de emitir el nuevo y no después: invalidateAuthTokens barre todos
+                    // los tokens sin usar del tipo, así que invertir el orden se llevaría puesto
+                    // al recién creado y el mail saldría con un enlace ya muerto.
+                    tokenService.invalidateAuthTokens(u.getId(), TokenType.PASSWORD_RESET);
+
                     String token = tokenService.generatePasswordResetToken(u.getId());
                     try {
                         emailService.enviarResetPassword(u.getEmail(), u.getNombre(), token,
@@ -173,15 +174,26 @@ public class AuthService implements AuthApi {
         usuarioApi.restablecerPassword(authToken.getUserId(), request.getNewPassword());
         tokenService.markAuthTokenAsUsed(authToken.getId());
 
-        // La contraseña cambió, así que las sesiones abiertas con la anterior dejan de valer.
+        // La contraseña cambió: las sesiones abiertas con la anterior dejan de valer.
         tokenService.revokeAllUserRefreshTokens(authToken.getUserId());
     }
+
+    // Helpers
 
     private AuthResponse toResponse(String accessToken, String newRefreshToken, UsuarioResponse usuario) {
         return AuthResponse.builder()
                 .accessToken(accessToken)
                 .refreshToken(newRefreshToken)
                 .usuario(usuario)
+                .build();
+    }
+
+    private InvitacionResponse toInvitacionResponse(UsuarioResponse u) {
+        return InvitacionResponse.builder()
+                .nombre(u.getNombre())
+                .apellido(u.getApellido())
+                .email(u.getEmail())
+                .usernameSugerido(u.getUsername())
                 .build();
     }
 }

@@ -3,9 +3,9 @@ package com.SolucionesInformaticasBA.minimarket.modules.caja.entity;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.TipoMovimientoCaja;
 
 import jakarta.persistence.Column;
@@ -15,6 +15,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -50,13 +51,21 @@ public class MovimientoCaja {
     @Column(name = "id_usuario", nullable = false)
     private UUID idUsuario;
 
+    @Enumerated(EnumType.STRING)
     @Column(length = 20)
-    private String origen;
+    private OrigenMovimientoCaja origen;
 
     @Column(name = "id_referencia")
     private UUID idReferencia;
 
-    @CreationTimestamp
+    /**
+     * Cuándo ocurrió el movimiento, que no siempre es cuándo se insertó la fila: un ticket
+     * creado sin conexión llega dos días después, y el arqueo tiene que mostrarlo el día en que
+     * la plata entró a la caja.
+     *
+     * <p>Sin {@code @CreationTimestamp}, que pisa el valor en cada INSERT. Quien conoce la
+     * fecha real la pone; el resto la deja en null y vale el reloj del servidor.
+     */
     @Column(name = "created_at", updatable = false, nullable = false)
     private LocalDateTime createdAt;
 
@@ -67,4 +76,12 @@ public class MovimientoCaja {
     @Builder.Default
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt = null;
+
+    /** Si nadie la puso, el movimiento ocurre ahora: es el caso de todo el flujo online. */
+    @PrePersist
+    void fecharSiNoVino() {
+        if (createdAt == null) {
+            createdAt = LocalDateTime.now();
+        }
+    }
 }

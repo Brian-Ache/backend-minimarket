@@ -16,6 +16,11 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
 
     Optional<RefreshToken> findByTokenHashAndIsActiveTrue(String tokenHash);
 
+    // Sin filtrar por isActive, a propósito: la renovación necesita distinguir el token que no
+    // existió nunca del que ya se rotó. Con la derivada de arriba los dos daban vacío, y un
+    // token robado que vuelve a aparecer era indistinguible de uno inventado.
+    Optional<RefreshToken> findByTokenHash(String tokenHash);
+
     // Un usuario puede tener varias sesiones activas a la vez (una por login).
     List<RefreshToken> findByUserIdAndIsActiveTrue(UUID userId);
 

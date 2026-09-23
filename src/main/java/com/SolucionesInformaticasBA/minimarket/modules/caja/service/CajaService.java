@@ -6,6 +6,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.SolucionesInformaticasBA.minimarket.modules.caja.api.CajaApi;
@@ -19,9 +22,11 @@ import com.SolucionesInformaticasBA.minimarket.modules.caja.api.dto.SesionCajaRe
 import com.SolucionesInformaticasBA.minimarket.modules.caja.entity.MovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.entity.SesionCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.EstadoSesion;
+import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.OrigenMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.enums.TipoMovimientoCaja;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.repository.MovimientoCajaRepository;
 import com.SolucionesInformaticasBA.minimarket.modules.caja.repository.SesionCajaRepository;
+import com.SolucionesInformaticasBA.minimarket.shared.Uuid7;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.BadRequestException;
 import com.SolucionesInformaticasBA.minimarket.shared.exeption.ResourceNotFoundException;
 
@@ -37,15 +42,45 @@ public class CajaService implements CajaApi {
     @Override
     @Transactional
     public SesionCajaResponse abrirSesion(UUID idUsuario, AbrirSesionRequest request) {
+        // El turno que abre con conexión abre ahora y estrena su propio uuid; el que abrió sin
+        // ella trae los dos datos del dispositivo. De ahí para abajo es el mismo camino.
+        return abrirSesion(Uuid7.nuevo(), idUsuario, request.getSaldoInicial(), LocalDateTime.now());
+    }
+
+    /**
+     * La apertura de un turno que ocurrió sin conexión, con su uuid y su fecha del local.
+     *
+     * <p>El turno abrió a las ocho de la mañana de anteayer y el lote llega hoy: si la fecha la
+     * pusiera el INSERT, el corte de ese turno quedaría fechado hoy y el arqueo de dos días
+     * aparecería como si fuera de una sola mañana.
+     */
+    @Override
+    @Transactional
+    public SesionCajaResponse abrirSesionSincronizada(UUID idSesion, UUID idUsuario,
+                                                      float saldoInicial,
+                                                      LocalDateTime fechaApertura) {
+        return abrirSesion(idSesion, idUsuario, saldoInicial, fechaApertura);
+    }
+
+    private SesionCajaResponse abrirSesion(UUID idSesion, UUID idUsuario, float saldoInicial,
+                                           LocalDateTime fechaApertura) {
+        // La comprobación explícita además del índice único: uk_sesiones_una_abierta también lo
+        // impide, pero una violación de índice sale como un error opaco de la base y el front
+        // no puede distinguirla de un fallo cualquiera.
         if (sesionCajaRepository.findTopByEstadoAndDeletedAtIsNullOrderByCreatedAtDesc(EstadoSesion.ABIERTA).isPresent()) {
             throw new BadRequestException("Ya existe una sesión de caja abierta. Debe cerrarla antes de abrir una nueva.");
         }
 
         SesionCaja sesion = SesionCaja.builder()
-            .fechaApertura(LocalDateTime.now())
-            .saldoInicial(request.getSaldoInicial())
+            .id(idSesion)
+            .fechaApertura(fechaApertura)
+            .saldoInicial(saldoInicial)
             .idUsuarioApertura(idUsuario)
             .estado(EstadoSesion.ABIERTA)
+            // Lo contado al abrir contra lo que dejó el cierre anterior. No se rechaza la
+            // apertura: el comercio tiene que poder trabajar aunque la caja no cuadre, y un
+            // faltante entre turnos es justamente lo que hay que dejar anotado.
+            .diferenciaApertura(diferenciaConElCierreAnterior(saldoInicial))
             .build();
 
         return toSesionResponse(sesionCajaRepository.save(sesion));
@@ -54,6 +89,12 @@ public class CajaService implements CajaApi {
     @Override
     public SesionCajaResponse getSesionActiva() {
         return toSesionResponse(obtenerSesionActiva());
+    }
+
+    @Override
+    public SesionCajaResponse getSesionById(UUID id) {
+        return toSesionResponse(sesionCajaRepository.findByIdAndDeletedAtIsNull(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Sesión de caja no encontrada")));
     }
 
     @Override
@@ -78,7 +119,7 @@ public class CajaService implements CajaApi {
             .monto(request.getMonto())
             .motivo(request.getMotivo())
             .idUsuario(idUsuario)
-            .origen("MANUAL")
+            .origen(OrigenMovimientoCaja.MANUAL)
             .build();
         return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
@@ -87,13 +128,23 @@ public class CajaService implements CajaApi {
     @Transactional
     public MovimientoCajaResponse registrarSalidaManual(UUID idUsuario, MovimientoCajaRequest request) {
         SesionCaja sesion = obtenerSesionActiva();
+
+        // De la caja no puede salir plata que no está. Sin esto se podían sacar $50.000 de una
+        // caja con $3.000 y el arqueo informaba un saldo esperado negativo, que físicamente no
+        // significa nada.
+        float disponible = saldoEsperadoDe(sesion);
+        if (request.getMonto() > disponible) {
+            throw new BadRequestException("No hay efectivo suficiente en la caja: el turno tiene "
+                + disponible + " y se intentan retirar " + request.getMonto());
+        }
+
         MovimientoCaja movimiento = MovimientoCaja.builder()
             .idSesion(sesion.getId())
             .tipo(TipoMovimientoCaja.SALIDA)
             .monto(request.getMonto())
             .motivo(request.getMotivo())
             .idUsuario(idUsuario)
-            .origen("MANUAL")
+            .origen(OrigenMovimientoCaja.MANUAL)
             .build();
         return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
@@ -101,7 +152,9 @@ public class CajaService implements CajaApi {
     @Override
     @Transactional
     public MovimientoCajaResponse registrarEntradaAutomatica(
-            UUID idSesion, UUID idUsuario, float monto, String origen, UUID idReferencia) {
+            UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen,
+            UUID idReferencia, LocalDateTime fecha) {
+        exigirSesionAbierta(idSesion);
         MovimientoCaja movimiento = MovimientoCaja.builder()
             .idSesion(idSesion)
             .tipo(TipoMovimientoCaja.ENTRADA)
@@ -109,6 +162,7 @@ public class CajaService implements CajaApi {
             .idUsuario(idUsuario)
             .origen(origen)
             .idReferencia(idReferencia)
+            .createdAt(fecha)
             .build();
         return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
@@ -116,7 +170,9 @@ public class CajaService implements CajaApi {
     @Override
     @Transactional
     public MovimientoCajaResponse registrarSalidaAutomatica(
-            UUID idSesion, UUID idUsuario, float monto, String origen, UUID idReferencia) {
+            UUID idSesion, UUID idUsuario, float monto, OrigenMovimientoCaja origen,
+            UUID idReferencia, LocalDateTime fecha) {
+        exigirSesionAbierta(idSesion);
         MovimientoCaja movimiento = MovimientoCaja.builder()
             .idSesion(idSesion)
             .tipo(TipoMovimientoCaja.SALIDA)
@@ -124,22 +180,37 @@ public class CajaService implements CajaApi {
             .idUsuario(idUsuario)
             .origen(origen)
             .idReferencia(idReferencia)
+            .createdAt(fecha)
             .build();
         return toMovimientoResponse(movimientoCajaRepository.saveAndFlush(movimiento));
     }
 
     @Override
-    public List<MovimientoCajaResponse> getMovimientos(LocalDateTime desde, LocalDateTime hasta) {
+    public Page<MovimientoCajaResponse> getMovimientos(LocalDateTime desde, LocalDateTime hasta,
+                                                       Pageable pageable) {
         if (desde == null && hasta == null) {
             SesionCaja sesion = sesionCajaRepository.findTopByEstadoAndDeletedAtIsNullOrderByCreatedAtDesc(EstadoSesion.ABIERTA)
                 .orElseThrow(() -> new BadRequestException("No hay sesión activa. Especifique un rango de fechas."));
-            return movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId())
-                .stream().map(this::toMovimientoResponse).toList();
+            return movimientoCajaRepository
+                .findByIdSesionAndDeletedAtIsNull(sesion.getId(), pageable)
+                .map(this::toMovimientoResponse);
         }
-        if (desde == null) desde = LocalDateTime.of(2000, 1, 1, 0, 0);
-        if (hasta == null) hasta = LocalDateTime.now();
-        return movimientoCajaRepository.findEnRango(desde, hasta)
-            .stream().map(this::toMovimientoResponse).toList();
+
+        // Las dos fechas o ninguna: con una sola, la que faltaba se rellenaba sola y un pedido
+        // con solo `hasta` terminaba barriendo desde el año 2000 sobre la tabla que más crece
+        // del módulo.
+        if (desde == null || hasta == null) {
+            throw new BadRequestException(
+                "Para consultar por fechas hay que indicar 'desde' y 'hasta'; sin ninguna de las "
+                    + "dos se devuelven los movimientos del turno abierto");
+        }
+        if (!desde.isBefore(hasta)) {
+            throw new BadRequestException(
+                "El rango de fechas es inválido: 'desde' tiene que ser anterior a 'hasta'");
+        }
+
+        return movimientoCajaRepository.findEnRango(desde, hasta, pageable)
+            .map(this::toMovimientoResponse);
     }
 
     /** Estado del turno abierto: es lo que el cajero mira antes de cerrar. */
@@ -147,7 +218,9 @@ public class CajaService implements CajaApi {
     public ResumenCajaResponse getResumenSesion() {
         SesionCaja sesion = obtenerSesionActiva();
         return calcularResumen(
-            LocalDate.now(),
+            // La fecha del turno es la de su apertura, no la de hoy: un turno que abre a las
+            // 22:00 y cierra a las 02:00 se informaba con el día siguiente.
+            sesion.getFechaApertura().toLocalDate(),
             sesion.getSaldoInicial(),
             movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId()));
     }
@@ -164,9 +237,16 @@ public class CajaService implements CajaApi {
         LocalDateTime desde = fecha.atStartOfDay();
         LocalDateTime hasta = fecha.plusDays(1).atStartOfDay();
 
+        // El saldo inicial del día es el del PRIMER turno, no la suma de todos: lo que cada
+        // turno declara al abrir es, en general, la plata que dejó el anterior, así que sumarlos
+        // contaba la misma plata una vez por turno. Lo que sí sale es el retiro de cada cierre,
+        // que viaja como movimiento.
         float saldoInicial = (float) sesionCajaRepository
             .findByFechaAperturaGreaterThanEqualAndFechaAperturaLessThanAndDeletedAtIsNull(desde, hasta)
-            .stream().mapToDouble(SesionCaja::getSaldoInicial).sum();
+            .stream()
+            .min(java.util.Comparator.comparing(SesionCaja::getFechaApertura))
+            .map(SesionCaja::getSaldoInicial)
+            .orElse(0f);
 
         return calcularResumen(fecha, saldoInicial,
             movimientoCajaRepository.findEnRango(desde, hasta));
@@ -175,16 +255,16 @@ public class CajaService implements CajaApi {
     private ResumenCajaResponse calcularResumen(
             LocalDate fecha, float saldoInicial, List<MovimientoCaja> movimientos) {
         List<MovimientoCaja> ventas = movimientos.stream()
-            .filter(m -> "VENTA".equals(m.getOrigen()) && m.getTipo() == TipoMovimientoCaja.ENTRADA)
+            .filter(m -> m.getOrigen() == OrigenMovimientoCaja.VENTA && m.getTipo() == TipoMovimientoCaja.ENTRADA)
             .toList();
         List<MovimientoCaja> compras = movimientos.stream()
-            .filter(m -> "COMPRA".equals(m.getOrigen()) && m.getTipo() == TipoMovimientoCaja.SALIDA)
+            .filter(m -> m.getOrigen() == OrigenMovimientoCaja.COMPRA && m.getTipo() == TipoMovimientoCaja.SALIDA)
             .toList();
         List<MovimientoCaja> entradasManuales = movimientos.stream()
-            .filter(m -> "MANUAL".equals(m.getOrigen()) && m.getTipo() == TipoMovimientoCaja.ENTRADA)
+            .filter(m -> m.getOrigen() == OrigenMovimientoCaja.MANUAL && m.getTipo() == TipoMovimientoCaja.ENTRADA)
             .toList();
         List<MovimientoCaja> salidasManuales = movimientos.stream()
-            .filter(m -> "MANUAL".equals(m.getOrigen()) && m.getTipo() == TipoMovimientoCaja.SALIDA)
+            .filter(m -> m.getOrigen() == OrigenMovimientoCaja.MANUAL && m.getTipo() == TipoMovimientoCaja.SALIDA)
             .toList();
 
         float totalVentas = (float) ventas.stream().mapToDouble(MovimientoCaja::getMonto).sum();
@@ -219,18 +299,61 @@ public class CajaService implements CajaApi {
     @Override
     @Transactional
     public CorteResponse realizarCorte(UUID idUsuario, CorteRequest request) {
-        SesionCaja sesion = obtenerSesionActiva();
+        // Con el lock de la fila tomado: sin él, dos cierres simultáneos leían el turno abierto
+        // los dos y el segundo pisaba el saldo real, la diferencia y el desglose del primero,
+        // que además ya le había devuelto al usuario un corte que no quedó guardado.
+        SesionCaja sesion = sesionCajaRepository.findAbiertaParaActualizar()
+            .orElseThrow(() -> new BadRequestException("No hay una sesión de caja abierta"));
+        return cerrar(sesion, idUsuario, request, LocalDateTime.now());
+    }
+
+    /**
+     * El corte de un turno que se cerró sin conexión.
+     *
+     * <p>Exige que el turno sea <b>ese</b>: el uuid viene del evento, no se resuelve con "el que
+     * está abierto ahora". El saldo esperado se calcula acá y no lo manda el front, porque el
+     * front no conoce los movimientos que el backend registró —una compra pagada por caja, un
+     * retiro—; lo que sí manda es el conteo físico, que es lo único que el dispositivo sabe y el
+     * backend no puede saber.
+     */
+    @Override
+    @Transactional
+    public CorteResponse realizarCorteSincronizado(UUID idSesion, UUID idUsuario,
+                                                   CorteRequest request,
+                                                   LocalDateTime fechaCierre) {
+        SesionCaja sesion = sesionCajaRepository.findAbiertaParaActualizar()
+            .orElseThrow(() -> new BadRequestException("No hay una sesión de caja abierta"));
+
+        if (!sesion.getId().equals(idSesion)) {
+            throw new BadRequestException(
+                "El turno que se quiere cerrar no es el que está abierto");
+        }
+        return cerrar(sesion, idUsuario, request, fechaCierre);
+    }
+
+    private CorteResponse cerrar(SesionCaja sesion, UUID idUsuario, CorteRequest request,
+                                 LocalDateTime fechaCierre) {
 
         ResumenCajaResponse resumen = calcularResumen(
-            LocalDate.now(),
+            // El corte es un documento contable y esta fecha queda archivada: va la del turno,
+            // no la del día en que se lo cierra.
+            sesion.getFechaApertura().toLocalDate(),
             sesion.getSaldoInicial(),
             movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId()));
+
+        if (request.getMontoRetirado() > request.getSaldoReal()) {
+            throw new BadRequestException("No se puede retirar más de lo que hay en la caja: se "
+                + "contaron " + request.getSaldoReal() + " y se intentan retirar "
+                + request.getMontoRetirado());
+        }
 
         sesion.setSaldoEsperado(resumen.getSaldoEsperado());
         sesion.setSaldoFinal(request.getSaldoReal());
         sesion.setDiferencia(request.getSaldoReal() - resumen.getSaldoEsperado());
+        sesion.setMontoRetirado(request.getMontoRetirado());
+        sesion.setSaldoDejado(request.getSaldoReal() - request.getMontoRetirado());
         sesion.setObservaciones(request.getObservaciones());
-        sesion.setFechaCierre(LocalDateTime.now());
+        sesion.setFechaCierre(fechaCierre);
         sesion.setIdUsuarioCierre(idUsuario);
         sesion.setEstado(EstadoSesion.CERRADA);
 
@@ -244,6 +367,27 @@ public class CajaService implements CajaApi {
         sesion.setTotalSalidasManuales(resumen.getTotalSalidasManuales());
 
         SesionCaja cerrada = sesionCajaRepository.save(sesion);
+
+        // El retiro se registra como salida del turno, después de calcular el arqueo: lo que el
+        // cajero cuenta es el efectivo antes de retirar. Queda como movimiento para que el
+        // resumen del día lo vea salir, en vez de que la plata que quedó se cuente de nuevo
+        // como saldo inicial del turno siguiente.
+        if (request.getMontoRetirado() > 0) {
+            movimientoCajaRepository.saveAndFlush(MovimientoCaja.builder()
+                .idSesion(cerrada.getId())
+                .tipo(TipoMovimientoCaja.SALIDA)
+                .monto(request.getMontoRetirado())
+                .motivo("Retiro al cerrar el turno")
+                .idUsuario(idUsuario)
+                .origen(OrigenMovimientoCaja.RETIRO)
+                .idReferencia(cerrada.getId())
+                // La misma fecha que el cierre: la plata salió del cajón cuando se hizo el
+                // corte. Fechándola ahora, en un turno sincronizado el retiro cae fuera de la
+                // vida de su propio turno y el resumen de caja por fecha lo ve dos días
+                // después del corte que lo produjo.
+                .createdAt(fechaCierre)
+                .build());
+        }
 
         return toCorteResponse(cerrada, resumen, request.getSaldoReal());
     }
@@ -266,12 +410,49 @@ public class CajaService implements CajaApi {
     }
 
     @Override
-    public List<CorteResponse> getHistorialCortes() {
+    public Page<CorteResponse> getHistorialCortes(Pageable pageable) {
         return sesionCajaRepository
-            .findByEstadoAndDeletedAtIsNullOrderByFechaCierreDesc(EstadoSesion.CERRADA)
-            .stream()
-            .map(s -> toCorteResponse(s, null, s.getSaldoFinal()))
-            .toList();
+            .findByEstadoAndDeletedAtIsNull(EstadoSesion.CERRADA, pageable)
+            .map(s -> toCorteResponse(s, null, s.getSaldoFinal()));
+    }
+
+    /**
+     * Los movimientos automáticos reciben el id del turno de quien los origina. Hoy todos pasan
+     * el de la sesión abierta, pero la API aceptaba cualquiera: bastaba con equivocarse para
+     * imputarle plata a un turno cerrado y correrle el arqueo a un corte ya firmado.
+     */
+    private void exigirSesionAbierta(UUID idSesion) {
+        SesionCaja sesion = sesionCajaRepository.findByIdAndDeletedAtIsNull(idSesion)
+            .orElseThrow(() -> new ResourceNotFoundException("Sesión de caja no encontrada"));
+        if (sesion.getEstado() != EstadoSesion.ABIERTA) {
+            throw new BadRequestException(
+                "El turno de caja ya está cerrado: no se le pueden imputar movimientos nuevos");
+        }
+    }
+
+    /**
+     * Cuánto hay en la caja del turno ahora mismo: el saldo con el que abrió más lo que entró,
+     * menos lo que salió.
+     */
+    private float saldoEsperadoDe(SesionCaja sesion) {
+        return calcularResumen(
+            sesion.getFechaApertura().toLocalDate(),
+            sesion.getSaldoInicial(),
+            movimientoCajaRepository.findByIdSesionAndDeletedAtIsNull(sesion.getId()))
+            .getSaldoEsperado();
+    }
+
+    /**
+     * Diferencia entre lo que se cuenta al abrir y lo que dejó el último cierre. Null cuando no
+     * hay cierre previo, o cuando ese cierre es anterior a que el reparto se registrara: ahí no
+     * hay contra qué comparar, que no es lo mismo que una diferencia de cero.
+     */
+    private Float diferenciaConElCierreAnterior(float saldoInicial) {
+        return sesionCajaRepository
+            .findTopByEstadoAndDeletedAtIsNullOrderByCreatedAtDesc(EstadoSesion.CERRADA)
+            .map(SesionCaja::getSaldoDejado)
+            .map(dejado -> saldoInicial - dejado)
+            .orElse(null);
     }
 
     // findTop en lugar de findBy: si por una carrera quedaran dos sesiones abiertas,
@@ -288,6 +469,7 @@ public class CajaService implements CajaApi {
             .saldoInicial(s.getSaldoInicial())
             .estado(s.getEstado().name())
             .idUsuarioApertura(s.getIdUsuarioApertura())
+            .diferenciaApertura(s.getDiferenciaApertura())
             .build();
     }
 
@@ -298,7 +480,7 @@ public class CajaService implements CajaApi {
             .tipo(m.getTipo().name())
             .monto(m.getMonto())
             .motivo(m.getMotivo())
-            .origen(m.getOrigen())
+            .origen(m.getOrigen() != null ? m.getOrigen().name() : null)
             .idReferencia(m.getIdReferencia())
             .fecha(m.getCreatedAt())
             .build();
@@ -329,6 +511,8 @@ public class CajaService implements CajaApi {
             .saldoEsperado(s.getSaldoEsperado() != null ? s.getSaldoEsperado() : 0)
             .saldoReal(saldoReal != null ? saldoReal : 0)
             .diferencia(s.getDiferencia() != null ? s.getDiferencia() : 0)
+            .montoRetirado(s.getMontoRetirado())
+            .saldoDejado(s.getSaldoDejado())
             .observaciones(s.getObservaciones())
             .idUsuarioApertura(s.getIdUsuarioApertura())
             .idUsuarioCierre(s.getIdUsuarioCierre())

@@ -6,8 +6,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -17,15 +22,21 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.SyncVentasApi;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.VentasApi;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.CobrarVentaResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.ResumenDiarioResponse;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.SyncLoteRequest;
+import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.SyncLoteResponse;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaRequest;
 import com.SolucionesInformaticasBA.minimarket.modules.ventas.api.dto.VentaResponse;
+import com.SolucionesInformaticasBA.minimarket.shared.Paginacion;
 import com.SolucionesInformaticasBA.minimarket.shared.SecurityUtils;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.AllArgsConstructor;
 
 @RestController
@@ -34,6 +45,7 @@ import lombok.AllArgsConstructor;
 public class VentaController {
 
     private final VentasApi ventasApi;
+    private final SyncVentasApi syncVentasApi;
 
     @PostMapping("/v1")
     public ResponseEntity<VentaResponse> realizarVenta(
@@ -41,26 +53,76 @@ public class VentaController {
         return ResponseEntity.ok(ventasApi.realizarVenta(SecurityUtils.getCurrentUserId(), request));
     }
 
+    /**
+     * Recibe la cola de eventos de una caja que estuvo sin conexión.
+     *
+     * <p>Responde siempre {@code 200} con un resultado por evento: un ticket que falla no puede
+     * impedir que entren los otros diecinueve del lote. Los únicos {@code 4xx} son los del lote
+     * entero —JSON ilegible, lote vacío o por encima del tope—, donde no hay nada por ítem que
+     * informar.
+     *
+     * <p>Quien llama es <b>quien sincroniza</b>, no necesariamente quien vendió: el vendedor de
+     * cada ticket viaja en el payload porque es un hecho de hace dos días. Es la única
+     * excepción a la regla de que la identidad sale siempre del JWT, y queda auditada con el
+     * par {@code id_usuario_sync} / {@code origen = OFFLINE}.
+     */
+    @PostMapping("/v1/sync")
+    public ResponseEntity<SyncLoteResponse> sincronizar(@Valid @RequestBody SyncLoteRequest request) {
+        return ResponseEntity.ok(
+            syncVentasApi.sincronizar(SecurityUtils.getCurrentUserId(), request));
+    }
+
+    /**
+     * Lo que la sincronización dejó para mirar: stock que hubo que regularizar y totales que no
+     * coincidieron. Solo ADMIN, como el resto de lo que expone el estado del negocio.
+     *
+     * <p>No son ventas con problemas: son ventas válidas que apuntan a uno. Lo que corresponde
+     * hacer con una regularización es <b>contar ese producto</b>, con el ajuste contra conteo
+     * físico que ya existe.
+     */
+    @GetMapping("/v1/revision")
+    public ResponseEntity<Page<VentaResponse>> getParaRevision(
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
+        return ResponseEntity.ok(ventasApi.getParaRevision(pagina(page, size)));
+    }
+
     @GetMapping("/v1/{id}")
     public ResponseEntity<VentaResponse> getById(@PathVariable UUID id) {
         return ResponseEntity.ok(ventasApi.getById(id));
     }
 
+    /**
+     * Un empleado ve solo sus ventas; un administrador, las de todos. El alcance no se acepta
+     * del cliente: sale del rol de quien pregunta.
+     */
     @GetMapping("/v1")
-    public ResponseEntity<List<VentaResponse>> getAll() {
-        return ResponseEntity.ok(ventasApi.getAll());
+    public ResponseEntity<Page<VentaResponse>> getAll(
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
+        return ResponseEntity.ok(ventasApi.getAll(alcance(), pagina(page, size)));
     }
 
     @GetMapping("/v1/usuario/{idUsuario}")
-    public ResponseEntity<List<VentaResponse>> getByUsuario(@PathVariable UUID idUsuario) {
-        return ResponseEntity.ok(ventasApi.getByUsuario(idUsuario));
+    @PreAuthorize("hasRole('ADMIN') or #idUsuario.toString() == authentication.principal")
+    public ResponseEntity<Page<VentaResponse>> getByUsuario(
+            @PathVariable UUID idUsuario,
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
+        return ResponseEntity.ok(ventasApi.getAll(idUsuario, pagina(page, size)));
     }
 
     @GetMapping("/v1/fecha")
-    public ResponseEntity<List<VentaResponse>> getByFecha(
+    public ResponseEntity<Page<VentaResponse>> getByFecha(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime desde,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta) {
-        return ResponseEntity.ok(ventasApi.getByFecha(desde, hasta));
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta,
+            @RequestParam(defaultValue = "0") @Min(value = 0, message = Paginacion.PAGE_MIN) int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = Paginacion.SIZE_MIN)
+                @Max(value = Paginacion.MAX_PAGE_SIZE, message = Paginacion.SIZE_MAX) int size) {
+        return ResponseEntity.ok(ventasApi.getByFecha(alcance(), desde, hasta, pagina(page, size)));
     }
 
     @PostMapping("/v1/{id}/cobrar")
@@ -89,5 +151,23 @@ public class VentaController {
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         ventasApi.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Null para un administrador —ve todas— y el id propio para cualquier otro rol. Es lo que
+     * mantiene el mismo criterio en los dos listados sin que el cliente pueda elegir el alcance.
+     */
+    private UUID alcance() {
+        return SecurityUtils.esAdmin() ? null : SecurityUtils.getCurrentUserId();
+    }
+
+    /**
+     * De la más reciente a la más vieja, con el id como desempate: las ventas de un mismo
+     * momento comparten createdAt, y sin segundo criterio el orden dentro de un empate lo elige
+     * la base, con lo que las filas se repiten o se saltean al pasar de página.
+     */
+    private Pageable pagina(int page, int size) {
+        return PageRequest.of(page, size,
+                Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id")));
     }
 }
