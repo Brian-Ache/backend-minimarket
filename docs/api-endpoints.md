@@ -133,6 +133,20 @@ Rota el refresh token (invalida el anterior, genera uno nuevo).
 
 **Response `200`:** nuevo par accessToken + refreshToken
 
+**Error `400`:** token inválido, vencido o ya rotado
+
+**Presentar un token ya rotado cierra todas las sesiones del usuario.** Si un token que ya se
+usó vuelve a aparecer, es que hay una copia dando vueltas, y no hay forma de saber cuál de las
+dos partes es la legítima: se cierra todo y ambas vuelven a loguearse. Quien sabe la contraseña
+entra; quien solo tenía el token, no.
+
+> Hay una ventana de gracia de **30 segundos** para el caso honesto: si la respuesta de la
+> rotación se perdió y el front reintenta con el token viejo, el pedido se rechaza pero **no** se
+> cierra nada. Pasada la ventana, se asume lo peor.
+>
+> El front tiene que guardar el refresh token nuevo en cada renovación. Reintentar con el
+> anterior fuera de esa ventana deja a todos los dispositivos de esa persona afuera.
+
 ---
 
 ### `POST /api/auth/v1/logout`

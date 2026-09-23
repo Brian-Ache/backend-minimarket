@@ -59,8 +59,17 @@ public class AuthService implements AuthApi {
         return toResponse(accessToken, refreshToken, u);
     }
 
+    /**
+     * Renueva la sesión rotando el refresh token.
+     *
+     * <p>El {@code noRollbackFor} no es un detalle: cuando la validación detecta que el token ya
+     * se había rotado, cierra todas las sesiones del usuario por sospecha de robo y recién
+     * después rechaza el pedido. Sin esa excepción de la regla, el rechazo revertiría la
+     * transacción y las sesiones que se acaban de cerrar volverían a abrirse solas. En ese camino
+     * no hay ninguna otra escritura pendiente que confirmar.
+     */
     @Override
-    @Transactional
+    @Transactional(noRollbackFor = RefreshTokenReusadoException.class)
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         RefreshToken refreshToken = tokenService.validateRefreshToken(request.getRefreshToken());
         tokenService.revokeRefreshToken(request.getRefreshToken());
