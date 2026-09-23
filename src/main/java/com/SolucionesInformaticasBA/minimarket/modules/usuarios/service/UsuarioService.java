@@ -72,8 +72,10 @@ public class UsuarioService implements UsuarioApi {
         exigirEmailLibre(request.getEmail(), actor.getRol());
 
         Usuario u = Usuario.builder()
-                .nombre(request.getNombre())
-                .apellido(request.getApellido())
+                // Recortados por lo mismo que en update: la colación es NO PAD y dejaría
+                // conviviendo a "Juan " con "Juan".
+                .nombre(exigirTextoConContenido(request.getNombre(), "nombre"))
+                .apellido(exigirTextoConContenido(request.getApellido(), "apellido"))
                 .email(request.getEmail())
                 .username(resolverUsername(request))
                 .hashPassword(passwordEncoder.encode(passwordInutilizable()))
@@ -154,16 +156,27 @@ public class UsuarioService implements UsuarioApi {
 
     // Datos, estado y rol
 
+    /**
+     * Cambia nombre y/o apellido. Los campos ausentes se dejan como están: es un PATCH, no un
+     * reemplazo.
+     */
     @Override
     @Transactional
     public UsuarioResponse update(UUID id, ActualizarUsuarioRequest request) {
         Usuario u = findActiveUser(id);
 
+        // Sobre la cuenta propia no se pide nada más; sobre otra rige la jerarquía de siempre.
+        // Era la única operación que no la exigía, y el hasRole('ADMIN') del controller solo ve
+        // el rol de quien llama: alcanzaba para que un ADMIN le cambiara el nombre al SUPERADMIN.
+        if (!u.getId().equals(SecurityUtils.getCurrentUserId())) {
+            exigirJerarquiaSobre(u, "editar");
+        }
+
         if (request.getNombre() != null) {
-            u.setNombre(request.getNombre());
+            u.setNombre(exigirTextoConContenido(request.getNombre(), "nombre"));
         }
         if (request.getApellido() != null) {
-            u.setApellido(request.getApellido());
+            u.setApellido(exigirTextoConContenido(request.getApellido(), "apellido"));
         }
 
         return toUserResponse(userRepository.save(u));
@@ -394,6 +407,15 @@ public class UsuarioService implements UsuarioApi {
             throw new BadRequestException("No podés " + accionPropia + " a vos mismo");
         }
 
+        return exigirJerarquiaSobre(objetivo, accion);
+    }
+
+    /**
+     * Solo la parte de la jerarquía, sin la regla del caso propio. Es lo que necesita
+     * {@link #update}: editarse el nombre a uno mismo sí está permitido, y es el único caso en
+     * que operar sobre la cuenta propia no es un error.
+     */
+    private Usuario exigirJerarquiaSobre(Usuario objetivo, String accion) {
         Usuario actor = usuarioAutenticado();
         if (!actor.getRol().mandaSobre(objetivo.getRol())) {
             throw new ForbiddenException(
@@ -514,6 +536,24 @@ public class UsuarioService implements UsuarioApi {
      */
     private String passwordInutilizable() {
         return UUID.randomUUID().toString();
+    }
+
+    /**
+     * Recorta el valor y rechaza el que se quedó sin contenido. El PATCH acepta nulos —son los
+     * campos que no se tocan—, pero un {@code ""} o un {@code "   "} pasaban el {@code @Size} del
+     * DTO, se asignaban igual, y el {@code @NotBlank} de la entidad reventaba recién en el flush:
+     * un error del cliente salía como 500.
+     *
+     * <p>El recorte, además, evita que {@code "Juan "} y {@code "Juan"} queden como valores
+     * distintos: la colación de la base es NO PAD y no los unifica.
+     */
+    private static String exigirTextoConContenido(String valor, String campo) {
+        String recortado = valor.trim();
+
+        if (recortado.isEmpty()) {
+            throw new BadRequestException("El campo '" + campo + "' no puede estar vacío");
+        }
+        return recortado;
     }
 
     private void cambiarPassword(Usuario u, String password) {

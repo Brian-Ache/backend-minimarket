@@ -356,15 +356,25 @@ Ordena por `username`, con el `id` como desempate.
 
 Actualiza nombre y/o apellido.
 
+El campo ausente (`null`) se deja como está: es un `PATCH`, no un reemplazo. El campo **presente
+pero vacío** —`""` o solo espacios— es un error, no una forma de borrarlo: los dos son
+obligatorios en la cuenta. Los espacios de los costados se recortan.
+
+Cada uno se edita a sí mismo sin restricción. Sobre **otra** cuenta rige la jerarquía de siempre:
+tiene que estar por debajo tuyo. Un ADMIN no le cambia el nombre al SUPERADMIN ni a otro ADMIN.
+
 **Request:**
 ```json
 {
-  "nombre": "string (max 50, opcional)",
-  "apellido": "string (max 50, opcional)"
+  "nombre": "string (1-50, opcional)",
+  "apellido": "string (1-50, opcional)"
 }
 ```
 
 **Response `200`:** `{ ...UsuarioResponse }`
+
+**Errores:** `400` un campo vino vacío (`"El campo 'nombre' no puede estar vacío"`) · `403` el
+objetivo no está por debajo tuyo (`"Un ADMIN no puede editar a un SUPERADMIN"`)
 
 ---
 

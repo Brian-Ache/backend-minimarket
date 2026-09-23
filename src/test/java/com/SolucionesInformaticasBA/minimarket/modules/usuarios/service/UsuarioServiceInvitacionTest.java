@@ -77,6 +77,26 @@ class UsuarioServiceInvitacionTest {
     }
 
     @Test
+    @DisplayName("el nombre y el apellido se recortan en el alta, igual que en el PATCH")
+    void nombreYApellidoSeRecortan() {
+        autenticar(usuario(Rol.ADMIN));
+        sinDuplicados();
+        guardaYDevuelve();
+
+        var request = request("ana@ejemplo.com", null, null);
+        request.setNombre("  Ana  ");
+        request.setApellido("  Pérez  ");
+
+        var response = service.invitar(request);
+
+        assertThat(response.getNombre()).isEqualTo("Ana");
+        assertThat(response.getApellido()).isEqualTo("Pérez");
+
+        // Y el mail saluda con el nombre ya recortado, no con el espacio adentro.
+        verify(authApi).enviarInvitacion(any(), eq("ana@ejemplo.com"), eq("Ana"));
+    }
+
+    @Test
     @DisplayName("la cuenta nace con una contraseña aleatoria que nadie conoce")
     void passwordInutilizable() {
         autenticar(usuario(Rol.ADMIN));
