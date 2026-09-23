@@ -101,8 +101,16 @@ public class AuthController {
                        expire (`jwt.expiration-hours`), así que el front tiene que descartarlo.
 
                        Es idempotente: desloguear un token ya revocado, expirado o inexistente \
-                       responde `204` igual.""")
-    @ApiResponse(responseCode = "204", description = "Sesión cerrada")
+                       responde `204` igual.
+
+                       Lo que no es lo mismo es **no mandar el token**: un `refreshToken` vacío \
+                       o ausente es un request mal armado y responde `400`. La idempotencia es \
+                       sobre tokens que no sirven, no sobre pedidos incompletos.""")
+    @ApiResponses({
+        @ApiResponse(responseCode = "204", description = "Sesión cerrada"),
+        @ApiResponse(responseCode = "400", description = "Falta el `refreshToken` o vino vacío",
+            content = @Content(examples = @ExampleObject(value = SCHEMA_ERROR)))
+    })
     @PostMapping("/v1/logout")
     public ResponseEntity<Void> logout(@Valid @RequestBody RefreshTokenRequest request) {
         authApi.logout(request.getRefreshToken());

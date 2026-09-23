@@ -161,6 +161,9 @@ también devuelve `204`.
 
 **Response `204`**
 
+**Error `400`:** falta el `refreshToken` o vino vacío. La idempotencia es sobre tokens que no
+sirven, no sobre pedidos incompletos: un body sin el campo es un request mal armado.
+
 > El refresh token va en el **body**, no en el header. El access token sigue siendo válido
 > hasta que expire (`jwt.expiration-hours`).
 
