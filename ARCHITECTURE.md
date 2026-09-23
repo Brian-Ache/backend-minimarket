@@ -93,8 +93,22 @@ Request-> Authorization: Bearer <access token>
          baja o bloqueado) y publica ROLE_<ROL> más las authorities de los
          roles de menor jerarquía
 Refresh-> rota el par (revoca el anterior)
+         un token ya rotado que reaparece cierra TODAS las sesiones
 Logout -> revoca el refresh token (idempotente)
 ```
+
+- **La rotación detecta el reuso.** Un refresh token que ya se rotó y vuelve a aparecer significa
+  que hay una copia dando vueltas, y no hay forma de saber cuál de las dos partes es la legítima:
+  se cierran todas las sesiones del usuario y vuelven a loguearse las dos, con lo que entra la que
+  sabe la contraseña. Sin esto la rotación era decorativa — la consulta pedía solo los tokens
+  activos, así que uno robado y ya rotado era indistinguible de uno inventado y al ladrón le
+  alcanzaba con no insistir.
+  - Hay **30 segundos de gracia**: si la respuesta de la rotación se perdió y el cliente reintenta
+    con el token viejo, se rechaza el pedido pero no se cierra nada. Es la diferencia entre una
+    conexión mala y un robo, y es el único dato disponible para separarlos.
+  - El rechazo por reuso usa un tipo de excepción propio que `AuthService.refreshToken` declara en
+    `noRollbackFor`. No es un detalle: una `BadRequestException` común revierte la transacción y
+    deshace la revocación que se acaba de hacer, dejando una detección de robo que no cierra nada.
 
 - **Identidad:** siempre desde el JWT, vía `SecurityUtils.getCurrentUserId()`. Ningún endpoint
   acepta el id de usuario del cliente, **con una sola excepción documentada**: el endpoint de

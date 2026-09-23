@@ -1,5 +1,90 @@
 # Changelog
 
+## 0.6.1 (2026-09-23)
+
+**Auditoría de `auth` y `usuarios`.** Solo arreglos: no hay endpoints nuevos, ni campos nuevos, ni
+cambios de esquema. Tres errores del cliente que salían `500`, dos agujeros de permisos y de
+credenciales, y el techo que le faltaba al login.
+
+**Al actualizar hay que mirar dos cosas.** Ninguna es una migración —la base no cambia—, pero las
+dos pueden morder:
+
+- **Si se actualiza el nginx del VPS desde la plantilla, son dos archivos.** `nginx.conf` ahora
+  nombra zonas de límite de tasa que se declaran en `nginx-ratelimit.conf`, que va en
+  `/etc/nginx/conf.d/`. Instalar uno sin el otro **impide que nginx arranque**, con un error que
+  no menciona ningún archivo: `[emerg] zero size shared memory zone "minimarket_login"`. Ver
+  *Configuración*.
+- **El front tiene que guardar el refresh token nuevo en cada renovación.** Siempre debió hacerlo,
+  pero ahora reintentar con el anterior tiene consecuencias: pasados 30 segundos, cierra todas las
+  sesiones de esa persona. Ver *Seguridad*.
+
+### Seguridad
+
+- **La rotación del refresh token no servía de nada.** `validateRefreshToken` buscaba solo entre
+  los tokens activos, así que uno robado y ya rotado daba vacío exactamente igual que uno
+  inventado: al ladrón le alcanzaba con no insistir. Ahora se busca sin filtrar por estado, que es
+  lo que permite distinguirlos, y un token rotado que reaparece cierra **todas** las sesiones del
+  usuario. No hay forma de saber si quien renovó recién fue la persona o el ladrón, así que
+  vuelven a loguearse los dos y entra el que sabe la contraseña.
+  - **Hay 30 segundos de gracia** para el caso honesto: si la respuesta de la rotación se perdió y
+    el front reintenta con el token viejo, el pedido se rechaza pero no se cierra nada. En un
+    local con mala conexión eso pasa de verdad, y cerrarle las sesiones sería castigar a la red.
+  - El rechazo es idéntico al de un token inexistente: quien tenga la copia no debería poder
+    deducir que disparó la detección.
+- **`PATCH /api/users/v1/{id}` no validaba la jerarquía de roles.** Era la única operación del
+  módulo que no lo hacía. Los `@PreAuthorize` del controller solo ven el rol de quien llama, así
+  que `hasRole('ADMIN')` alcanzaba para que un ADMIN le cambiara el nombre y el apellido al
+  SUPERADMIN o a otro ADMIN. Ahora rige la jerarquía de siempre, salvo sobre la cuenta propia:
+  editarse uno mismo es el único caso en que operar sobre la propia cuenta no es un error.
+- **Un pedido de reseteo de contraseña invalida los anteriores.** Antes, pedirlo cinco veces
+  dejaba cinco enlaces vivos a la vez, una hora cada uno. La invitación ya se comportaba así; el
+  reseteo no. Con el SMTP caído esto tiene un costo que conviene saber: el enlace anterior queda
+  invalidado y el nuevo nunca sale, así que hay que volver a pedirlo cuando el correo funcione.
+- **`POST /api/auth/v1/login` tiene límite de tasa**, por IP, en nginx: 10 por minuto con 10 de
+  arranque inmediato para la apertura del local. El resto de `/api/auth/` va más holgado —ahí no
+  se adivina nada, los tokens son de 256 bits— y se limita por otra razón: que nadie use el
+  reseteo como generador de mails ni para dejar a alguien sin su enlace. **El resto de la API
+  queda sin límite a propósito**, porque el lote de sincronización llega en ráfaga después de un
+  corte y ponerle techo convertiría la vuelta de la conexión en una tanda de `429`.
+  - Lo que esto **no** resuelve: es por IP, así que no hace nada contra un ataque distribuido, y a
+    10 intentos por minuto un diccionario de los mil peores passwords se agota en un par de horas
+    desde una sola IP. Contra eso va el bloqueo por cuenta, que no está y tiene su propio costo.
+
+### Correcciones
+
+- **Una contraseña de más de 72 bytes respondía `500`.** Los DTO validaban `@Size(max = 72)`, que
+  cuenta **caracteres**, y BCrypt corta en 72 **bytes**: 72 caracteres acentuados son 144 bytes,
+  pasaban la validación del request y reventaban en `encode()` con un `IllegalArgumentException`
+  que no tiene handler. Alcanzaba a los tres endpoints que hashean —aceptar invitación, confirmar
+  el reseteo y cambiar la contraseña—; el login no, porque `matches()` devuelve `false` sin
+  romperse. Es el mismo límite que la 0.6.0 arregló para la contraseña de relleno de una cuenta
+  invitada, ahora del lado de la que escribe la persona.
+- **`PATCH /api/users/v1/{id}` con un nombre vacío respondía `500`.** Un `""` o un `"   "` cumplía
+  el `@Size` del DTO, se asignaba igual, y el `@NotBlank` de la entidad reventaba recién en el
+  flush con una `ConstraintViolationException` que tampoco tiene handler. Ahora es `400` y nombra
+  el campo. El nulo sigue significando "este campo no se toca": es un `PATCH`.
+- **Nombre y apellido se recortan**, en el alta y en la edición. La colación de la base es
+  `utf8mb4_0900_ai_ci`, que es NO PAD: `"Juan "` y `"Juan"` convivían como valores distintos.
+- **El logout documentaba `204` siempre.** El código está bien —un body sin el `refreshToken`
+  obligatorio es un request mal armado y responde `400`—; lo que faltaba era decirlo. La
+  idempotencia es sobre tokens que no sirven, no sobre pedidos incompletos.
+
+### Configuración
+
+- **`docker/produccion/nginx-ratelimit.conf`** — nuevo, va en `/etc/nginx/conf.d/`. Declara las
+  zonas de límite de tasa que las `location` de `/api/auth` de `nginx.conf` aplican. Son dos
+  archivos y no uno porque `limit_req_zone` solo vale en el contexto `http`, y lo que vive en
+  `sites-available` son bloques `server`: meter las zonas en la plantilla del sitio hace que nginx
+  no arranque.
+- **`docker/produccion/nginx.conf`** — los `proxy_set_header` y los timeouts suben a nivel
+  `server` en vez de repetirse en cada `location`. Ojo con la herencia de nginx si se tocan: una
+  `location` que declare **un** `proxy_set_header` propio pierde **todos** los heredados, no solo
+  el que repite.
+
+### Base de datos
+
+- **Ninguna migración.** El esquema no cambia, así que actualizar es reemplazar el jar o la imagen.
+
 ## 0.6.0 (2026-09-15)
 
 **Sincronización offline-first.** El front puede vender con internet caído y mandar los tickets

@@ -151,9 +151,17 @@ servidor y nada más.
        --default-character-set=utf8mb4 < init.sql
    ```
    Después cambiar la contraseña del superadmin y del admin que el seed deja puestas.
-3. nginx: `docker/produccion/nginx.conf` en `/etc/nginx/sites-available/`, enlazado en
-   `sites-enabled/`, con el dominio real reemplazado. El TLS lo pone certbot:
-   `sudo certbot --nginx -d api.tudominio.com`.
+3. nginx, que son **dos archivos** y van los dos:
+   - `docker/produccion/nginx.conf` en `/etc/nginx/sites-available/`, enlazado en
+     `sites-enabled/`, con el dominio real reemplazado.
+   - `docker/produccion/nginx-ratelimit.conf` en `/etc/nginx/conf.d/`, que declara las zonas de
+     límite de tasa que el anterior aplica sobre `/api/auth`.
+
+   Sin el segundo, nginx no arranca: `[emerg] zero size shared memory zone "minimarket_login"`.
+   Van separados porque `limit_req_zone` solo vale en el contexto `http` y `sites-available` son
+   bloques `server`. Verificar con `sudo nginx -t` antes de recargar.
+
+   El TLS lo pone certbot: `sudo certbot --nginx -d api.tudominio.com`.
 4. `docker compose up -d` y listo: a partir de ahí despliega el workflow.
 
 ### Por qué un despliegue falla en vez de quedar verde y roto
